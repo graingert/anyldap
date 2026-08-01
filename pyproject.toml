@@ -136,6 +136,7 @@ deps =
     pyparsing
     pytest
     pytest-cov
+    trustme
     trio
     passlib
     ; Dependecies for local dev environment.

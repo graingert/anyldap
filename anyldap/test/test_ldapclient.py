@@ -9,6 +9,196 @@ from anyldap.protocols import (
 )
 from anyldap.protocols.ldap import ldapclient, ldaperrors
 from anyldap.test import unittest
+from anyldap.test._anyio_helpers import MemoryByteStream
+import pytest
+import ssl
+import trustme
+
+
+def _trusted_client_context():
+    authority = trustme.CA()
+    authority.issue_cert("ldap.example.com")
+    context = ssl.create_default_context()
+    authority.configure_trust(context)
+    return context
+
+
+@pytest.mark.anyio
+async def test_async_multi_response_and_no_response_paths():
+    client = ldapclient.LDAPClient()
+    stream = MemoryByteStream()
+    client._anyio_stream = stream
+    client.connectionMade()
+    request = pureldap.LDAPSearchRequest()
+
+    result = await client.send_multiResponse_async(request, lambda response: True)
+    assert isinstance(result, ldapclient.AnyIODeferred)
+    assert await stream.next_write()
+
+    result = await client.send_multiResponse_ex_async(
+        request, controls=[], handler=lambda response, controls: True
+    )
+    assert isinstance(result, ldapclient.AnyIODeferred)
+    assert await stream.next_write()
+
+    await client.send_noResponse_async(pureldap.LDAPUnbindRequest())
+    assert await stream.next_write()
+
+
+@pytest.mark.anyio
+async def test_async_methods_fall_back_to_legacy_transport():
+    client = ldapclient.LDAPClient()
+    client.makeConnection(testutil.StringTransport())
+    request = pureldap.LDAPSearchRequest()
+    assert await client.send_multiResponse_async(request, lambda response: True)
+    assert await client.send_multiResponse_ex_async(request, handler=lambda response, controls: True)
+    await client.send_noResponse_async(pureldap.LDAPUnbindRequest())
+
+
+@pytest.mark.anyio
+async def test_async_disconnected_and_tls_guards():
+    client = ldapclient.LDAPClient()
+    client._anyio_stream = MemoryByteStream()
+    with pytest.raises(ldapclient.LDAPClientConnectionLostException):
+        await client.bind_async()
+    with pytest.raises(NotImplementedError, match="STARTTLS"):
+        await client.startTLS_async()
+
+
+@pytest.mark.anyio
+async def test_send_async_receives_response_from_stream():
+    client = ldapclient.LDAPClient()
+    stream = MemoryByteStream()
+    client._anyio_stream = stream
+    client.connectionMade()
+    results = []
+
+    async def send():
+        results.append(await client.send_async(pureldap.LDAPBindRequest()))
+
+    async with __import__("anyio").create_task_group() as task_group:
+        task_group.start_soon(send)
+        await stream.next_write()
+        message_id = next(iter(client.onwire))
+        client.handle(
+            pureldap.LDAPMessage(pureldap.LDAPBindResponse(resultCode=0), id=message_id)
+        )
+    assert isinstance(results[0], pureldap.LDAPBindResponse)
+
+
+@pytest.mark.anyio
+async def test_starttls_async_legacy_transport():
+    client = ldapclient.LDAPClient()
+    client.makeConnection(testutil.StringTransport())
+    results = []
+
+    class TLSContextTransport(testutil.StringTransport):
+        def startTLS(self, context):
+            self.context = context
+
+    client.transport = TLSContextTransport()
+    context = _trusted_client_context()
+    async with __import__("anyio").create_task_group() as task_group:
+        async def start_with_trust():
+            results.append(await client.startTLS_async(context))
+
+        task_group.start_soon(start_with_trust)
+        await __import__("anyio").lowlevel.checkpoint()
+        message_id = next(iter(client.onwire))
+        client.handle(
+            pureldap.LDAPMessage(
+                pureldap.LDAPExtendedResponse(resultCode=0), id=message_id
+            )
+        )
+    assert results == [client]
+    assert client.transport.context is context
+
+
+@pytest.mark.anyio
+async def test_attach_stream_reads_until_end():
+    import anyio
+
+    client = ldapclient.LDAPClient()
+    stream = MemoryByteStream()
+    async with anyio.create_task_group() as task_group:
+        await client.attach_stream(stream, task_group)
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(0), id=0).toWire()
+        )
+        await stream.close_input()
+    assert not client.connected
+
+
+@pytest.mark.anyio
+async def test_async_close_and_empty_stream_disconnect():
+    client = ldapclient.LDAPClient()
+    stream = MemoryByteStream()
+    client._anyio_stream = stream
+    client.connectionMade()
+    await client.aclose()
+    assert stream.closed
+    assert not client.connected
+
+    client = ldapclient.LDAPClient()
+    stream = MemoryByteStream()
+    client._anyio_stream = stream
+    client.connectionMade()
+    await stream.feed(b"")
+    await client._read_from_stream()
+    assert not client.connected
+
+
+def test_partial_message_and_starttls_guards():
+    client = ldapclient.LDAPClient()
+    client.dataReceived(b"\x30")
+    assert client.buffer == b"\x30"
+
+    with pytest.raises(ldapclient.LDAPClientConnectionLostException):
+        client._startTLS(None)
+
+    client.makeConnection(testutil.StringTransport())
+    client.onwire[1] = object()
+    with pytest.raises(ldapclient.LDAPStartTLSBusyError):
+        client._startTLS(None)
+
+
+def test_starttls_response_validation_and_success():
+    class TLSTransport(testutil.StringTransport):
+        def startTLS(self, context):
+            self.context = context
+
+    client = ldapclient.LDAPClient()
+    transport = TLSTransport()
+    client.makeConnection(transport)
+    with pytest.raises(ldapclient.LDAPStartTLSInvalidResponseName):
+        client._cbStartTLS(
+            pureldap.LDAPExtendedResponse(resultCode=0, responseName=b"wrong"), None
+        )
+    context = _trusted_client_context()
+    assert client._cbStartTLS(pureldap.LDAPExtendedResponse(resultCode=0), context) is client
+    assert transport.context is context
+
+
+def test_multi_response_controls_handler_and_starttls_send():
+    client = ldapclient.LDAPClient()
+    client.makeConnection(testutil.StringTransport())
+    seen = []
+    client.send_multiResponse_ex(
+        pureldap.LDAPSearchRequest(),
+        controls=[],
+        handler=lambda response, controls: seen.append((response, controls)) or True,
+    )
+    message_id = next(iter(client.onwire))
+    client.handle(
+        pureldap.LDAPMessage(
+            pureldap.LDAPSearchResultDone(0), id=message_id, controls=[]
+        )
+    )
+    assert seen
+    assert not client.onwire
+
+    deferred = client._startTLS(None)
+    assert deferred is not None
 
 
 class SillyMessage(WireStrAlias):

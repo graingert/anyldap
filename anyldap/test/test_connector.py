@@ -39,6 +39,20 @@ async def test_parse_tcp_endpoint():
     )
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    ["udp:host=localhost:port=389", "tcp:localhost:port=389", "tcp:host=localhost"],
+)
+async def test_parse_tcp_endpoint_errors(endpoint):
+    with pytest.raises(ValueError):
+        ldapconnector._parseTCPEndpoint(endpoint)
+
+
+async def test_legacy_endpoint_connector_reports_parse_error():
+    with pytest.raises(ValueError, match="Unsupported endpoint"):
+        await ldapconnector.connectToLDAPEndpoint(None, "udp:host=x:port=1", object)
+
+
 async def test_find_override_plain_string():
     override = ldapconnector._findOverride(
         distinguishedname.DistinguishedName("cn=foo,dc=example,dc=com"),
@@ -106,6 +120,92 @@ async def test_resolve_service_location_async_override_host_keeps_srv_port():
     )
 
     assert (host, port) == ("override.example.net", 1636)
+
+
+async def test_resolve_complete_override_and_defaults():
+    assert await ldapconnector._resolveServiceLocationAsync(
+        "dc=example,dc=com", overrides={"dc=example,dc=com": ("host", 123)}
+    ) == ("host", 123)
+
+    async def no_records(name, record_type):
+        return []
+
+    assert await ldapconnector._resolveServiceLocationAsync(
+        "dc=example,dc=com", resolver=no_records
+    ) == ("example.com", 389)
+    assert await ldapconnector._resolveServiceLocationAsync("") == ("", 389)
+    assert await ldapconnector._resolveServiceLocationAsync(
+        distinguishedname.DistinguishedName(""), resolver=no_records
+    ) == ("", 389)
+
+    async def one_record(name, record_type):
+        return [type("Record", (), {"priority": 0, "weight": 1, "target": "srv.", "port": 999})()]
+
+    assert await ldapconnector._resolveServiceLocationAsync(
+        "dc=example,dc=com",
+        overrides={"dc=example,dc=com": (None, 123)},
+        resolver=one_record,
+    ) == ("srv", 123)
+
+
+async def test_connection_wrapper_and_connector_alias():
+    class Stack:
+        def __init__(self):
+            self.closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    class Client:
+        marker = "client"
+
+    stack = Stack()
+    connection = ldapconnector.AsyncLDAPClientConnection(stack, Client())
+    assert connection.marker == "client"
+    assert await connection.__aenter__() is connection.protocol
+    await connection.__aexit__(None, None, None)
+    assert stack.closed
+    assert ldapconnector.LDAPConnector()._findOverRide(
+        distinguishedname.DistinguishedName(""), {"": "root"}
+    ) == "root"
+
+
+async def test_creator_legacy_and_anonymous_overrides():
+    class Client:
+        def __init__(self):
+            self.bound = False
+
+        async def bind_async(self):
+            self.bound = True
+
+    client = Client()
+    creator = ldapconnector.LDAPClientCreator(None, Client)
+    assert await creator.connect("", overrides={"": lambda factory: client}) is client
+    assert await creator.connectAnonymously(
+        "", overrides={"": lambda factory: object()}
+    ) is not None
+
+    class LegacyBindClient:
+        def bind(self):
+            return "bound"
+
+    assert await creator.connectAnonymously(
+        "", overrides={"": lambda factory: LegacyBindClient()}
+    ) == "bound"
+    connected = await creator.connectAnonymouslyAsync(
+        "", overrides={"": lambda factory: client}
+    )
+    assert connected is client
+    assert client.bound
+
+
+async def test_creator_non_override_uses_async_implementation():
+    class Creator(ldapconnector.LDAPClientCreator):
+        async def connectAsync(self, *args, **kwargs):
+            return "connected"
+
+    creator = Creator(None, object)
+    assert await creator.connect("dc=example,dc=com") == "connected"
 
 
 async def test_connectToLDAPEndpointAsync_bind(monkeypatch):
