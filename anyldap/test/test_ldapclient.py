@@ -66,6 +66,7 @@ async def test_async_disconnected_and_tls_guards():
         await client.bind_async()
     with pytest.raises(NotImplementedError, match="STARTTLS"):
         await client.startTLS_async()
+    await client.aclose()
 
 
 @pytest.mark.anyio

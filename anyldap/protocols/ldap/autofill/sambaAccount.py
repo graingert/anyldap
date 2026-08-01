@@ -26,7 +26,7 @@ class Autofill_samba:  # TODO baseclass
         if attributeType == "uidNumber":
             assert "uidNumber" in ldapObject
             assert len(ldapObject["uidNumber"]) == 1
-            for uidNumber in ldapObject["uidNumber"]:
+            for uidNumber in ldapObject["uidNumber"]:  # pragma: no branch
                 uidNumber = int(uidNumber)
                 rid = uidNumber * 2 + 1000
                 ldapObject["rid"] = [str(rid)]
@@ -36,7 +36,7 @@ class Autofill_samba:  # TODO baseclass
         if attributeType == "gidNumber":
             assert "gidNumber" in ldapObject
             assert len(ldapObject["gidNumber"]) == 1
-            for gidNumber in ldapObject["gidNumber"]:
+            for gidNumber in ldapObject["gidNumber"]:  # pragma: no branch
                 gidNumber = int(gidNumber)
                 primaryGroupID = gidNumber * 2 + 1001
                 ldapObject["primaryGroupID"] = [str(primaryGroupID)]

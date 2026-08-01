@@ -22,6 +22,13 @@ async def test_gather_numbers_propagates_failure():
     with pytest.raises(ValueError, match="allocation failed"):
         await deferred
 
+    deferred = autofiller._gather_numbers(
+        fail(Failure(ValueError("uid failed"))),
+        fail(Failure(ValueError("gid failed"))),
+    )
+    with pytest.raises(ValueError, match="uid failed"):
+        await deferred
+
 
 def test_got_numbers_re_raises_failed_allocations_and_notify_is_noop():
     autofiller = posixAccount.Autofill_posix("dc=example,dc=com")

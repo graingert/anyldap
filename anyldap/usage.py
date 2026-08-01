@@ -45,7 +45,7 @@ class Options:
         for base in reversed(cls.__mro__):
             for item in getattr(base, "optParameters", ()):
                 name = item[0]
-                if name not in seen:
+                if name not in seen:  # pragma: no branch
                     seen.add(name)
                     yield item
 
