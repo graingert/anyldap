@@ -87,11 +87,12 @@ async def test_callbacks_can_chain_deferred_success_and_failure():
     with pytest.raises(ValueError, match="nested failure"):
         await result
 
-    child = deferred.Deferred()
+    child_source = deferred.DeferredSource()
+    child = child_source.deferred
     result = deferred.succeed(None)
     result.addCallback(lambda ignored: child)
     assert result._waiting
-    child.callback("later")
+    child_source.callback("later")
     assert await result == "later"
 
 
