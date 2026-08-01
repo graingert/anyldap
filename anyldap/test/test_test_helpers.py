@@ -4,14 +4,14 @@ import warnings
 
 import pytest
 
-from anyldap.deferred import Deferred, DeferredSource, fail, succeed
+from anyldap import testutil
+from anyldap.deferred import fail, succeed
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import proxy
 from anyldap.runtime import Failure, Protocol
 from anyldap.test import unittest, util
 from anyldap.test._anyio_helpers import AsyncLDAPClientDriver, MemoryByteStream
 from anyldap.test._testing import Clock, capture_logs
-from anyldap import testutil
 
 pytestmark = pytest.mark.anyio
 

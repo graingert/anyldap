@@ -9,7 +9,6 @@ from anyldap.test.unittest import TestCase
 from anyldap.usage import (
     Options,
     Options_base,
-    Options_bind,
     Options_bind_mandatory,
     Options_scope,
     Options_service_location,

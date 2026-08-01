@@ -3,9 +3,9 @@ import pytest
 
 from anyldap import config, ldapfilter
 from anyldap.deferred import fail, succeed
-from anyldap.runtime import Failure
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, proxy, svcbindproxy
+from anyldap.runtime import Failure
 from anyldap.test._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,

@@ -2,14 +2,15 @@
 Test cases for anyldap.protocols.ldap.autofill.posixAccount module.
 """
 
-from anyldap.protocols import pureldap
+import pytest
+
 from anyldap.deferred import fail, succeed
+from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import autofill, ldapsyntax
 from anyldap.protocols.ldap.autofill import posixAccount
 from anyldap.runtime import Failure
 from anyldap.test import unittest
 from anyldap.testutil import LDAPClientTestDriver
-import pytest
 
 
 @pytest.mark.anyio

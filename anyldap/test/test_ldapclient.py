@@ -1,6 +1,11 @@
 """
 Test cases for anyldap.protocols.ldap.ldapsyntax module.
 """
+import ssl
+
+import pytest
+import trustme
+
 from anyldap import testutil
 from anyldap._encoder import WireStrAlias, to_bytes
 from anyldap.protocols import (
@@ -10,9 +15,6 @@ from anyldap.protocols import (
 from anyldap.protocols.ldap import ldapclient, ldaperrors
 from anyldap.test import unittest
 from anyldap.test._anyio_helpers import MemoryByteStream
-import pytest
-import ssl
-import trustme
 
 
 def _trusted_client_context():

@@ -2,9 +2,10 @@
 Test cases for anyldap.dns
 """
 
+import pytest
+
 from anyldap import dns
 from anyldap.test import unittest
-import pytest
 
 
 class NetmaskToNumbits(unittest.TestCase):

@@ -1,8 +1,9 @@
 import anyio
 import anyio.lowlevel
-import pytest
 import subprocess
 import sys
+
+import pytest
 
 from anyldap import config
 from anyldap.protocols import pureldap
