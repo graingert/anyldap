@@ -9,7 +9,7 @@ description = "A Pure-Python AnyIO library for LDAP"
 authors = [{ name = "Tommi Virtanen", email = "tv@eagain.net" }]
 maintainers = [{ name = "Bret Curtis", email = "psi29a@gmail.com" }]
 license = { text = "MIT" }
-requires-python = ">=3.6"
+requires-python = ">=3.10"
 dependencies = ["anyio", "dnspython", "passlib", "pyparsing", "six>=1.7", "zope.interface"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -31,15 +31,16 @@ urls = { Homepage = "https://github.com/graingert/anyldap" }
 
 [project.optional-dependencies]
 docs = [
-    "alabaster~=0.7.12",
+    "alabaster~=0.7.16; python_version == '3.10'",
+    "alabaster~=1.0; python_version >= '3.11'",
     "commonmark~=0.9.1",
-    "docutils~=0.16.0",
-    "mock~=4.0",
-    "pillow~=7.2",
-    "readthedocs-sphinx-ext~=2.1",
-    "recommonmark~=0.6.0",
-    "sphinx~=3.2",
-    "sphinx-rtd-theme~=0.5.0",
+    "docutils~=0.21",
+    "pillow~=12.0",
+    "readthedocs-sphinx-ext~=2.2",
+    "recommonmark~=0.7.1",
+    "sphinx~=7.4; python_version == '3.10'",
+    "sphinx~=8.2; python_version >= '3.11'",
+    "sphinx-rtd-theme~=3.0",
 ]
 
 [project.scripts]
