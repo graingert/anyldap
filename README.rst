@@ -17,9 +17,10 @@ anyldap
     :alt: Black
     :target: https://github.com/psf/black
 
-anyldap is a pure-Python library that implements:
+anyldap is a pure-Python, AnyIO-based library for Python 3.10 and newer that
+implements:
 
-- LDAP client logic
+- LDAP client and server logic
 - separately-accessible LDAP and BER protocol message generation/parsing
 - ASCII-format LDAP filter generation and parsing
 - LDIF format data generation
@@ -27,7 +28,8 @@ anyldap is a pure-Python library that implements:
 
 Also included is a set of LDAP utilities for use from the command line.
 
-Verbose documentation can be found on `ReadTheDocs <https://anyldap.readthedocs.org>`_.
+The full documentation is available on `Read the Docs
+<https://anyldap.readthedocs.io/en/latest/>`_.
 
 
 Quick Usage Example
@@ -63,25 +65,21 @@ Quick Usage Example
 Installation
 ------------
 
-anyldap can be installed using the standard command line method::
+Install anyldap from PyPI::
 
-    python setup.py install
+    python -m pip install anyldap
 
-or using pip from PyPI::
+To install a repository checkout in editable mode::
 
-    pip install anyldap
-
-Linux distributions may also have ready packaged versions of anyldap. Debian and Ubuntu may provide packages that can be installed e.g., by::
-
-    apt-get install python-anyldap
+    python -m pip install -e .
 
 For a server example from a repo checkout, see
 ``docs/source/examples/quickstart_server.py``.
 
 Dependencies:
 
-- `anyio <https://pypi.org/project/anyio/>`_
-- `pyparsing <https://pypi.python.org/pypi/pyparsing/>`_
-- `passlib <https://pypi.python.org/pypi/passlib/>`_ for Samba passwords
-- `six <https://pypi.python.org/pypi/six/>`_ for simultaneous Python 2 and 3 compatability
-- `zope.interface <https://pypi.python.org/pypi/zope.interface/>`_
+- `AnyIO <https://pypi.org/project/anyio/>`_ for asynchronous networking
+- `dnspython <https://pypi.org/project/dnspython/>`_ for LDAP service discovery
+- `Passlib <https://pypi.org/project/passlib/>`_ for Samba passwords
+- `pyparsing <https://pypi.org/project/pyparsing/>`_ for LDAP filters
+- `zope.interface <https://pypi.org/project/zope.interface/>`_
