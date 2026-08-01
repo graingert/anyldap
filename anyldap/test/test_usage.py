@@ -18,6 +18,20 @@ from anyldap.usage import (
 
 class ScopeOptionsImplementation(Options, Options_scope):
     """
+
+
+class FirstFlagOptions(Options):
+    optFlags = (("shared", "s", "first"),)
+
+
+class DuplicateFlagOptions(FirstFlagOptions):
+    optFlags = (("shared", "s", "second"),)
+
+
+def test_duplicate_inherited_flags_are_yielded_once():
+    assert list(DuplicateFlagOptions._iter_opt_flags()) == [
+        ("shared", "s", "first")
+    ]
     Minimal implementation for a command line using `Options_scope`.
     """
 

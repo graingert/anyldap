@@ -258,6 +258,11 @@ host=ignored
         self.assertEqual(values["dc=one,dc=example"], ("ldap-one.example", "1389"))
         self.assertEqual(values["dc=two,dc=example"], (None, None))
 
+    def testServiceLocationConfigurationWithoutHostOrPort(self):
+        reloadFromContent(self, b"[service-location dc=example]\n")
+        overrides = config.LDAPConfig().getServiceLocationOverrides()
+        self.assertEqual(next(iter(overrides.values())), (None, None))
+
     def testCopyPreservesAllDefaults(self):
         original = config.LDAPConfig(
             baseDN="dc=example",
@@ -270,6 +275,17 @@ host=ignored
         self.assertEqual(copied.identityBaseDN, original.identityBaseDN)
         self.assertEqual(copied.identitySearch, original.identitySearch)
         self.assertEqual(copied.serviceLocationOverrides, original.serviceLocationOverrides)
+
+    def testCopyAcceptsAllExplicitValues(self):
+        values = {
+            "baseDN": "dc=new",
+            "identityBaseDN": "ou=people,dc=new",
+            "identitySearch": "(mail=%(name)s)",
+            "serviceLocationOverrides": {"dc=new": ("new.example", 1389)},
+        }
+        copied = config.LDAPConfig().copy(**values)
+        for name, value in values.items():
+            self.assertEqual(getattr(copied, name), value)
 
     def testUseLMHash(self):
         reloadFromContent(self, b"[samba]\nuse-lmhash=yes\n")

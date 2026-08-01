@@ -87,6 +87,13 @@ async def test_callbacks_can_chain_deferred_success_and_failure():
     with pytest.raises(ValueError, match="nested failure"):
         await result
 
+    child = deferred.Deferred()
+    result = deferred.succeed(None)
+    result.addCallback(lambda ignored: child)
+    assert result._waiting
+    child.callback("later")
+    assert await result == "later"
+
 
 async def test_advance_ignores_running_or_waiting_deferred():
     result = deferred.Deferred()

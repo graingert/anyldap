@@ -39,7 +39,7 @@ def netmaskToNumbits(netmask):
     n = 0
     while bits and i > 0:
         if (bits & i) == 0:
-            if bits:
+            if bits:  # pragma: no branch - the loop condition guarantees this
                 raise RuntimeError("Invalid netmask: %s" % netmask)
         n += 1
         bits -= i
