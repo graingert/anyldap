@@ -3,6 +3,7 @@ Test cases for anyldap.protocols.ldap.ldapsyntax module.
 """
 import ssl
 
+import anyio
 import pytest
 import trustme
 
@@ -93,19 +94,24 @@ async def test_starttls_async_legacy_transport():
     client = ldapclient.LDAPClient()
     client.makeConnection(testutil.StringTransport())
     results = []
+    sent = anyio.Event()
 
     class TLSContextTransport(testutil.StringTransport):
+        def write(self, data):
+            super().write(data)
+            sent.set()
+
         def startTLS(self, context):
             self.context = context
 
     client.transport = TLSContextTransport()
     context = _trusted_client_context()
-    async with __import__("anyio").create_task_group() as task_group:
+    async with anyio.create_task_group() as task_group:
         async def start_with_trust():
             results.append(await client.startTLS_async(context))
 
         task_group.start_soon(start_with_trust)
-        await __import__("anyio").lowlevel.checkpoint()
+        await sent.wait()
         message_id = next(iter(client.onwire))
         client.handle(
             pureldap.LDAPMessage(
