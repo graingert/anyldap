@@ -1,5 +1,6 @@
 import anyio
 import pytest
+from anyio.abc import SocketAttribute
 
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldapclient, ldapconnector
@@ -175,6 +176,26 @@ async def test_connection_wrapper_and_connector_alias():
     assert ldapconnector.LDAPConnector()._findOverRide(
         distinguishedname.DistinguishedName(""), {"": "root"}
     ) == "root"
+
+
+async def test_creator_connects_to_real_endpoint():
+    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
+    port = listener.extra(SocketAttribute.local_port)
+
+    async def hold_open(stream):
+        try:
+            await stream.receive()
+        except anyio.EndOfStream:
+            pass
+
+    creator = ldapconnector.LDAPClientCreator(None, ldapclient.LDAPClient)
+    async with listener, anyio.create_task_group() as task_group:
+        task_group.start_soon(listener.serve, hold_open)
+        connection = await creator.connectToEndpointAsync(
+            f"tcp:host=127.0.0.1:port={port}"
+        )
+        await connection.aclose()
+        task_group.cancel_scope.cancel()
 
 
 async def test_creator_legacy_and_anonymous_overrides():

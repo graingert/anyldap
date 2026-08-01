@@ -1,18 +1,18 @@
 """
 Test cases for LDIF directory tree writing/reading.
 """
-
 import errno
 import logging
 import os
 import random
 import shutil
+import subprocess
 import sys
 import unittest as stdlib_unittest
 
 from anyldap import delta, entry, ldiftree, testutil
 from anyldap.entry import BaseLDAPEntry
-from anyldap.protocols.ldap import ldaperrors, ldifprotocol
+from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
 from anyldap.test import unittest, util
 from anyldap.test._testing import capture_logs
 
@@ -587,6 +587,28 @@ cn: theChild
             },
         )
 
+    def test_addChild_to_existing_directory(self):
+        child = self.meta.addChild(
+            rdn="cn=baz",
+            attributes={"objectClass": ["a"], "cn": ["baz"]},
+        )
+        self.assertEqual(child.dn, "cn=baz,ou=metasyntactic,dc=example,dc=com")
+
+    def test_deleteChild_accepts_relative_distinguished_name(self):
+        result = self.meta.deleteChild(
+            distinguishedname.RelativeDistinguishedName("cn=bar")
+        )
+        result.addCallback(self.assertEqual, self.bar)
+        return result
+
+    @util.fromCoroutineFunction
+    async def test_move_accepts_distinguished_name(self):
+        result = await self.empty.move(
+            distinguishedname.DistinguishedName("ou=moved,dc=example,dc=com")
+        )
+        self.assertTrue(result)
+        self.assertEqual(self.empty.dn, "ou=moved,dc=example,dc=com")
+
     def test_parent(self):
         self.assertEqual(self.foo.parent(), self.meta)
         self.assertEqual(self.meta.parent(), self.example)
@@ -1060,3 +1082,17 @@ objectClass: top
         """
         self.assertTrue(self.example < self.oneChild)
         self.assertFalse(self.oneChild < self.example)
+
+    def testRepresentation(self):
+        self.assertIn(self.example.dn.getText(), repr(self.example))
+
+
+def test_module_entrypoint_explains_legacy_demo_removal():
+    result = subprocess.run(
+        [sys.executable, "-m", "anyldap.ldiftree"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "AnyIO server entrypoints" in result.stderr

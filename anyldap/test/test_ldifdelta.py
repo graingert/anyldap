@@ -1,6 +1,7 @@
 """
 Test cases for anyldap.protocols.ldap.ldifdelta
 """
+from io import BytesIO
 
 from anyldap import delta, entry
 from anyldap.protocols.ldap import ldifdelta
@@ -14,6 +15,14 @@ class LDIFDeltaDriver(ldifdelta.LDIFDelta):
 
     def gotEntry(self, obj):
         self.listOfCompleted.append(obj)
+
+
+def test_from_ldif_file_reads_complete_change_records():
+    operations = ldifdelta.fromLDIFFile(
+        BytesIO(b"dn: cn=gone,dc=example,dc=com\nchangetype: delete\n\n")
+    )
+    assert len(operations) == 1
+    assert isinstance(operations[0], delta.DeleteOp)
 
 
 """

@@ -101,14 +101,7 @@ def _put(path, entry):
         if not os.path.exists(parentDir):
             if not os.path.exists(parentEntry):
                 raise LDIFTreeNoSuchObject(entry.dn.up())
-            try:
-                os.mkdir(parentDir)
-            except OSError as e:
-                if e.errno == errno.EEXIST:
-                    # we lost a race to create the directory, safe to ignore
-                    pass
-                else:
-                    raise
+            os.makedirs(parentDir, exist_ok=True)
     else:
         parentDir = path
     return _putEntry(os.path.join(parentDir, "%s" % entryRDN.getText()), entry)
@@ -344,13 +337,8 @@ class LDIFTreeEntry(
             dstdir = newParent.path
 
         newpath = os.path.join(dstdir, "%s.dir" % newRDN.getText())
-        try:
+        if os.path.exists(self.path):
             os.rename(self.path, newpath)
-        except OSError as e:
-            if e.errno == errno.ENOENT:
-                pass
-            else:
-                raise
         basename, ext = os.path.splitext(self.path)
         assert ext == ".dir"
         os.rename(

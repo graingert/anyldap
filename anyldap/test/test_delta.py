@@ -2,9 +2,22 @@
 Test cases for anyldap.protocols.ldap.delta
 """
 
+import pytest
+
 from anyldap import attributeset, delta, entry, inmemory
+from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldapsyntax
 from anyldap.test import unittest
+
+
+@pytest.mark.anyio
+async def test_delete_operation_uses_real_in_memory_entry():
+    root = inmemory.ReadOnlyInMemoryLDAPEntry("dc=example,dc=com")
+    child = root.addChild("cn=foo", {"cn": ["foo"]})
+    operation = delta.DeleteOp(child)
+    assert await operation.patch(root) is child
+    with pytest.raises(ldaperrors.LDAPNoSuchObject):
+        await root.lookup(child.dn)
 
 
 class TestModifications(unittest.TestCase):
@@ -19,6 +32,27 @@ class TestModifications(unittest.TestCase):
                 "more": ["junk"],
             },
         )
+
+    def testAbstractAndInvalidOperations(self):
+        modification = delta.Modification("cn", ["value"])
+        self.assertRaises(NotImplementedError, modification.patch, self.foo)
+        self.assertRaises(NotImplementedError, modification.asLDAP)
+        self.assertRaises(NotImplementedError, delta.Operation().patch, self.foo)
+        self.assertIsNone(delta.ModifyOp._getClassFromOp(999))
+        self.assertRaises(RuntimeError, delta.ModifyOp.fromLDAP, object())
+        request = pureldap.LDAPModifyRequest(
+            object="cn=foo",
+            modification=[
+                (
+                    pureber.BEREnumerated(999),
+                    (
+                        pureldap.LDAPAttributeDescription("cn"),
+                        pureber.BERSet([pureldap.LDAPAttributeValue("foo")]),
+                    ),
+                )
+            ],
+        )
+        self.assertRaises(RuntimeError, delta.ModifyOp.fromLDAP, request)
 
     def testAddOld(self):
         mod = delta.Add("cn", ["quux"])

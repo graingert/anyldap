@@ -67,11 +67,14 @@ class Options:
         flags = {name: (short, doc) for name, short, doc in self._iter_opt_flags()}
 
         index = 0
+        positional = []
         while index < len(options):
             option = options[index]
             if not option.startswith("-"):
-                raise UsageError(f"Unknown argument: {option}")
+                positional = options[index:]
+                break
             if option == "--":
+                positional = options[index + 1 :]
                 break
 
             value = None
@@ -124,6 +127,15 @@ class Options:
                 raise UsageError(f"Unknown option: {option}")
 
             index += 1
+
+        parse_args = getattr(self, "parseArgs", None)
+        if parse_args is not None:
+            try:
+                parse_args(*positional)
+            except TypeError as exc:
+                raise UsageError(f"Invalid arguments: {exc}") from exc
+        elif positional and option != "--":
+            raise UsageError(f"Unknown argument: {positional[0]}")
 
         self.postOptions()
         return self.opts

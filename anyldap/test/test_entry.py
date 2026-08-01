@@ -12,6 +12,28 @@ class TestBaseLDAPEntry(unittest.TestCase):
     Tests for anyldap.entry.BaseLDAPEntry.
     """
 
+    def testLengthTruthLegacyTruthAndMembership(self):
+        value = entry.BaseLDAPEntry(
+            dn="dc=foo", attributes={"member": ["cn=one"], "cn": ["foo"]}
+        )
+        self.assertEqual(len(value), 2)
+        self.assertTrue(value)
+        self.assertTrue(value.__nonzero__())
+        self.assertTrue(value.hasMember("cn=one"))
+        self.assertFalse(value.hasMember("cn=two"))
+
+    def testEditableAbstractOperations(self):
+        value = entry.EditableLDAPEntry(dn="dc=foo")
+        [
+            self.assertRaises(NotImplementedError, operation, *args)
+            for operation, args in [
+                (value.undo, ()),
+                (value.commit, ()),
+                (value.move, ("dc=bar",)),
+                (value.delete, ()),
+            ]
+        ]
+
     def testEqualitySameType(self):
         """
         It is equal if it has the same DN (case insensitive)

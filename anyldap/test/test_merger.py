@@ -1,5 +1,8 @@
+import pytest
+
 from anyldap import config, testutil
-from anyldap.protocols.ldap import ldaperrors
+from anyldap.protocols import pureber
+from anyldap.protocols.ldap import ldapclient, ldaperrors
 from anyldap.protocols.ldap.merger import MergedLDAPServer
 from anyldap.protocols.pureldap import (
     LDAPAddRequest,
@@ -20,8 +23,88 @@ from anyldap.protocols.pureldap import (
     LDAPSearchResultEntry,
     LDAPUnbindRequest,
 )
-from anyldap.runtime import ConnectionDone
+from anyldap.runtime import ConnectionDone, Failure
 from anyldap.test import unittest
+
+
+@pytest.mark.anyio
+async def test_waiting_request_runs_when_real_client_connects():
+    server = MergedLDAPServer([config.LDAPConfig()], [False])
+    waiting = server._whenConnected(lambda value: value, "connected")
+    client = testutil.LDAPClientTestDriver()
+    client.connectionMade()
+    server._cbConnectionMade(client)
+    assert await waiting == "connected"
+
+
+def test_connection_failure_closes_transport_and_reports_ldap_error():
+    server = MergedLDAPServer([], [])
+    server.transport = testutil.StringTransport()
+    with pytest.raises(ldaperrors.LDAPOther, match="Cannot connect"):
+        server._failConnection(Failure(OSError("refused")))
+    assert server.transport.disconnecting
+
+
+@pytest.mark.anyio
+async def test_legacy_connection_starts_tls_before_becoming_ready():
+    client = ldapclient.LDAPClient()
+
+    class StartTLSLoopbackTransport(testutil.StringTransport):
+        def write(self, data):
+            super().write(data)
+            request, _ = pureber.berDecodeObject(client.berdecoder, data)
+            client.dataReceived(
+                LDAPMessage(
+                    ldapclient.pureldap.LDAPStartTLSResponse(resultCode=0),
+                    id=request.id,
+                ).toWire()
+            )
+
+        def startTLS(self, context):
+            self.tls_context = context
+
+    transport = StartTLSLoopbackTransport()
+    client.transport = transport
+    client.connectionMade()
+    def location(protocol_factory):
+        return client
+
+    server = MergedLDAPServer(
+        [config.LDAPConfig(serviceLocationOverrides={"": location})],
+        [True],
+    )
+    server.transport = testutil.StringTransport()
+
+    server.connectionMade()
+    assert await server._whenConnected(lambda: server) is server
+    request, _ = pureber.berDecodeObject(client.berdecoder, transport.value())
+    assert request.value.requestName == ldapclient.pureldap.LDAPStartTLSRequest.oid
+    assert transport.tls_context is None
+
+
+@pytest.mark.anyio
+async def test_async_client_queue_supports_legacy_client_interface():
+    client = testutil.LDAPClientTestDriver([LDAPBindResponse(resultCode=0)], [])
+    client.connectionMade()
+    server = MergedLDAPServer([], [])
+    server.clients = [client]
+    replies = []
+    await server._clientQueue_async(LDAPBindRequest(), None, replies.append)
+    await server._clientQueue_async(LDAPUnbindRequest(), None, replies.append)
+    assert replies == [LDAPBindResponse(resultCode=0)]
+    client.assertSent(LDAPBindRequest(), LDAPUnbindRequest())
+
+
+def test_connection_lost_skips_an_already_disconnected_client():
+    client = ldapclient.LDAPClient()
+    server = MergedLDAPServer([], [])
+    server.clients = [client]
+    server.transport = testutil.StringTransport()
+    server.connectionMade()
+
+    server.connectionLost(ConnectionDone())
+
+    assert server.clients == []
 
 
 class MergedLDAPServerTest(unittest.TestCase):

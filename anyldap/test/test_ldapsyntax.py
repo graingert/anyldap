@@ -4,6 +4,8 @@ Test cases for anyldap.protocols.ldap.ldapsyntax module.
 
 import re
 
+import pytest
+
 from anyldap import config, delta, testutil
 from anyldap.deferred import maybeDeferred
 from anyldap.protocols import pureber, pureldap
@@ -11,6 +13,138 @@ from anyldap.protocols.ldap import ldapclient, ldaperrors, ldapsyntax
 from anyldap.runtime import ConnectionLost, Failure
 from anyldap.test import unittest
 from anyldap.testutil import LDAPClientTestDriver
+
+
+@pytest.mark.anyio
+async def test_async_entry_methods_use_the_ldap_client_interface():
+    client = LDAPClientTestDriver(
+        [pureldap.LDAPModifyResponse(resultCode=0)],
+        [pureldap.LDAPModifyDNResponse(resultCode=0)],
+        [pureldap.LDAPAddResponse(resultCode=0)],
+        [pureldap.LDAPExtendedResponse(resultCode=0)],
+        [pureldap.LDAPModifyResponse(resultCode=0)],
+        [pureldap.LDAPExtendedResponse(resultCode=0)],
+        [
+            pureldap.LDAPSearchResultEntry(
+                "", [("namingContexts", ["dc=example,dc=com"])]
+            ),
+            pureldap.LDAPSearchResultDone(resultCode=0),
+        ],
+        [
+            pureldap.LDAPSearchResultEntry(
+                "cn=user,dc=example,dc=com", [("cn", ["user"])]
+            ),
+            pureldap.LDAPSearchResultDone(resultCode=0),
+        ],
+        [
+            pureldap.LDAPSearchResultEntry(
+                "cn=user,dc=example,dc=com", [("cn", ["user"])]
+            ),
+            pureldap.LDAPSearchResultDone(resultCode=0),
+        ],
+        [
+            pureldap.LDAPSearchResultEntry(
+                "cn=user,dc=example,dc=com", [("cn", ["user"])]
+            ),
+            pureldap.LDAPSearchResultDone(resultCode=0),
+        ],
+        [pureldap.LDAPDelResponse(resultCode=0)],
+    )
+    entry = ldapsyntax.LDAPEntry(
+        client,
+        "cn=user,dc=example,dc=com",
+        {"objectClass": ["person"], "cn": ["user"]},
+        complete=True,
+    )
+
+    assert len(entry) == 2
+    assert entry.__nonzero__() is True
+    assert await entry.commit_async() is entry
+    entry["description"] = ["updated"]
+    assert await entry.commit_async() is entry
+    assert await entry.move_async("cn=moved,dc=example,dc=com") is entry
+    child = await entry.addChild_async("cn=child", {"objectClass": ["person"]})
+    assert child.dn.getText() == "cn=child,cn=moved,dc=example,dc=com"
+    assert await entry.setPassword_ExtendedOperation_async("new-secret") is entry
+    assert await entry.setPassword_Samba_async("new-secret", style="sambaSamAccount") is entry
+    assert await entry.setPasswordMaybe_Samba_async("new-secret") is entry
+    assert await entry.setPassword_async("new-secret") is entry
+    context = await entry.namingContext_async()
+    assert context.dn.getText() == "dc=example,dc=com"
+    assert await entry.fetch_async("cn") is entry
+    results = await entry.search_async(
+        filterText="(cn=user)",
+        filterObject=pureldap.LDAPFilter_present("cn"),
+        derefAliases=pureldap.LDAP_DEREF_neverDerefAliases,
+    )
+    assert results[0].dn.getText() == "cn=user,dc=example,dc=com"
+    found = await entry.lookup_async("cn=user,dc=example,dc=com")
+    assert found.dn.getText() == "cn=user,dc=example,dc=com"
+    assert await entry.delete_async() is entry
+
+
+@pytest.mark.anyio
+async def test_async_entry_operations_surface_real_ldap_errors():
+    client = LDAPClientTestDriver(
+        [pureldap.LDAPModifyResponse(resultCode=ldaperrors.LDAPNoSuchObject.resultCode)],
+        [
+            pureldap.LDAPModifyDNResponse(
+                resultCode=ldaperrors.LDAPNoSuchObject.resultCode
+            )
+        ],
+        [
+            pureldap.LDAPAddResponse(
+                resultCode=ldaperrors.LDAPEntryAlreadyExists.resultCode
+            )
+        ],
+    )
+    entry = ldapsyntax.LDAPEntry(
+        client,
+        "cn=missing,dc=example,dc=com",
+        {"cn": ["missing"]},
+        complete=True,
+    )
+    entry["description"] = ["dirty"]
+    with pytest.raises(ldaperrors.LDAPNoSuchObject):
+        await entry.commit_async()
+    entry.undo()
+    with pytest.raises(ldaperrors.LDAPNoSuchObject):
+        await entry.move_async("cn=moved,dc=example,dc=com")
+    with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
+        await entry.addChild_async("cn=child", {"cn": ["child"]})
+
+
+def test_password_error_repr_and_non_ready_state():
+    error = ldapsyntax.PasswordSetAggregateError(
+        [("plugin", Failure(RuntimeError("failed")))]
+    )
+    assert repr(error).startswith("<PasswordSetAggregateError errors=")
+    entry = ldapsyntax.LDAPEntry(LDAPClientTestDriver(), "cn=user")
+    entry._state = "committing"
+    with pytest.raises(ldapsyntax.ObjectInBadStateError, match="committing"):
+        entry.commit()
+
+
+@pytest.mark.anyio
+async def test_search_accepts_reference_and_nonfatal_size_limit_responses():
+    client = LDAPClientTestDriver(
+        [
+            pureldap.LDAPSearchResultReference(["ldap://example"]),
+            pureldap.LDAPSearchResultDone(
+                resultCode=ldaperrors.LDAPSizeLimitExceeded.resultCode
+            ),
+        ]
+    )
+    entry = ldapsyntax.LDAPEntry(client, "dc=example,dc=com")
+    assert await entry.search_async(sizeLimitIsNonFatal=True) == []
+
+
+@pytest.mark.anyio
+async def test_search_rejects_non_search_protocol_response():
+    client = LDAPClientTestDriver([pureldap.LDAPBindResponse(resultCode=0)])
+    entry = ldapsyntax.LDAPEntry(client, "dc=example,dc=com")
+    with pytest.raises(ldaperrors.LDAPProtocolError, match="bad search response"):
+        await entry.search_async()
 
 
 class LDAPEntryTests(unittest.TestCase):

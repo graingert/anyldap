@@ -110,16 +110,12 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         for c in self.clients:
             assert c is not None
             if c.connected:
-                if not self.unbound:
-                    if hasattr(c, "unbind"):
-                        c.unbind()
-                    elif hasattr(c, "aclose") and self._anyio_task_group is not None:
-                        self._anyio_task_group.start_soon(c.aclose)
+                if hasattr(c, "aclose") and self._anyio_task_group is not None:
+                    self._anyio_task_group.start_soon(c.aclose)
+                elif not self.unbound:
+                    c.unbind()
                 else:
-                    if hasattr(c, "transport"):
-                        c.transport.loseConnection()
-                    elif hasattr(c, "aclose") and self._anyio_task_group is not None:
-                        self._anyio_task_group.start_soon(c.aclose)
+                    c.transport.loseConnection()
 
         self.clients = []
         self.unbound = True

@@ -47,17 +47,13 @@ class ProxyBase(ldapserver.BaseLDAPServer):
 
     def connectionLost(self, reason):
         if self.client is not None and self.client.connected:
-            if not self.unbound:
-                if hasattr(self.client, "unbind"):
-                    self.client.unbind()
-                elif hasattr(self.client, "aclose") and self._anyio_task_group is not None:
-                    self._anyio_task_group.start_soon(self.client.aclose)
-                self.unbound = True
+            if hasattr(self.client, "aclose") and self._anyio_task_group is not None:
+                self._anyio_task_group.start_soon(self.client.aclose)
+            elif not self.unbound:
+                self.client.unbind()
             else:
-                if hasattr(self.client, "transport"):
-                    self.client.transport.loseConnection()
-                elif hasattr(self.client, "aclose") and self._anyio_task_group is not None:
-                    self._anyio_task_group.start_soon(self.client.aclose)
+                self.client.transport.loseConnection()
+            self.unbound = True
         self.client = None
         ldapserver.BaseLDAPServer.connectionLost(self, reason)
 
@@ -324,17 +320,11 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             return
 
         if self.use_tls:
-            if hasattr(proto, "startTLS_async"):
-                proto = await proto.startTLS_async()
-            else:
-                proto = await await_result(proto.startTLS())
+            proto = await proto.startTLS_async()
 
         self.client = proto
         if not self.connected:
-            if hasattr(self.client, "aclose"):
-                await self.client.aclose()
-            else:
-                self.client.transport.loseConnection()
+            await self.client.aclose()
             self.client = None
             self.queuedRequests = []
             return

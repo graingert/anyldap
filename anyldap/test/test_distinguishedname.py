@@ -6,6 +6,42 @@ from anyldap.protocols.ldap import distinguishedname as dn
 from anyldap.test import unittest
 
 
+def test_attribute_value_and_rdn_comparison_edges():
+    first = dn.LDAPAttributeTypeAndValue(attributeType="cn", value="a")
+    second = dn.LDAPAttributeTypeAndValue(attributeType="cn", value="b")
+    other_type = dn.LDAPAttributeTypeAndValue(attributeType="sn", value="a")
+    assert first.__eq__(object()) is NotImplemented
+    assert first != second
+    assert not first.__lt__(object())
+    assert first < second
+    assert other_type > first
+    assert first <= second
+    assert second >= first
+
+    first_rdn = dn.RelativeDistinguishedName([first])
+    second_rdn = dn.RelativeDistinguishedName([second])
+    assert first_rdn.__eq__(object()) is NotImplemented
+    assert first_rdn != second_rdn
+    assert not first_rdn.__lt__(object())
+    assert first_rdn < second_rdn
+    assert second_rdn > first_rdn
+    assert first_rdn <= second_rdn
+    assert second_rdn >= first_rdn
+
+
+def test_distinguished_name_comparison_and_domain_edges():
+    value = dn.DistinguishedName("dc=example,dc=com")
+    assert value.__eq__(object()) is NotImplemented
+    assert value.__lt__(object()) is NotImplemented
+    assert value != object()
+    assert dn.DistinguishedName("cn=user,dc=example,dc=com").getDomainName() == (
+        "example.com"
+    )
+    assert dn.DistinguishedName("cn=user").getDomainName() is None
+    assert dn.DistinguishedName("cn=user+uid=1,dc=example").getDomainName() == "example"
+    assert value.contains("cn=user,dc=example,dc=com")
+
+
 class TestCaseWithKnownValues(unittest.TestCase):
     knownValues = ()
 

@@ -1,7 +1,7 @@
 import anyio
 import pytest
 
-from anyldap import config, ldapfilter
+from anyldap import config, ldapfilter, testutil
 from anyldap.deferred import fail, succeed
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, proxy, svcbindproxy
@@ -300,6 +300,29 @@ async def test_bind_handler_validation_and_anonymous_forwarding():
         pureldap.LDAPBindRequest(dn=""), None, lambda value: None
     )
     assert await result == "forwarded"
+
+
+async def test_legacy_bind_uses_connected_client_search_interface():
+    client = testutil.LDAPClientTestDriver(
+        [pureldap.LDAPSearchResultDone(ldaperrors.Success.resultCode)]
+    )
+    client.connectionMade()
+    server = svcbindproxy.ServiceBindingProxy(
+        config=config.LDAPConfig(identityBaseDN="dc=example,dc=com"),
+        services=["svc"],
+        fallback=False,
+    )
+    server.timestamp = lambda: NOW
+    server.client = client
+
+    response = await server.handle_LDAPBindRequest(
+        pureldap.LDAPBindRequest(dn="cn=jack,dc=example,dc=com", auth="secret"),
+        None,
+        lambda value: None,
+    )
+
+    assert response.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
+    client.assertSent(_search_request("svc"))
 
 
 def test_timestamp_shape_and_constructor_defaults():

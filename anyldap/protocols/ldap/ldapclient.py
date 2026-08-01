@@ -330,7 +330,7 @@ class LDAPClient(Protocol):
     async def attach_stream(self, stream, task_group):
         self._anyio_stream = stream
         self.connectionMade()
-        task_group.start_soon(self._read_from_stream)
+        task_group.start_soon(self._read_from_stream, stream)
         return self
 
     async def aclose(self):
@@ -341,10 +341,13 @@ class LDAPClient(Protocol):
         if self.connected:
             self.connectionLost(Failure(ConnectionDone()))
 
-    async def _read_from_stream(self):
+    async def _read_from_stream(self, stream=None):
+        if stream is None:
+            stream = self._anyio_stream
+            assert stream is not None
         try:
             while True:
-                data = await self._anyio_stream.receive()
+                data = await stream.receive()
                 if not data:
                     break
                 self.dataReceived(data)

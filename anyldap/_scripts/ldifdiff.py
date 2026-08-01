@@ -8,15 +8,15 @@ from anyldap.protocols.ldap import ldif
 
 
 def output(result, outputFile):
-    outputFile.write(ldif._header().decode("ascii"))
+    outputFile.write(ldif._header())
     for operation in result:
         outputFile.write(operation.asLDIF())
 
 
 async def main(filename1, filename2, outputFile):
-    with open(filename1) as file1:
+    with open(filename1, "rb") as file1:
         db1 = await await_result(inmemory.fromLDIFFile(file1))
-    with open(filename2) as file2:
+    with open(filename2, "rb") as file2:
         db2 = await await_result(inmemory.fromLDIFFile(file2))
     output(await await_result(db1.diffTree(db2)), outputFile)
 
@@ -36,7 +36,7 @@ def console_script():
     except usage.UsageError as exc:
         sys.stderr.write(f"{sys.argv[0]}: {exc}\n")
         raise SystemExit(1) from exc
-    anyio.run(main, options["file1"], options["file2"], sys.stdout)
+    anyio.run(main, options["file1"], options["file2"], sys.stdout.buffer)
 
 
 if __name__ == "__main__":

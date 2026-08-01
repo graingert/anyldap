@@ -54,8 +54,7 @@ def fetch(client, baseObject):
             assert (
                 len(subSchemas) == 1
             ), "More than one subschemaSubentry is not support yet. TODO"
-            for s in subSchemas:
-                return s
+            return next(iter(subSchemas))
         else:
             raise ldaperrors.LDAPOther("DN matched multiple entries")
 

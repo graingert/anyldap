@@ -16,6 +16,13 @@ from anyldap.usage import (
 )
 
 
+def test_duplicate_flag_declarations_are_yielded_once():
+    class DuplicateFlags(Options):
+        optFlags = (("verbose", "v", "first"), ("verbose", "v", "second"))
+
+    assert list(DuplicateFlags._iter_opt_flags()) == [("verbose", "v", "first")]
+
+
 class ScopeOptionsImplementation(Options, Options_scope):
     """
 
@@ -135,6 +142,13 @@ class TestCompleteOptions(TestCase):
     def test_double_dash_stops_option_parsing(self):
         options = Options()
         self.assertEqual(options.parseOptions(["--", "ignored"]), {})
+
+    def test_positional_arguments_are_dispatched(self):
+        options = HandlerOptions()
+        received = []
+        options.parseArgs = lambda *args: received.extend(args)
+        options.parseOptions(["first", "second"])
+        self.assertEqual(received, ["first", "second"])
 
     def test_option_errors(self):
         cases = [

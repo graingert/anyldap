@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from anyldap import config
+from anyldap import config, delta
 from anyldap._scripts import (
     fetchschema,
     find_server,
@@ -23,6 +23,7 @@ from anyldap._scripts import (
     search,
 )
 from anyldap.deferred import succeed
+from anyldap.protocols.ldap import ldapserver, merger, proxybase, svcbindproxy
 
 pytestmark = pytest.mark.anyio
 
@@ -64,6 +65,154 @@ def test_script_module_entrypoints_report_missing_arguments(module):
     )
     assert result.returncode == 1
     assert result.stderr
+
+
+@pytest.mark.parametrize(
+    "module",
+    [fetchschema, getfreenumber, ldap2passwd, ldifdiff, ldifpatch, passwd, rename, search],
+)
+def test_script_module_entrypoints_report_invalid_options(module):
+    result = subprocess.run(
+        [sys.executable, "-m", module.__name__, "--definitely-invalid"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "definitely-invalid" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("module", "arguments", "stdin"),
+    [
+        (fetchschema, ["--service-location=:127.0.0.1:1"], b""),
+        (getfreenumber, ["--service-location=:127.0.0.1:1"], b""),
+        (ldap2passwd, ["--service-location=:127.0.0.1:1"], b""),
+        (
+            passwd,
+            [
+                "--binddn=cn=user",
+                "--bind-auth-fd=0",
+                "--service-location=:127.0.0.1:1",
+            ],
+            b"secret\n",
+        ),
+        (
+            rename,
+            [
+                "--bind-auth-fd=0",
+                "--service-location=:127.0.0.1:1",
+                "cn=old",
+                "cn=new",
+            ],
+            b"secret\n",
+        ),
+        (
+            search,
+            ["--service-location=:127.0.0.1:1", "(objectClass=*)"],
+            b"",
+        ),
+        (find_server, ["="], b""),
+        (namingcontexts, ["127.0.0.1:1"], b""),
+    ],
+)
+def test_valid_script_entrypoints_reach_real_external_interface(
+    module, arguments, stdin
+):
+    result = subprocess.run(
+        [sys.executable, "-m", module.__name__, *arguments],
+        input=stdin,
+        check=False,
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize(
+    ("module", "message"),
+    [
+        (ldapserver, b"packaged AnyIO examples"),
+        (merger, b"AnyIO server entrypoints"),
+        (proxybase, b"AnyIO server entrypoints"),
+        (svcbindproxy, b"packaged AnyIO examples"),
+    ],
+)
+def test_legacy_protocol_module_entrypoints_explain_replacement(module, message):
+    result = subprocess.run(
+        [sys.executable, "-m", module.__name__],
+        check=False,
+        capture_output=True,
+    )
+    assert result.returncode == 1
+    assert message in result.stderr
+
+
+def test_ldifdiff_real_cli(tmp_path):
+    content = "dn: dc=example,dc=com\ndc: example\nobjectClass: domain\n\n"
+    before = tmp_path / "before.ldif"
+    after = tmp_path / "after.ldif"
+    before.write_text(content)
+    after.write_text(content)
+    result = subprocess.run(
+        [sys.executable, "-m", ldifdiff.__name__, str(before), str(after)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "version: 1\n\n"
+
+
+def test_ldifpatch_real_cli(tmp_path):
+    content = (
+        "dn: dc=example,dc=com\ndc: example\nobjectClass: domain\n\n"
+        "dn: cn=child,dc=example,dc=com\ncn: child\nobjectClass: person\n\n"
+    )
+    data = tmp_path / "data.ldif"
+    data.write_text(content)
+    result = subprocess.run(
+        [sys.executable, "-m", ldifpatch.__name__, str(data)],
+        input=(
+            "version: 1\n\n"
+            "dn: cn=child,dc=example,dc=com\n"
+            "changetype: delete\n\n"
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "dn: dc=example,dc=com" in result.stdout
+    assert "dn: cn=child,dc=example,dc=com" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("module", "arguments"),
+    [
+        (passwd, ["--binddn=cn=user"]),
+        (rename, ["cn=old", "cn=new"]),
+    ],
+)
+def test_bind_password_is_read_from_real_inherited_fd(module, arguments, tmp_path):
+    password_file = tmp_path / "password"
+    password_file.write_bytes(b"secret\n")
+    with password_file.open("rb") as password_stream:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                module.__name__,
+                f"--bind-auth-fd={password_stream.fileno()}",
+                "--service-location=:127.0.0.1:1",
+                *arguments,
+            ],
+            check=False,
+            capture_output=True,
+            pass_fds=(password_stream.fileno(),),
+            timeout=10,
+        )
+    assert result.returncode != 0
 
 
 def test_fetchschema_print_results(capsys):
@@ -113,20 +262,10 @@ def test_positional_scripts_require_arguments(module, monkeypatch, capsys):
 
 
 def test_ldifdiff_output():
-    operation = SimpleNamespace(asLDIF=lambda: "operation\n")
-    stream = io.StringIO()
+    operation = delta.DeleteOp("dc=example,dc=com")
+    stream = io.BytesIO()
     ldifdiff.output([operation], stream)
-    assert stream.getvalue().endswith("operation\n")
-
-
-def test_ldifpatch_output():
-    class Tree:
-        def subtree(self, callback):
-            callback("entry\n")
-
-    stream = io.StringIO()
-    ldifpatch.output(Tree(), stream)
-    assert stream.getvalue().endswith("entry\n")
+    assert stream.getvalue().endswith(b"changetype: delete\n\n")
 
 
 def test_ldap2passwd_callback(capsys):

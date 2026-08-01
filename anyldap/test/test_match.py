@@ -5,13 +5,17 @@ import re
 
 import attr
 
-from anyldap import inmemory
+from anyldap import entryhelpers, inmemory
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapsyntax
 from anyldap.test import unittest
 
 
 class TestEntryMatch(unittest.TestCase):
+    def test_safelower_preserves_values_without_lower(self):
+        marker = object()
+        self.assertIs(entryhelpers.safelower(marker), marker)
+
     def test_matchAll(self):
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
@@ -582,6 +586,75 @@ class TestEntryMatch(unittest.TestCase):
             re.escape("Match type not implemented: UnknownMatch()"),
             o.match,
             unknownMatch,
+        )
+
+    def test_substring_attribute_absent(self):
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
+        filter_object = pureldap.LDAPFilter_substrings(
+            type="missing", substrings=[pureldap.LDAPFilter_substrings_any("x")]
+        )
+        self.assertFalse(entry.match(filter_object))
+
+    def test_substring_without_initial_component(self):
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry(
+            "cn=foo", {"cn": ["prefix-middle-suffix"]}
+        )
+        filter_object = pureldap.LDAPFilter_substrings(
+            type="cn",
+            substrings=[
+                pureldap.LDAPFilter_substrings_any("middle"),
+                pureldap.LDAPFilter_substrings_final("suffix"),
+            ],
+        )
+        self.assertTrue(entry.match(filter_object))
+
+    def test_greater_or_equal_checks_multiple_values_without_match(self):
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"rank": [1, 2]})
+        filter_object = pureldap.LDAPFilter_greaterOrEqual(
+            attributeDesc=pureldap.LDAPAttributeDescription("rank"),
+            assertionValue=pureldap.LDAPAssertionValue(3),
+        )
+        self.assertFalse(entry.match(filter_object))
+
+    def test_extensible_match_uses_entry_attribute(self):
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"uid": ["Alice"]})
+        filter_object = pureldap.LDAPFilter_extensibleMatch(
+            type="uid", matchValue="alice"
+        )
+        self.assertTrue(entry.match(filter_object))
+
+    def test_extensible_matching_rule_is_explicitly_unsupported(self):
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"uid": ["Alice"]})
+        filter_object = pureldap.LDAPFilter_extensibleMatch(
+            matchingRule="caseIgnoreMatch", type="uid", matchValue="alice"
+        )
+        self.assertRaises(ldapsyntax.MatchNotImplemented, entry.match, filter_object)
+
+    def test_search_combines_text_and_object_filters(self):
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
+        result = entry.search(
+            filterText="(cn=foo)",
+            filterObject=pureldap.LDAPFilter_present("cn"),
+            scope=pureldap.LDAP_SCOPE_baseObject,
+        )
+        result.addCallback(self.assertEqual, [entry])
+        return result
+
+    def test_search_accepts_object_filter_without_text(self):
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
+        result = entry.search(
+            filterObject=pureldap.LDAPFilter_present("cn"),
+            scope=pureldap.LDAP_SCOPE_baseObject,
+        )
+        result.addCallback(self.assertEqual, [entry])
+        return result
+
+    def test_search_rejects_unknown_scope(self):
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
+        self.assertRaises(
+            ldapsyntax.ldaperrors.LDAPProtocolError,
+            entry.search,
+            scope=999,
         )
 
 

@@ -4,12 +4,12 @@ import inspect
 from contextlib import AsyncExitStack
 
 import anyio
+from anyio.abc import SocketAttribute
 
 from anyldap import delta, interfaces
 from anyldap.deferred import (
     Deferred,
     DeferredSource,
-    ensureDeferred,
     fail,
     logError,
     maybeDeferred,
@@ -263,14 +263,15 @@ class BaseLDAPServer(Protocol):
                 if isinstance(result, Deferred):
                     d = result
                 elif inspect.isawaitable(result):
-                    if self._anyio_task_group is not None:
+                    if self._anyio_task_group is None:
+                        result.close()
+                        d = fail(RuntimeError("async handlers require an AnyIO stream"))
+                    else:
                         d = DeferredSource()
                         self._anyio_task_group.start_soon(
                             self._resolve_awaitable, result, d
                         )
                         d = d.deferred
-                    else:
-                        d = ensureDeferred(result)
                 else:
                     d = succeed(result)
             d.addErrback(self._cbLDAPError, name)
@@ -289,13 +290,21 @@ async def serve_stream(stream, protocol_factory):
     return server
 
 
-async def listen(host, port, protocol_factory, *, backlog=65536):
+async def listen(
+    host,
+    port,
+    protocol_factory,
+    *,
+    backlog=65536,
+    task_status=anyio.TASK_STATUS_IGNORED,
+):
     listener = await anyio.create_tcp_listener(
         local_host=host,
         local_port=port,
         backlog=backlog,
     )
     async with listener:
+        task_status.started(listener.extra(SocketAttribute.local_address))
         await listener.serve(lambda stream: serve_stream(stream, protocol_factory))
 
 
@@ -668,13 +677,10 @@ class LDAPServer(BaseLDAPServer):
         d = self.boundUser.commit()
 
         def cb_(result):
-            if result:
-                return pureldap.LDAPExtendedResponse(
-                    resultCode=ldaperrors.Success.resultCode,
-                    responseName=self.extendedRequest_LDAPPasswordModifyRequest.oid,
-                )
-            else:
-                raise ldaperrors.LDAPOperationsError("Internal error.")
+            return pureldap.LDAPExtendedResponse(
+                resultCode=ldaperrors.Success.resultCode,
+                responseName=self.extendedRequest_LDAPPasswordModifyRequest.oid,
+            )
 
         d.addCallback(cb_)
         return d
