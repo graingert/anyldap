@@ -2,8 +2,8 @@
 anyldap Cookbook
 ================
 
-The following recipies demonstrate how to accomplish various LDAP-related 
-tasks with anyldap. Recipies are broken into categories for
+The following recipes demonstrate how to accomplish LDAP-related
+tasks with anyldap. Recipes are organized into categories for
 convenience.
 
 
