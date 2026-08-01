@@ -51,6 +51,21 @@ async def test_unavailable_script_module_entrypoints(module):
     assert "rewritten for the AnyIO runtime" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "module",
+    [find_server, ldifdiff, ldifpatch, namingcontexts, passwd, rename, search],
+)
+def test_script_module_entrypoints_report_missing_arguments(module):
+    result = subprocess.run(
+        [sys.executable, "-m", module.__name__],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stderr
+
+
 def test_fetchschema_print_results(capsys):
     fetchschema._printResults((["one", "two"], ["three"]))
     assert capsys.readouterr().out == "attributetype one\nattributetype two\n\nobjectclass three\n"
