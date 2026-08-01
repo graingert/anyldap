@@ -1,9 +1,9 @@
 ================
-Ldaptor Cookbook
+anyldap Cookbook
 ================
 
 The following recipies demonstrate how to accomplish various LDAP-related 
-tasks with Twisted and Ldaptor.  Recipies are broken into categories for
+tasks with anyldap. Recipies are broken into categories for
 convenience.
 
 

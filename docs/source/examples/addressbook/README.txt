@@ -3,7 +3,7 @@ Creating a simple LDAP application
 We will create a simple web-based address book application, utilizing
 LDAP for information storage. Among the topics covered will be an
 overview of LDAP, and an introduction to the Python programming
-language and Ldaptor and Twisted programming libraries.
+language and anyldap programming libraries.
 
 Estimated length: 1h 30min, including a short break.
 

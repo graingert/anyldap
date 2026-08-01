@@ -1,7 +1,7 @@
 ## Remove this paragraph
 
 Please have a look at our dev docs before submitting your PR:
-https://github.com/twisted/ldaptor/blob/master/CONTRIBUTING.rst
+https://github.com/graingert/anyldap/blob/main/CONTRIBUTING.rst
 
 ### Contributor Checklist:
 

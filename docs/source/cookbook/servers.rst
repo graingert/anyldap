@@ -24,9 +24,9 @@ First, a module that defines our DIT entries-- :file:`schema.py`
    :linenos:
 
 
-Next, the server code-- :file:`ldaptor_basic.py`
+Next, the server code-- :file:`anyldap_basic.py`
 
-.. literalinclude:: /examples/ldaptor_basic.py
+.. literalinclude:: /examples/anyldap_basic.py
    :language: python
    :linenos:
 
@@ -38,7 +38,7 @@ LDAP Server which allows BIND with UPN
 The LDAP server implemented by Microsoft Active Directory allows using the
 UPN as the BIND DN.
 
-It is possible to implement something similar using ldaptor.
+It is possible to implement something similar using anyldap.
 
 Below is a proof-of-concept implementation, which should not be used for
 production as it has an heuristic method for detecting which BIND DN is an
@@ -48,7 +48,7 @@ UPN.
 received.
 
 
-.. literalinclude:: /examples/ldaptor_with_upn_bind.py
+.. literalinclude:: /examples/anyldap_with_upn_bind.py
     :language: python
     :emphasize-lines: 34
     :linenos:
