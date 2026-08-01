@@ -644,7 +644,7 @@ async def test_serve_stream_runs_until_eof():
 
     class ObservedServer(ldapserver.LDAPServer):
         async def connectionMade_async(self):
-            super().connectionMade()
+            await super().connectionMade_async()
             ready.set()
 
     def build_server():

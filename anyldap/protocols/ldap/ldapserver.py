@@ -78,6 +78,9 @@ class BaseLDAPServer(Protocol):
         """TCP connection has opened"""
         self.connected = 1
 
+    async def connectionMade_async(self):
+        self.connectionMade()
+
     def connectionLost(self, reason=Protocol.connectionDone):
         """Called when TCP connection has been lost"""
         self.connected = 0
@@ -99,11 +102,7 @@ class BaseLDAPServer(Protocol):
         self.transport = _AnyIOTransport(self)
         task_group.start_soon(self._write_to_stream)
         task_group.start_soon(self._read_from_stream)
-        connection_made_async = getattr(self, "connectionMade_async", None)
-        if connection_made_async is None:
-            self.connectionMade()
-        else:
-            await connection_made_async()
+        await self.connectionMade_async()
         return self
 
     async def aclose(self):
