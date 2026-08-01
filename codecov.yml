@@ -18,4 +18,4 @@ coverage:
       tests:
         target: 100%
         paths:
-          - "ldaptor/test/test_*"
+          - "anyldap/test/test_*"

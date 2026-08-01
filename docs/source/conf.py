@@ -1,5 +1,5 @@
 #
-# Ldaptor documentation build configuration file, created by
+# anyldap documentation build configuration file, created by
 # sphinx-quickstart on Sun Oct 12 15:31:20 2014.
 #
 # This file is execfile()d with the current directory set to its
@@ -11,8 +11,8 @@
 # All configuration values have a default; values that are commented out
 # serve to show the default.
 
-import sys
 import os
+import sys
 
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
@@ -47,8 +47,8 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # General information about the project.
-project = "Ldaptor"
-copyright = "2016, Twisted Matrix Labs"
+project = "anyldap"
+copyright = "2016, anyldap contributors"
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -180,7 +180,7 @@ html_static_path = ["_static"]
 # html_file_suffix = None
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = "Ldaptordoc"
+htmlhelp_basename = "anyldapdoc"
 
 
 # -- Options for LaTeX output ---------------------------------------------
@@ -200,8 +200,8 @@ latex_elements = {
 latex_documents = [
     (
         "index",
-        "Ldaptor.tex",
-        "Ldaptor Documentation",
+        "anyldap.tex",
+        "anyldap Documentation",
         "Tommi Virtanen and Bret Curtis",
         "manual",
     ),
@@ -233,7 +233,7 @@ latex_documents = [
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
 man_pages = [
-    ("index", "ldaptor", "Ldaptor Documentation", ["Tommi Virtanen and Bret Curtis"], 1)
+    ("index", "anyldap", "anyldap Documentation", ["Tommi Virtanen and Bret Curtis"], 1)
 ]
 
 # If true, show URL addresses after external links.
@@ -248,10 +248,10 @@ man_pages = [
 texinfo_documents = [
     (
         "index",
-        "Ldaptor",
-        "Ldaptor Documentation",
+        "anyldap",
+        "anyldap Documentation",
         "Tommi Virtanen and Bret Curtis",
-        "Ldaptor",
+        "anyldap",
         "One line description of project.",
         "Miscellaneous",
     ),

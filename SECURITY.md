@@ -1,7 +1,8 @@
 # Security Policy
 
-twisted/ldaptor project uses the same security policy as [twisted/twisted](https://github.com/twisted/twisted).
+graingert/anyldap handles security reports through GitHub Security Advisories.
 
-For more details please check the [Twisted security process](https://github.com/twisted/twisted?tab=security-ov-file#readme)
+Please open a private report rather than filing a public issue.
 
-You can send a security report via [GitHub Security Advisories](https://github.com/twisted/ldaptor/security/advisories/new)
+You can send a security report via
+[GitHub Security Advisories](https://github.com/graingert/anyldap/security/advisories/new)

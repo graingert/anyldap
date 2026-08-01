@@ -1,17 +1,17 @@
-Welcome to Ldaptor's documentation!
+Welcome to AnyLDAP's documentation!
 ===================================
 
-What is Ldaptor
+What is AnyLDAP
 ---------------
 
-Ldaptor is a pure-Python Twisted library that implements:
+AnyLDAP is a pure-Python AnyIO library that implements:
 
 - LDAP client and server logic
 - separately-accessible LDAP and BER protocol message generation/parsing
 - ASCII-format LDAP filter generation and parsing
 - LDIF format data generation
 
-Get it from `PyPI <https://pypi.python.org/pypi/Ldaptor>`_, find out what's new in the :doc:`NEWS`!
+Get it from `PyPI <https://pypi.python.org/pypi/anyldap>`_, find out what's new in the :doc:`NEWS`!
 
 -----------
 Quick Start
@@ -31,10 +31,10 @@ User's Guide
 
    ldap-intro
    simple-app 
-   ldaptor
+   anyldap
 
 ----------------
-Ldaptor Cookbook
+AnyLDAP Cookbook
 ----------------
 
 .. toctree::

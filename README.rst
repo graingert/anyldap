@@ -1,23 +1,23 @@
-Ldaptor
+anyldap
 =======
 
-.. image:: https://img.shields.io/codecov/c/github/twisted/ldaptor?label=codecov&logo=codecov
+.. image:: https://img.shields.io/codecov/c/github/graingert/anyldap?label=codecov&logo=codecov
     :alt: Codecov
-    :target: https://codecov.io/gh/twisted/ldaptor
-.. image:: https://img.shields.io/readthedocs/ldaptor?logo=read-the-docs
+    :target: https://codecov.io/gh/graingert/anyldap
+.. image:: https://img.shields.io/readthedocs/anyldap?logo=read-the-docs
     :alt: Read the Docs
-    :target: https://ldaptor.readthedocs.io/en/latest/
-.. image:: https://img.shields.io/github/workflow/status/twisted/ldaptor/CI?label=GitHub%20Actions&logo=github
+    :target: https://anyldap.readthedocs.io/en/latest/
+.. image:: https://img.shields.io/github/actions/workflow/status/graingert/anyldap/main.yml?label=GitHub%20Actions&logo=github
     :alt: GitHub Actions
-    :target: https://github.com/twisted/ldaptor
-.. image:: https://img.shields.io/pypi/v/ldaptor?logo=pypi
+    :target: https://github.com/graingert/anyldap
+.. image:: https://img.shields.io/pypi/v/anyldap?logo=pypi
     :alt: PyPI
-    :target: https://pypi.org/project/ldaptor/
+    :target: https://pypi.org/project/anyldap/
 .. image:: https://img.shields.io/badge/code%20style-black-black
     :alt: Black
     :target: https://github.com/psf/black
 
-Ldaptor is a pure-Python library that implements:
+anyldap is a pure-Python library that implements:
 
 - LDAP client logic
 - separately-accessible LDAP and BER protocol message generation/parsing
@@ -27,7 +27,7 @@ Ldaptor is a pure-Python library that implements:
 
 Also included is a set of LDAP utilities for use from the command line.
 
-Verbose documentation can be found on `ReadTheDocs <https://ldaptor.readthedocs.org>`_.
+Verbose documentation can be found on `ReadTheDocs <https://anyldap.readthedocs.org>`_.
 
 
 Quick Usage Example
@@ -35,59 +35,53 @@ Quick Usage Example
 
 .. code-block:: python
 
-    from twisted.internet import reactor, defer
-    from ldaptor.protocols.ldap import ldapclient, ldapsyntax, ldapconnector
+    import anyio
 
-    @defer.inlineCallbacks
-    def example():
-        # The following arguments may be also specified as unicode strings
-        # but it is recommended to use byte strings for ldaptor objects
-        serverip = b'192.168.128.21'
-        basedn = b'dc=example,dc=com'
-        binddn = b'bjensen@example.com'
-        bindpw = b'secret'
-        query = b'(cn=Babs*)'
-        c = ldapconnector.LDAPClientCreator(reactor, ldapclient.LDAPClient)
+    from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapsyntax
+
+
+    async def example():
+        serverip = b"192.168.128.21"
+        basedn = b"dc=example,dc=com"
+        binddn = b"bjensen@example.com"
+        bindpw = b"secret"
+        query = b"(cn=Babs*)"
+        creator = ldapconnector.LDAPClientCreator(None, ldapclient.LDAPClient)
         overrides = {basedn: (serverip, 389)}
-        client = yield c.connect(basedn, overrides=overrides)
-        yield client.bind(binddn, bindpw)
-        o = ldapsyntax.LDAPEntry(client, basedn)
-        results = yield o.search(filterText=query)
-        for entry in results:
-            print(entry.getLDIF())
+        client = await creator.connectAsync(basedn, overrides=overrides)
+        await client.bind_async(binddn, bindpw)
+        entry = ldapsyntax.LDAPEntry(client, basedn)
+        results = await entry.search_async(filterText=query)
+        for result in results:
+            print(result.getLDIF())
 
-    if __name__ == '__main__':
-        df = example()
-        df.addErrback(lambda err: err.printTraceback())
-        df.addCallback(lambda _: reactor.stop())
-        reactor.run()
+
+    if __name__ == "__main__":
+        anyio.run(example)
 
 
 Installation
 ------------
 
-Ldaptor can be installed using the standard command line method::
+anyldap can be installed using the standard command line method::
 
     python setup.py install
 
 or using pip from PyPI::
 
-    pip install ldaptor
+    pip install anyldap
 
-Linux distributions may also have ready packaged versions of Ldaptor and Twisted. Debian and Ubuntu have quality Ldaptor packages that can be installed e.g., by::
+Linux distributions may also have ready packaged versions of anyldap. Debian and Ubuntu may provide packages that can be installed e.g., by::
 
-    apt-get install python-ldaptor
+    apt-get install python-anyldap
 
-To run the LDAP server (bind port 38942) from a repo checkout with
-the project installed::
-
-    twistd -n --pidfile=ldapserver.pid --logfile=ldapserver.log \
-        -y test-ldapserver.tac
+For a server example from a repo checkout, see
+``docs/source/examples/quickstart_server.py``.
 
 Dependencies:
 
-- `Twisted[tls] <https://pypi.python.org/pypi/Twisted/>`_
+- `anyio <https://pypi.org/project/anyio/>`_
 - `pyparsing <https://pypi.python.org/pypi/pyparsing/>`_
 - `passlib <https://pypi.python.org/pypi/passlib/>`_ for Samba passwords
 - `six <https://pypi.python.org/pypi/six/>`_ for simultaneous Python 2 and 3 compatability
-- `zope.interface <https://pypi.python.org/pypi/zope.interface/>`_ to register implementers of Twisted interfaces
+- `zope.interface <https://pypi.python.org/pypi/zope.interface/>`_

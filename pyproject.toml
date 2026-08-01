@@ -1,57 +1,138 @@
 [build-system]
-requires = [ "setuptools >= 35.0.2", "wheel >= 0.29.0"]
+requires = ["setuptools >= 61.0", "wheel >= 0.29.0"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "anyldap"
+dynamic = ["version", "readme"]
+description = "A Pure-Python AnyIO library for LDAP"
+authors = [{ name = "Tommi Virtanen", email = "tv@eagain.net" }]
+maintainers = [{ name = "Bret Curtis", email = "psi29a@gmail.com" }]
+license = { text = "MIT" }
+requires-python = ">=3.6"
+dependencies = ["anyio", "dnspython", "passlib", "pyparsing", "six>=1.7", "zope.interface"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 5 - Production/Stable",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Systems Administration :: Authentication/Directory :: LDAP",
+]
+urls = { Homepage = "https://github.com/graingert/anyldap" }
+
+[project.optional-dependencies]
+docs = [
+    "alabaster~=0.7.12",
+    "commonmark~=0.9.1",
+    "docutils~=0.16.0",
+    "mock~=4.0",
+    "pillow~=7.2",
+    "readthedocs-sphinx-ext~=2.1",
+    "recommonmark~=0.6.0",
+    "sphinx~=3.2",
+    "sphinx-rtd-theme~=0.5.0",
+]
+
+[project.scripts]
+anyldap-ldap2dhcpconf = "anyldap._scripts.ldap2dhcpconf:console_script"
+anyldap-ldap2maradns = "anyldap._scripts.ldap2maradns:console_script"
+anyldap-ldap2dnszones = "anyldap._scripts.ldap2dnszones:console_script"
+anyldap-search = "anyldap._scripts.search:console_script"
+anyldap-namingcontexts = "anyldap._scripts.namingcontexts:console_script"
+anyldap-passwd = "anyldap._scripts.passwd:console_script"
+anyldap-ldap2passwd = "anyldap._scripts.ldap2passwd:console_script"
+anyldap-getfreenumber = "anyldap._scripts.getfreenumber:console_script"
+anyldap-ldap2pdns = "anyldap._scripts.ldap2pdns:console_script"
+anyldap-find-server = "anyldap._scripts.find_server:console_script"
+anyldap-rename = "anyldap._scripts.rename:console_script"
+anyldap-fetchschema = "anyldap._scripts.fetchschema:console_script"
+anyldap-ldifdiff = "anyldap._scripts.ldifdiff:console_script"
+anyldap-ldifpatch = "anyldap._scripts.ldifpatch:console_script"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = { attr = "anyldap.__version__" }
+readme = { file = ["README.rst"], content-type = "text/x-rst" }
+
+[tool.setuptools.packages.find]
+include = ["anyldap*"]
 
 [tool.coverage.run]
 branch = true
-source_pkgs = ["ldaptor"]
+source_pkgs = ["anyldap"]
 parallel = true
 
 [tool.coverage.paths]
 source = [
-    "ldaptor",
-    "*/site-packages/ldaptor",
-    '*\site-packages\ldaptor',
+    "anyldap",
+    "*/site-packages/anyldap",
+    '*\site-packages\anyldap',
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["anyldap/test"]
+
+[tool.ruff]
+line-length = 368
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E101",
+    "E203",
+    "E265",
+    "E401",
+    "E402",
+    "E713",
+    "E741",
+    "E743",
+    "W191",
+    "W291",
 ]
 
 
 [tool.tox]
 legacy_tox_ini = """
 ; tox configuration file for running tests on local dev env and CI.
-;
-; The local dev environment will be executed against latest released Twisted.
-; The coverage is reported only and local dev and not on CI as there
-; we have separate reported (ex codecov.io)
 
 [tox]
 minversion=3.20.0
 isolated_build=true
 requires=
     virtualenv >= 20.1.0
-    tox-wheel >= 0.6.0
-    tox-gh-actions >= 2.1.0
 ;
 ; Tags explanation:
-; * test - run trial tests
 ; * dev - run things in local dev mode
 envlist =
-    py{36,37,38,39,py3}-test-{twlatest,twtrunk,dev}
-    py39-linters,
+    py{310,311,312,313,314,py3}-test
+    py312-test-dev
+    py312-linters,
     documentation,
 
 
 [testenv]
-wheel = True
-wheel_build_env = build
 parallel_show_output = True
 deps = 
     coverage[toml] >= 5.3
+    anyio
+    dnspython
     pyparsing
+    pytest
+    trio
     passlib
-    twlatest: Twisted[tls]
-    twtrunk: Twisted[tls] @ https://github.com/twisted/twisted/archive/trunk.tar.gz
     ; Dependecies for local dev environment.
-    dev: Twisted[tls]
     dev: diff_cover
     ; Linters are installed both on local dev and the dedicated env.
     {dev,linters}: pre-commit
@@ -64,8 +145,8 @@ passenv = *
 ; This is done in order to reuse
 commands =
     {envpython} --version
-    test: trial --version
-    test: coverage run --rcfile={toxinidir}/pyproject.toml -m twisted.trial --temp-directory={envtmpdir}/_trial_temp {posargs:ldaptor}
+    test: pytest --version
+    test: coverage run --rcfile={toxinidir}/pyproject.toml -m pytest {posargs:anyldap/test}
 
     ; Only run on local dev env.
     dev: coverage report --show-missing
@@ -75,29 +156,23 @@ commands =
     dev: pre-commit run --all-files --show-diff-on-failure
     linters: pre-commit {posargs:run --all-files --show-diff-on-failure}
 
-[testenv:build]
-# empty environment to build universal wheel once per tox invocation
-# https://github.com/ionelmc/tox-wheel#build-configuration
-
 [testenv:documentation]
 deps = sphinx
-basepython=python3.9
+basepython=python3.12
 changedir = {envtmpdir}
-whitelist_externals = cp
+allowlist_externals = cp
 commands =
     sphinx-build -b html -Ean -j 2 -w sphinx-errors \
         {toxinidir}/docs/source ./docs/
     cp -r . {toxinidir}/build
 
 [testenv:release]
-deps = pep517
-whitelist_externals =
-    cp
+deps = build
+allowlist_externals =
     rm
 commands =
     rm -rf {toxinidir}/dist
-    cp -r {distdir} {toxinidir}/dist # copy the wheel built by tox-wheel
-    {envpython} -m pep517.build --source --out-dir={toxinidir}/dist {toxinidir}
+    {envpython} -m build --sdist --wheel --outdir {toxinidir}/dist {toxinidir}
 
 [testenv:publishcov]
 passenv = GITHUB_*
@@ -106,5 +181,10 @@ deps =
   coverage[toml]>=5.3
 commands =
     codecov --required
-depends = py{,35,36,37,38,39,py3}-test-{twlatest,twtrunk,dev}
+depends = py{310,311,312,313,314,py3}-test
 """
+
+[tool.zest-releaser]
+python-file-with-version = "anyldap/__init__.py"
+history-file = "docs/source/NEWS.rst"
+tag-format = "v{version}"
