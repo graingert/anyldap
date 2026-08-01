@@ -1,10 +1,33 @@
 """
 Test cases for anyldap.protocols.ldap.ldapfilter module.
 """
+import subprocess
+import sys
+
+import pytest
 
 from anyldap import ldapfilter
 from anyldap.protocols import pureldap
 from anyldap.test import unittest
+
+
+def test_filter_errors_and_legacy_extensible_parser():
+    error = ldapfilter.InvalidLDAPFilter("bad", 2, "text")
+    assert str(error) == "Invalid LDAP filter: bad at point 2 in 'text'"
+    with pytest.raises(NotImplementedError):
+        ldapfilter.parseExtensible("cn", "value")
+    with pytest.raises(ldapfilter.InvalidLDAPFilter):
+        ldapfilter.parseMaybeSubstring("cn", "\\")
+
+
+def test_filter_module_entrypoint():
+    result = subprocess.run(
+        [sys.executable, "-m", ldapfilter.__name__, "(cn=alice)"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "LDAPFilter_equalityMatch" in result.stdout
 
 
 class RFC2254Examples(unittest.TestCase):

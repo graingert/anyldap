@@ -123,6 +123,10 @@ def test_io_pump_and_connected_protocols():
     client.transport.loseConnection()
     assert client.transport.disconnecting
 
+    client.transport.write(b"flush-to-server")
+    pump.flush()
+    assert b"flush-to-server" in server.received
+
 
 async def test_coroutine_function_adapter():
     async def add(left, right):
@@ -211,14 +215,19 @@ def test_string_transport_and_must_raise():
 
 
 def test_calltrace_profiles_calls(capsys):
+    testutil._print_func_name(sys._getframe(), "call", None)
     testutil.calltrace()
     sys.setprofile(None)
     assert "call" in capsys.readouterr().out
 
 
 async def test_create_server_compatibility_helper():
-    server = testutil.createServer(proxy.Proxy)
+    server = testutil.createServer(proxy.Proxy, proto_args={})
     assert server.connected
     assert server.client is server.clientTestDriver
+    server.client.responses.clear()
+    server.connectionLost(Exception("closed"))
+
+    server = testutil.createServer(proxy.Proxy)
     server.client.responses.clear()
     server.connectionLost(Exception("closed"))

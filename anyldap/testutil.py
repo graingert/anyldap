@@ -30,23 +30,24 @@ def mustRaise(dummy):
     raise unittest.FailTest("Should have raised an exception.")
 
 
+def _print_func_name(frame, event, arg):
+    print(
+        "|%s: %s:%d:%s"
+        % (
+            event,
+            frame.f_code.co_filename,
+            frame.f_code.co_firstlineno,
+            frame.f_code.co_name,
+        )
+    )
+
+
 def calltrace():
     """Print out all function calls. For debug use only."""
 
-    def printfuncnames(frame, event, arg):
-        print(
-            "|%s: %s:%d:%s"
-            % (
-                event,
-                frame.f_code.co_filename,
-                frame.f_code.co_firstlineno,
-                frame.f_code.co_name,
-            )
-        )
-
     import sys
 
-    sys.setprofile(printfuncnames)
+    sys.setprofile(_print_func_name)
 
 
 class FakeTransport:

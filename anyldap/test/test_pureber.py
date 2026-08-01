@@ -5,6 +5,26 @@ from anyldap.protocols import pureber
 from anyldap.test import unittest
 
 
+def test_custom_tag_representations_and_unknown_tag(capsys):
+    values = [
+        pureber.BERInteger(1, tag=10),
+        pureber.BEROctetString(b"value", tag=10),
+        pureber.BERNull(tag=10),
+        pureber.BERBoolean(True, tag=10),
+        pureber.BERSequence([], tag=10),
+    ]
+    for value in values:
+        assert "tag=10" in repr(value)
+
+    context = pureber.BERDecoderContext()
+    decoded, used = pureber.berDecodeObject(context, b"\x0e\x00")
+    assert decoded is None
+    assert used == 2
+    assert "no tag 0x0e" in capsys.readouterr().out
+    assert repr(pureber.BERBoolean(True)) == "BERBoolean(value=255)"
+    assert pureber.berDecodeMultiple(b"\x0e\x00", context) == []
+
+
 def s(*l):
     """Join all members of list to a byte string. Integer members are converted to bytes"""
     r = b""

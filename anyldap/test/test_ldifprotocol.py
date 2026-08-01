@@ -6,6 +6,11 @@ from anyldap.protocols.ldap import distinguishedname, ldifprotocol
 from anyldap.test import unittest
 
 
+def test_base_parser_accepts_entry_hook():
+    parser = ldifprotocol.LDIF()
+    assert parser.gotEntry(object()) is None
+
+
 class FixStringRepresentation:
     """
     A simple object which has a fix string representation.

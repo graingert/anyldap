@@ -2,6 +2,7 @@
 Test cases for anyldap.usage
 """
 import re
+import sys
 
 from anyldap.protocols.ldap.distinguishedname import DistinguishedName
 from anyldap.test.unittest import TestCase
@@ -67,7 +68,28 @@ class CompleteOptions(
         self.opts["toggled"] = value
 
 
+class HandlerOptions(Options):
+    optFlags = (("verbose", "v", "verbose output"),)
+    optParameters = (("custom", "c", None, "custom value"),)
+
+    def opt_verbose(self):
+        self.opts["handled-flag"] = True
+
+    def opt_custom(self, value):
+        self.opts["handled-parameter"] = value
+
+
 class TestCompleteOptions(TestCase):
+    def test_uses_process_arguments_and_option_handlers(self):
+        previous = sys.argv
+        try:
+            sys.argv = ["command", "--verbose", "--custom=value"]
+            result = HandlerOptions().parseOptions()
+        finally:
+            sys.argv = previous
+        self.assertTrue(result["handled-flag"])
+        self.assertEqual(result["handled-parameter"], "value")
+
     def test_mapping_protocol(self):
         options = Options()
         options["key"] = "value"
