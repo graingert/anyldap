@@ -10,9 +10,7 @@ from anyldap.test import unittest
 def test_notify_ignores_unrelated_attributes():
     assert sambaAccount.Autofill_samba().notify({}, "description") is None
     assert (
-        sambaSamAccount.Autofill_sambaSamAccount("S-1-5-21").notify(
-            {}, "description"
-        )
+        sambaSamAccount.Autofill_samba("S-1-5-21").notify({}, "description")
         is None
     )
 
