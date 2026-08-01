@@ -92,6 +92,13 @@ class FakeAsyncClient:
         self.connected = False
 
 
+async def test_fake_async_client_no_response_helper():
+    client = FakeAsyncClient([])
+    request = pureldap.LDAPUnbindRequest()
+    await client.send_noResponse_async(request)
+    assert client.sent == [request]
+
+
 class FakeConfig:
     def getServiceLocationOverrides(self):
         return {}

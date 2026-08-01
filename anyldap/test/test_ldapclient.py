@@ -90,6 +90,34 @@ async def test_send_async_receives_response_from_stream():
 
 
 @pytest.mark.anyio
+async def test_send_async_uses_legacy_transport():
+    sent = anyio.Event()
+
+    class NotifyingTransport(testutil.StringTransport):
+        def write(self, data):
+            super().write(data)
+            sent.set()
+
+    client = ldapclient.LDAPClient()
+    client.makeConnection(NotifyingTransport())
+    results = []
+
+    async def send():
+        results.append(await client.send_async(pureldap.LDAPBindRequest()))
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await sent.wait()
+        message_id = next(iter(client.onwire))
+        client.handle(
+            pureldap.LDAPMessage(
+                pureldap.LDAPBindResponse(resultCode=0), id=message_id
+            )
+        )
+    assert isinstance(results[0], pureldap.LDAPBindResponse)
+
+
+@pytest.mark.anyio
 async def test_starttls_async_legacy_transport():
     client = ldapclient.LDAPClient()
     client.makeConnection(testutil.StringTransport())
@@ -204,6 +232,24 @@ def test_multi_response_controls_handler_and_starttls_send():
     )
     assert seen
     assert not client.onwire
+
+    seen.clear()
+
+    def handle_twice(response, controls):
+        seen.append((response, controls))
+        return len(seen) == 2
+
+    client.send_multiResponse_ex(
+        pureldap.LDAPSearchRequest(), controls=[], handler=handle_twice
+    )
+    message_id = next(iter(client.onwire))
+    response = pureldap.LDAPMessage(
+        pureldap.LDAPSearchResultDone(0), id=message_id, controls=[]
+    )
+    client.handle(response)
+    assert message_id in client.onwire
+    client.handle(response)
+    assert message_id not in client.onwire
 
     deferred = client._startTLS(None)
     assert deferred is not None

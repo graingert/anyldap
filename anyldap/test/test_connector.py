@@ -32,6 +32,12 @@ class FakeStream:
         self.closed = True
 
 
+async def test_fake_stream_without_response():
+    stream = FakeStream(lambda data: None)
+    await stream.send(b"request")
+    assert stream.sent == [b"request"]
+
+
 async def test_parse_tcp_endpoint():
     assert ldapconnector._parseTCPEndpoint("tcp:host=127.0.0.1:port=10389") == (
         "127.0.0.1",
@@ -81,6 +87,7 @@ async def test_resolve_service_location_async_callable_override():
     )
 
     assert resolved is override
+    assert override(None) is marker
 
 
 async def test_resolve_service_location_async_uses_srv():
