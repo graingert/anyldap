@@ -149,7 +149,7 @@ class LDAPAttributeTypeAndValue(TextStrAlias):
             return self.value < other.value
 
     def __gt__(self, other):
-        return self != other and self > other
+        return self != other and not self < other
 
     def __le__(self, other):
         return not self > other

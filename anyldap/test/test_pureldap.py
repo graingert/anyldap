@@ -1,6 +1,8 @@
 """
 Test cases for anyldap.protocols.pureldap module.
 """
+import pytest
+
 from anyldap.protocols import pureber, pureldap
 from anyldap.test import unittest
 
@@ -2140,16 +2142,152 @@ class TestRepresentations(unittest.TestCase):
         actual_repr = repr(sasl_creds)
         self.assertEqual(actual_repr, expected_repr)
 
-    def test_ldap_bind_response_server_sasl_creds_with_tag_repr(self):
-        """An LDAPBindResponse_serverSaslCreds with a non-standard tag will have that
-        tag show up in the text representation.
-        """
-        sasl_creds = pureldap.LDAPBindResponse_serverSaslCreds(
-            value=b"NTLMSSP\xbe", tag=12
+
+def test_protocol_and_filter_edge_paths():
+    with pytest.raises(NotImplementedError):
+        pureldap.LDAPProtocolOp().toWire()
+
+    empty = pureldap.LDAPFilter_and([])
+    assert empty == empty
+    populated = pureldap.LDAPFilter_and([pureldap.LDAPFilter_present("cn")])
+    assert empty.__eq__(populated) is False
+    assert empty != populated
+
+    unsupported = pureldap.LDAPFilter_substrings(
+        type="cn", substrings=[pureber.BEROctetString("value")]
+    )
+    with pytest.raises(NotImplementedError):
+        unsupported.asText()
+
+
+def test_optional_modify_and_password_request_paths():
+    request = pureldap.LDAPModifyRequest(object="dc=example", modification=None)
+    assert request.toWire()
+
+
+@pytest.mark.parametrize(
+    ("matching_rule", "attribute_type", "dn_attributes"),
+    [("caseIgnoreMatch", "cn", True), (None, None, None)],
+)
+def test_extensible_match_decodes_real_wire_fields(
+    matching_rule, attribute_type, dn_attributes
+):
+    expected = pureldap.LDAPFilter_extensibleMatch(
+        matchingRule=matching_rule,
+        type=attribute_type,
+        matchValue="Alice",
+        dnAttributes=dn_attributes,
+    )
+    content = b"".join(
+        value.toWire()
+        for value in (
+            expected.matchingRule,
+            expected.type,
+            expected.matchValue,
+            expected.dnAttributes,
         )
-        expected_repr = (
-            r"LDAPBindResponse_serverSaslCreds(value=b'NTLMSSP\xbe', tag=12)"
+        if value is not None
+    )
+    decoded = pureldap.LDAPFilter_extensibleMatch.fromBER(
+        expected.tag, content, pureber.BERDecoderContext()
+    )
+    assert decoded.toWire() == expected.toWire()
+
+
+def test_extensible_match_rejects_fields_before_match_value():
+    content = b"".join(
+        value.toWire()
+        for value in (
+            pureldap.LDAPMatchingRuleAssertion_dnAttributes(True),
+            pureldap.LDAPMatchingRuleAssertion_matchValue("Alice"),
+        )
+    )
+    with pytest.raises(AssertionError):
+        pureldap.LDAPFilter_extensibleMatch.fromBER(
+            pureldap.LDAPFilter_extensibleMatch.tag,
+            content,
+            pureber.BERDecoderContext(),
         )
 
-        actual_repr = repr(sasl_creds)
-        self.assertEqual(actual_repr, expected_repr)
+
+def test_bind_request_with_unknown_authentication_decodes_as_empty_auth():
+    content = b"".join(
+        value.toWire()
+        for value in (
+            pureber.BERInteger(3),
+            pureber.BEROctetString("cn=alice"),
+            pureber.BERInteger(7),
+        )
+    )
+    decoded = pureldap.LDAPBindRequest.fromBER(
+        pureldap.LDAPBindRequest.tag, content, pureber.BERDecoderContext()
+    )
+    assert decoded.auth == ""
+
+
+def test_result_optional_wire_fields_and_unrecognized_fields():
+    referral = pureldap.LDAPReferral([pureber.BEROctetString("ldap://example")])
+    result_content = b"".join(
+        value.toWire()
+        for value in (
+            pureber.BEREnumerated(0),
+            pureber.BEROctetString(""),
+            pureber.BEROctetString(""),
+        )
+    )
+    decoder = pureldap.LDAPBERDecoderContext(fallback=pureber.BERDecoderContext())
+
+    bind = pureldap.LDAPBindResponse.fromBER(
+        pureldap.LDAPBindResponse.tag,
+        result_content + referral.toWire(),
+        decoder,
+    )
+    assert bind.serverSaslCreds is None
+    assert "referral=['ldap://example']" in repr(
+        pureldap.LDAPBindResponse(resultCode=0, referral=["ldap://example"])
+    )
+
+    extended = pureldap.LDAPExtendedResponse.fromBER(
+        pureldap.LDAPExtendedResponse.tag,
+        result_content + referral.toWire(),
+        decoder,
+    )
+    assert extended.referral is None
+
+    with pytest.raises(AssertionError):
+        pureldap.LDAPExtendedResponse.fromBER(
+            pureldap.LDAPExtendedResponse.tag,
+            result_content + pureber.BERInteger(1).toWire(),
+            decoder,
+        )
+
+
+def test_control_with_unknown_second_field_uses_defaults():
+    content = pureber.BEROctetString("1.2.3").toWire() + pureber.BERInteger(1).toWire()
+    control = pureldap.LDAPControl.fromBER(
+        pureldap.LDAPControl.tag, content, pureber.BERDecoderContext()
+    )
+    assert control.criticality is None
+    assert control.controlValue is None
+
+    identity = pureldap.LDAPPasswordModifyRequest(userIdentity="uid=user")
+    assert "userIdentity=" in repr(identity)
+    assert "oldPasswd=" not in repr(identity)
+
+    old = pureldap.LDAPPasswordModifyRequest(oldPasswd="old")
+    assert "oldPasswd=" in repr(old)
+    assert "newPasswd=" not in repr(old)
+
+    new = pureldap.LDAPPasswordModifyRequest(newPasswd="new")
+    assert "newPasswd=" in repr(new)
+    assert "userIdentity=" not in repr(new)
+
+
+
+def test_ldap_bind_response_server_sasl_creds_with_tag_repr():
+    """A non-standard tag is included in the representation."""
+    sasl_creds = pureldap.LDAPBindResponse_serverSaslCreds(
+        value=b"NTLMSSP\xbe", tag=12
+    )
+    expected_repr = r"LDAPBindResponse_serverSaslCreds(value=b'NTLMSSP\xbe', tag=12)"
+    assert repr(sasl_creds) == expected_repr

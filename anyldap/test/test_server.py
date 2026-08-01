@@ -386,10 +386,43 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire(),
         )
 
+    def test_compare_backend_type_error_becomes_other(self):
+        self.stuff["broken"] = [object()]
+        self.server.dataReceived(
+            pureldap.LDAPMessage(
+                pureldap.LDAPCompareRequest(
+                    entry=self.stuff.dn.getText(),
+                    ava=pureldap.LDAPAttributeValueAssertion(
+                        attributeDesc=pureldap.LDAPAttributeDescription("broken"),
+                        assertionValue=pureldap.LDAPAssertionValue("value"),
+                    ),
+                ),
+                id=2,
+            ).toWire()
+        )
+        message, _ = pureber.berDecodeObject(
+            self.server.berdecoder, self.server.transport.value()
+        )
+        self.assertEqual(message.value.resultCode, ldaperrors.other)
+        self.assertIn(b"has no attribute", message.value.errorMessage)
+
     def test_search_outOfTree(self):
         """Attempt to get nonexistent DN results in noSuchObject error response"""
         self.makeSearch(baseObject="dc=invalid")
         self.assertSearchResults(resultCode=ldaperrors.LDAPNoSuchObject.resultCode)
+
+    def test_search_backend_matching_error_becomes_other(self):
+        self.makeSearch(
+            baseObject=self.stuff.dn.getText(),
+            filter=pureldap.LDAPFilter_extensibleMatch(
+                matchingRule="caseIgnoreMatch", type="cn", matchValue="thingie"
+            ),
+        )
+        message, _ = pureber.berDecodeObject(
+            self.server.berdecoder, self.server.transport.value()
+        )
+        self.assertEqual(message.value.resultCode, ldaperrors.other)
+        self.assertIn(b"Match type not implemented", message.value.errorMessage)
 
     def test_search_matchAll_oneResult(self):
         """Searching for a single object with receiving all its attributes"""
@@ -713,6 +746,55 @@ class LDAPServerTest(unittest.TestCase):
         )
         return d
 
+    def test_modifyDN_rejects_preserving_old_rdn(self):
+        self.server.dataReceived(
+            pureldap.LDAPMessage(
+                pureldap.LDAPModifyDNRequest(
+                    entry=self.thingie.dn.getText(),
+                    newrdn="cn=thingamagic",
+                    deleteoldrdn=False,
+                ),
+                id=2,
+            ).toWire()
+        )
+        self.assertEqual(
+            self.server.transport.value(),
+            pureldap.LDAPMessage(
+                pureldap.LDAPModifyDNResponse(
+                    resultCode=ldaperrors.LDAPUnwillingToPerform.resultCode,
+                    errorMessage="Cannot handle preserving old RDN yet.",
+                ),
+                id=2,
+            ).toWire(),
+        )
+
+    def test_modifyDN_with_new_superior(self):
+        self.server.dataReceived(
+            pureldap.LDAPMessage(
+                pureldap.LDAPModifyDNRequest(
+                    entry=self.thingie.dn.getText(),
+                    newrdn="cn=thingamagic",
+                    deleteoldrdn=True,
+                    newSuperior=self.groups.dn.getText(),
+                ),
+                id=2,
+            ).toWire()
+        )
+        self.assertEqual(
+            self.server.transport.value(),
+            pureldap.LDAPMessage(
+                pureldap.LDAPModifyDNResponse(resultCode=ldaperrors.Success.resultCode),
+                id=2,
+            ).toWire(),
+        )
+        d = self.groups.lookup("cn=thingamagic,ou=Groups,dc=example,dc=com")
+        d.addCallback(
+            lambda result: self.assertEqual(
+                result.dn.getText(), "cn=thingamagic,ou=Groups,dc=example,dc=com"
+            )
+        )
+        return d
+
     def test_modify(self):
         self.server.dataReceived(
             pureldap.LDAPMessage(
@@ -780,6 +862,87 @@ class LDAPServerTest(unittest.TestCase):
                 ),
                 id=2,
             ).toWire(),
+        )
+
+    def _send_raw_password_modify(self, *values):
+        request = pureldap.LDAPExtendedRequest(
+            requestName=pureldap.LDAPPasswordModifyRequest.oid,
+            requestValue=pureber.BERSequence(values).toWire(),
+        )
+        self.server.dataReceived(pureldap.LDAPMessage(request, id=2).toWire())
+
+    def _assert_password_modify_protocol_error(self):
+        message, used = pureber.berDecodeObject(
+            self.server.berdecoder, self.server.transport.value()
+        )
+        self.assertEqual(used, len(self.server.transport.value()))
+        self.assertEqual(message.value.resultCode, ldaperrors.LDAPProtocolError.resultCode)
+        self.assertEqual(message.value.responseName, pureldap.LDAPPasswordModifyRequest.oid)
+
+    def test_passwordModify_rejects_duplicate_user_identity(self):
+        value = pureldap.LDAPPasswordModifyRequest_userIdentity("cn=thingie")
+        self._send_raw_password_modify(value, value)
+        self._assert_password_modify_protocol_error()
+
+    def test_passwordModify_rejects_duplicate_old_password(self):
+        value = pureldap.LDAPPasswordModifyRequest_oldPasswd("old")
+        self._send_raw_password_modify(value, value)
+        self._assert_password_modify_protocol_error()
+
+    def test_passwordModify_rejects_duplicate_new_password(self):
+        value = pureldap.LDAPPasswordModifyRequest_newPasswd("new")
+        self._send_raw_password_modify(value, value)
+        self._assert_password_modify_protocol_error()
+
+    def test_passwordModify_rejects_unknown_sequence_item(self):
+        with self.assertRaises(ldaperrors.LDAPProtocolError):
+            self.server.extendedRequest_LDAPPasswordModifyRequest(
+                pureber.BERSequence([pureber.BERInteger(1)]), self.server.queue
+            )
+
+    def test_passwordModify_rejects_non_sequence_value(self):
+        request = pureldap.LDAPExtendedRequest(
+            requestName=pureldap.LDAPPasswordModifyRequest.oid,
+            requestValue=pureber.BERInteger(1).toWire(),
+        )
+        self.server.dataReceived(pureldap.LDAPMessage(request, id=2).toWire())
+        self._assert_password_modify_protocol_error()
+
+    def _bind_thingie_for_password_change(self):
+        self.thingie["userPassword"] = [
+            "{SSHA}yVLLj62rFf3kDAbzwEU0zYAVvbWrze8="
+        ]
+        self.server.dataReceived(
+            pureldap.LDAPMessage(
+                pureldap.LDAPBindRequest(dn=self.thingie.dn.getText(), auth="secret"),
+                id=1,
+            ).toWire()
+        )
+        self.server.transport.clear()
+
+    def test_passwordModify_rejects_old_password_mode(self):
+        self._bind_thingie_for_password_change()
+        self._send_raw_password_modify(
+            pureldap.LDAPPasswordModifyRequest_oldPasswd("secret"),
+            pureldap.LDAPPasswordModifyRequest_newPasswd("new"),
+        )
+        message, _ = pureber.berDecodeObject(
+            self.server.berdecoder, self.server.transport.value()
+        )
+        self.assertEqual(
+            message.value.resultCode, ldaperrors.LDAPOperationsError.resultCode
+        )
+
+    def test_passwordModify_requires_new_password(self):
+        self._bind_thingie_for_password_change()
+        self._send_raw_password_modify(
+            pureldap.LDAPPasswordModifyRequest_userIdentity(self.thingie.dn.getText())
+        )
+        message, _ = pureber.berDecodeObject(
+            self.server.berdecoder, self.server.transport.value()
+        )
+        self.assertEqual(
+            message.value.resultCode, ldaperrors.LDAPOperationsError.resultCode
         )
 
     def test_passwordModify_simple(self):

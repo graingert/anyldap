@@ -109,21 +109,22 @@ class ReadOnlyInMemoryLDAPEntry(
     def _move(self, newDN):
         if not isinstance(newDN, distinguishedname.DistinguishedName):
             newDN = distinguishedname.DistinguishedName(stringValue=newDN)
-        if newDN.up() != self.dn.up():
+        if self._parent is not None and newDN.up() != self.dn.up():
             # climb up the tree to root
             root = self
             while root._parent is not None:
                 root = root._parent
             d = maybeDeferred(root.lookup, newDN.up())
         else:
-            d = succeed(None)
+            d = succeed(self._parent)
         d.addCallback(self._move2, newDN)
         return d
 
     def _move2(self, newParent, newDN):
         if newParent is not None:
-            newParent._children[newDN.split()[0].getText()] = self
             del self._parent._children[self.dn.split()[0].getText()]
+            newParent._children[newDN.split()[0].getText()] = self
+            self._parent = newParent
         # remove old RDN attributes
         for attr in self.dn.split()[0].split():
             self[attr.attributeType].remove(attr.value)
@@ -173,8 +174,7 @@ class InMemoryLDIFProtocol(ldifprotocol.LDIF):
         d.addErrback(self.lookupFailed, entry)
 
         def _add(parent, entry):
-            if parent is not None:
-                parent.addChild(rdn=entry.dn.split()[0], attributes=entry)
+            parent.addChild(rdn=entry.dn.split()[0], attributes=entry)
 
         d.addCallback(_add, entry)
         d.addErrback(self.addFailed, entry)
@@ -202,7 +202,7 @@ class InMemoryLDIFProtocol(ldifprotocol.LDIF):
     def connectionLost(self, reason):
         super().connectionLost(reason)
         if not reason.check(ConnectionDone):
-            self._deferred.deferred.addCallback(lambda db: reason)
+            self.completed._errback(reason)
         else:
             self._deferred.deferred.addCallbacks(
                 self.completed._callback,

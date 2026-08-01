@@ -6,6 +6,19 @@ from anyldap import schema
 from anyldap._encoder import to_bytes
 from anyldap.test import unittest
 
+
+def test_schema_description_representations():
+    descriptions = [
+        schema.ObjectClassDescription(b"( 1.2 STRUCTURAL )"),
+        schema.AttributeTypeDescription(b"( 1.2 )"),
+        schema.SyntaxDescription(b"( 1.2 )"),
+        schema.MatchingRuleDescription(b"( 1.2 SYNTAX 1.3 )"),
+    ]
+    for description in descriptions:
+        representation = repr(description)
+        assert description.__class__.__name__ in representation
+        assert "oid=b'1.2'" in representation
+
 OBJECTCLASSES = {
     "top": b"""( 2.5.6.0 NAME 'top'
     DESC 'top of the superclass chain'

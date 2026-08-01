@@ -138,6 +138,8 @@ class TestLDAPAttributeSet(unittest.TestCase):
                 return True
 
         m1 = Magic()
+        self.assertFalse(m1 < object())
+        self.assertTrue(m1 > object())
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d", m1])
         b = a.__copy__()
         self.assertEqual(a, b)

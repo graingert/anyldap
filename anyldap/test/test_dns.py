@@ -2,11 +2,17 @@
 Test cases for anyldap.dns
 """
 
+import pytest
+
 from anyldap import dns
 from anyldap.test import unittest
 
 
 class NetmaskToNumbits(unittest.TestCase):
+    def test_rejects_noncontiguous_netmask(self):
+        with pytest.raises(RuntimeError, match="Invalid netmask"):
+            dns.netmaskToNumbits("255.0.255.0")
+
     def test_classA(self):
         self.assertEqual(dns.netmaskToNumbits("255.0.0.0"), 8)
 

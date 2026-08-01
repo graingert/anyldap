@@ -263,7 +263,7 @@ class SearchByTreeWalkingMixin:
             filterObject = ldapfilter.parseFilter(filterText)
         elif filterObject is not None and filterText is None:
             pass
-        elif filterObject is not None and filterText is not None:
+        else:
             f = ldapfilter.parseFilter(filterText)
             filterObject = pureldap.LDAPFilter_and((f, filterObject))
 

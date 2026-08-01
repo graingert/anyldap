@@ -2,11 +2,43 @@
 Test cases for anyldap.protocols.ldap.autofill.posixAccount module.
 """
 
+import pytest
+
+from anyldap.deferred import fail, succeed
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import autofill, ldapsyntax
 from anyldap.protocols.ldap.autofill import posixAccount
+from anyldap.runtime import Failure
 from anyldap.test import unittest
 from anyldap.testutil import LDAPClientTestDriver
+
+
+@pytest.mark.anyio
+async def test_gather_numbers_propagates_failure():
+    autofiller = posixAccount.Autofill_posix("dc=example,dc=com")
+    deferred = autofiller._gather_numbers(
+        fail(Failure(ValueError("allocation failed"))), succeed(1000)
+    )
+    with pytest.raises(ValueError, match="allocation failed"):
+        await deferred
+
+    deferred = autofiller._gather_numbers(
+        fail(Failure(ValueError("uid failed"))),
+        fail(Failure(ValueError("gid failed"))),
+    )
+    with pytest.raises(ValueError, match="uid failed"):
+        await deferred
+
+
+def test_got_numbers_re_raises_failed_allocations_and_notify_is_noop():
+    autofiller = posixAccount.Autofill_posix("dc=example,dc=com")
+    entry = {}
+    failure = Failure(ValueError("allocation failed"))
+    with pytest.raises(ValueError, match="allocation failed"):
+        autofiller._cb_gotNumbers(((False, failure), (True, 1000)), entry)
+    with pytest.raises(ValueError, match="allocation failed"):
+        autofiller._cb_gotNumbers(((True, 1000), (False, failure)), entry)
+    assert autofiller.notify(entry, "uidNumber") is None
 
 
 class LDAPAutoFill_Posix(unittest.TestCase):

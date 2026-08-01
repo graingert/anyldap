@@ -1,6 +1,7 @@
 """
 Test cases for anyldap.protocols.ldap.fetchschema module.
 """
+import pytest
 
 from anyldap import schema
 from anyldap._encoder import to_bytes
@@ -8,6 +9,53 @@ from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import fetchschema
 from anyldap.test import unittest
 from anyldap.testutil import LDAPClientTestDriver
+
+
+def search_entry(dn, attributes):
+    return pureldap.LDAPSearchResultEntry(objectName=dn, attributes=attributes)
+
+
+search_done = pureldap.LDAPSearchResultDone(resultCode=0)
+
+
+@pytest.mark.anyio
+async def test_fetch_rejects_missing_base_entry():
+    client = LDAPClientTestDriver([search_done])
+    with pytest.raises(fetchschema.ldaperrors.LDAPOther, match="No such DN"):
+        await fetchschema.fetch(client, "dc=example,dc=com")
+
+
+@pytest.mark.anyio
+async def test_fetch_rejects_multiple_base_entries():
+    client = LDAPClientTestDriver(
+        [search_entry("dc=one", []), search_entry("dc=two", []), search_done]
+    )
+    with pytest.raises(fetchschema.ldaperrors.LDAPOther, match="multiple entries"):
+        await fetchschema.fetch(client, "dc=example,dc=com")
+
+
+@pytest.mark.anyio
+async def test_fetch_rejects_missing_subschema_entry():
+    client = LDAPClientTestDriver(
+        [search_entry("", [("subschemaSubentry", ["cn=Subschema"])]), search_done],
+        [search_done],
+    )
+    with pytest.raises(fetchschema.ldaperrors.LDAPOther, match="No such DN"):
+        await fetchschema.fetch(client, "dc=example,dc=com")
+
+
+@pytest.mark.anyio
+async def test_fetch_rejects_multiple_subschema_entries():
+    client = LDAPClientTestDriver(
+        [search_entry("", [("subschemaSubentry", ["cn=Subschema"])]), search_done],
+        [
+            search_entry("cn=Subschema", []),
+            search_entry("cn=Subschema", []),
+            search_done,
+        ],
+    )
+    with pytest.raises(fetchschema.ldaperrors.LDAPOther, match="multiple entries"):
+        await fetchschema.fetch(client, "dc=example,dc=com")
 
 
 class OnWire(unittest.TestCase):

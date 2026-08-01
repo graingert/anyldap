@@ -3,9 +3,39 @@ Test cases for anyldap.inmemory module.
 """
 from io import BytesIO
 
+import pytest
+
 from anyldap import delta, inmemory, testutil
 from anyldap.protocols.ldap import distinguishedname, ldaperrors
+from anyldap.runtime import Failure
 from anyldap.test import unittest
+
+
+@pytest.mark.anyio
+async def test_async_entry_operations_use_the_in_memory_tree():
+    root = inmemory.ReadOnlyInMemoryLDAPEntry(
+        "dc=example,dc=com", {"dc": ["example"]}
+    )
+    child = root.addChild("cn=child", {"cn": ["child"]})
+    leaf = root.addChild("cn=leaf", {"cn": ["leaf"]})
+
+    assert await root.lookup_async(child.dn) is child
+    assert await child.fetch_async("cn") is child
+    assert await child.move_async("cn=moved,dc=example,dc=com") is child
+    assert await child.commit_async() is True
+    assert await leaf.delete_async() is leaf
+    assert await root.deleteChild_async("cn=moved") is child
+    assert await root.move_async("dc=renamed") is root
+
+
+@pytest.mark.anyio
+async def test_ldif_protocol_reports_abnormal_disconnect():
+    protocol = inmemory.InMemoryLDIFProtocol()
+    protocol.dataReceived(b"version: 1\n\n")
+    protocol.connectionLost(Failure(RuntimeError("input failed")))
+
+    with pytest.raises(RuntimeError, match="input failed"):
+        await protocol.completed
 
 
 class SubclassEntry(inmemory.ReadOnlyInMemoryLDAPEntry):

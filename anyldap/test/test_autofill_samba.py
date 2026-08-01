@@ -7,6 +7,14 @@ from anyldap.protocols.ldap.autofill import sambaAccount, sambaSamAccount
 from anyldap.test import unittest
 
 
+def test_notify_ignores_unrelated_attributes():
+    assert sambaAccount.Autofill_samba().notify({}, "description") is None
+    assert (
+        sambaSamAccount.Autofill_samba("S-1-5-21").notify({}, "description")
+        is None
+    )
+
+
 class LDAPAutoFill_sambaAccount(unittest.TestCase):
     def testMustHaveObjectClass(self):
         """Test that Autofill_samba fails unless object is a sambaAccount."""

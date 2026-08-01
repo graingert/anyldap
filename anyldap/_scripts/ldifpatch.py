@@ -8,10 +8,10 @@ from anyldap.protocols.ldap import ldif, ldifdelta
 
 
 def output(tree, outputFile):
-    outputFile.write(ldif.header())
+    outputFile.write(ldif._header())
 
     def _write(node):
-        outputFile.write(str(node))
+        outputFile.write(node.toWire())
 
     tree.subtree(callback=_write)
 
@@ -39,8 +39,8 @@ def console_script():
         sys.stderr.write(f"{sys.argv[0]}: {exc}\n")
         raise SystemExit(1) from exc
 
-    with open(options["data"]) as data:
-        anyio.run(main, data, sys.stdin, sys.stdout)
+    with open(options["data"], "rb") as data:
+        anyio.run(main, data, sys.stdin.buffer, sys.stdout.buffer)
 
 
 if __name__ == "__main__":

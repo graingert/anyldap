@@ -1,9 +1,11 @@
 import anyio
 import pytest
 
-from anyldap import config, ldapfilter
+from anyldap import config, ldapfilter, testutil
+from anyldap.deferred import fail, succeed
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, proxy, svcbindproxy
+from anyldap.runtime import Failure
 from anyldap.test._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
@@ -178,6 +180,158 @@ async def test_bind_match_success(monkeypatch):
             ),
         )
         await server.aclose()
+
+
+def _legacy_proxy(services=None, fallback=False):
+    server = svcbindproxy.ServiceBindingProxy(
+        config=config.LDAPConfig(identityBaseDN="dc=example,dc=com"),
+        services=services,
+        fallback=fallback,
+    )
+    server.timestamp = lambda: NOW
+    server.client = object()
+    return server
+
+
+async def test_legacy_maybe_fallback_results():
+    request = pureldap.LDAPBindRequest(dn="cn=alice", auth="secret")
+    server = _legacy_proxy()
+    success = server._maybeFallback(object(), request, None, lambda value: None)
+    assert success.resultCode == ldaperrors.Success.resultCode
+    assert success.matchedDN == "cn=alice"
+
+    denied = server._maybeFallback(None, request, None, lambda value: None)
+    assert denied.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
+
+    class FallbackProxy(svcbindproxy.ServiceBindingProxy):
+        forwarded = None
+
+        def handleUnknown(self, request, controls, reply):
+            self.forwarded = (request, controls, reply)
+            return succeed(None)
+
+    fallback = FallbackProxy(
+        config=config.LDAPConfig(identityBaseDN="dc=example"), fallback=True
+    )
+    assert fallback._maybeFallback(None, request, "controls", "reply") is None
+    assert fallback.forwarded == (request, "controls", "reply")
+
+
+class LegacyServiceEntry:
+    def __init__(self, bind_result=None):
+        self.bind_result = bind_result
+
+    def bind(self, password):
+        if isinstance(self.bind_result, Failure):
+            return fail(self.bind_result)
+        return succeed(self.bind_result or self)
+
+
+class LegacySearchBase:
+    def __init__(self, results):
+        self.results = list(results)
+        self.filters = []
+
+    def search(self, **kwargs):
+        self.filters.append(kwargs)
+        return succeed(self.results.pop(0))
+
+
+async def test_legacy_try_service_success_and_exhaustion():
+    request = pureldap.LDAPBindRequest(dn="cn=alice", auth="secret")
+    server = _legacy_proxy()
+    base = LegacySearchBase([[], [LegacyServiceEntry()]])
+    result = await server._tryService(
+        ["missing", "present"], base, request, None, lambda value: None
+    )
+    assert isinstance(result, LegacyServiceEntry)
+    assert len(base.filters) == 2
+    assert base.filters[0]["attributes"] == ("1.1",)
+    assert server._tryService([], base, request, None, lambda value: None) is None
+
+
+async def test_legacy_try_service_retries_invalid_credentials():
+    request = pureldap.LDAPBindRequest(dn="cn=alice", auth="bad")
+    invalid = Failure(ldaperrors.LDAPInvalidCredentials())
+    base = LegacySearchBase([[LegacyServiceEntry(invalid)], [LegacyServiceEntry()]])
+    server = _legacy_proxy()
+    result = await server._tryService(
+        ["bad-service", "good-service"], base, request, None, lambda value: None
+    )
+    assert isinstance(result, LegacyServiceEntry)
+
+
+async def test_legacy_loop_helpers():
+    server = _legacy_proxy()
+    request = pureldap.LDAPBindRequest(dn="cn=alice", auth="secret")
+    base = LegacySearchBase([[LegacyServiceEntry()]])
+    result = await server._loopIfNone(
+        None, ["service"], base, request, None, lambda value: None
+    )
+    assert isinstance(result, LegacyServiceEntry)
+    marker = object()
+    assert server._loopIfNone(marker) is marker
+
+    base = LegacySearchBase([[LegacyServiceEntry()]])
+    result = await server._loopIfBindError(
+        Failure(ldaperrors.LDAPInvalidCredentials()),
+        ["service"],
+        base,
+        request,
+        None,
+        lambda value: None,
+    )
+    assert isinstance(result, LegacyServiceEntry)
+
+
+async def test_bind_handler_validation_and_anonymous_forwarding():
+    server = _legacy_proxy()
+    with pytest.raises(ldaperrors.LDAPProtocolError):
+        server.handle_LDAPBindRequest(
+            pureldap.LDAPBindRequest(version=2), None, lambda value: None
+        )
+
+    class AnonymousProxy(svcbindproxy.ServiceBindingProxy):
+        def handleUnknown(self, request, controls, reply):
+            return succeed("forwarded")
+
+    anonymous = AnonymousProxy(config=config.LDAPConfig())
+    result = anonymous.handle_LDAPBindRequest(
+        pureldap.LDAPBindRequest(dn=""), None, lambda value: None
+    )
+    assert await result == "forwarded"
+
+
+async def test_legacy_bind_uses_connected_client_search_interface():
+    client = testutil.LDAPClientTestDriver(
+        [pureldap.LDAPSearchResultDone(ldaperrors.Success.resultCode)]
+    )
+    client.connectionMade()
+    server = svcbindproxy.ServiceBindingProxy(
+        config=config.LDAPConfig(identityBaseDN="dc=example,dc=com"),
+        services=["svc"],
+        fallback=False,
+    )
+    server.timestamp = lambda: NOW
+    server.client = client
+
+    response = await server.handle_LDAPBindRequest(
+        pureldap.LDAPBindRequest(dn="cn=jack,dc=example,dc=com", auth="secret"),
+        None,
+        lambda value: None,
+    )
+
+    assert response.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
+    client.assertSent(_search_request("svc"))
+
+
+def test_timestamp_shape_and_constructor_defaults():
+    server = svcbindproxy.ServiceBindingProxy(config=config.LDAPConfig())
+    assert server.services == []
+    assert server.fallback is False
+    value = server.timestamp()
+    assert len(value) == 15
+    assert value.endswith("Z")
 
 
 async def test_bind_match_success_later(monkeypatch):
