@@ -41,18 +41,18 @@ class Autofill_samba:  # TODO baseclass
         if attributeType == "uidNumber":
             assert "uidNumber" in ldapObject
             assert len(ldapObject["uidNumber"]) == 1
-            for uidNumber in ldapObject["uidNumber"]:  # pragma: no branch
-                uidNumber = int(uidNumber)
-                sid = "%s-%d" % (self.domainSID, uidNumber * 2 + 1000)
-                ldapObject["sambaSID"] = [str(sid)]
-                return
+            (uidNumber,) = ldapObject["uidNumber"]
+            uidNumber = int(uidNumber)
+            sid = "%s-%d" % (self.domainSID, uidNumber * 2 + 1000)
+            ldapObject["sambaSID"] = [str(sid)]
+            return
 
         # sambaPrimaryGroupSID = fixed or 2*gidNumber+1001
         if self.fixedPrimaryGroupSID is None and attributeType == "gidNumber":
             assert "gidNumber" in ldapObject
             assert len(ldapObject["gidNumber"]) == 1
-            for gidNumber in ldapObject["gidNumber"]:  # pragma: no branch
-                gidNumber = int(gidNumber)
-                sid = "%s-%d" % (self.domainSID, gidNumber * 2 + 1001)
-                ldapObject["sambaPrimaryGroupSID"] = [str(sid)]
-                return
+            (gidNumber,) = ldapObject["gidNumber"]
+            gidNumber = int(gidNumber)
+            sid = "%s-%d" % (self.domainSID, gidNumber * 2 + 1001)
+            ldapObject["sambaPrimaryGroupSID"] = [str(sid)]
+            return
