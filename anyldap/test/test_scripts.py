@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from anyldap import config
 from anyldap._scripts import (
     fetchschema,
     find_server,
@@ -21,7 +22,6 @@ from anyldap._scripts import (
     rename,
     search,
 )
-from anyldap import config
 from anyldap.deferred import succeed
 
 pytestmark = pytest.mark.anyio

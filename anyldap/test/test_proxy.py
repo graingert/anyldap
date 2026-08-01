@@ -1,8 +1,8 @@
-import anyio
-import anyio.lowlevel
 import subprocess
 import sys
 
+import anyio
+import anyio.lowlevel
 import pytest
 
 from anyldap import config
