@@ -37,7 +37,7 @@ class TestCase(unittest.TestCase):
     async def _await_result(self, result):
         awaited = await result
         if isinstance(awaited, Deferred):
-            util.pumpingDeferredResult(awaited)
+            await awaited
 
     def mktemp(self):
         counter = getattr(self, "_mktemp_counter", 0)

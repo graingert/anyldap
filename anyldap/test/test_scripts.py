@@ -1,4 +1,6 @@
 import io
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -32,6 +34,21 @@ pytestmark = pytest.mark.anyio
 async def test_unavailable_scripts_explain_status(module):
     with pytest.raises(SystemExit, match="rewritten for the AnyIO runtime"):
         module.console_script()
+
+
+@pytest.mark.parametrize(
+    "module",
+    [ldap2dhcpconf, ldap2dnszones, ldap2maradns, ldap2pdns],
+)
+async def test_unavailable_script_module_entrypoints(module):
+    result = subprocess.run(
+        [sys.executable, "-m", module.__name__],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "rewritten for the AnyIO runtime" in result.stderr
 
 
 def test_fetchschema_print_results(capsys):
@@ -233,6 +250,10 @@ class SearchEntry:
                     "homeDirectory": ["/home/alice"],
                 }
             )
+
+
+async def test_search_entry_without_callback():
+    await SearchEntry().search_async()
 
 
 async def test_search_main(monkeypatch):

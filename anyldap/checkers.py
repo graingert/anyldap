@@ -1,7 +1,6 @@
 from anyldap import config, ldapfilter
-from anyldap.deferred import ensureDeferred, fail
+from anyldap.deferred import ensureDeferred
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldaperrors, ldapsyntax
-from anyldap.runtime import Failure
 
 
 class UnauthorizedLogin(Exception):
@@ -76,7 +75,4 @@ class LDAPBindingChecker:
         return entry
 
     def requestAvatarId(self, credentials):
-        try:
-            return ensureDeferred(self.requestAvatarId_async(credentials))
-        except UnauthorizedLogin as exc:
-            return fail(Failure(exc))
+        return ensureDeferred(self.requestAvatarId_async(credentials))

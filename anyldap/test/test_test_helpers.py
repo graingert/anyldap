@@ -1,10 +1,12 @@
 import logging
+import sys
 import warnings
 
 import pytest
 
 from anyldap.deferred import Deferred, DeferredSource, fail, succeed
 from anyldap.protocols import pureldap
+from anyldap.protocols.ldap import proxy
 from anyldap.runtime import Failure, Protocol
 from anyldap.test import unittest, util
 from anyldap.test._anyio_helpers import AsyncLDAPClientDriver, MemoryByteStream
@@ -46,6 +48,7 @@ async def test_async_client_driver_extended_and_no_response_paths():
     assert received == [(response, None)]
     await driver.send_noResponse_async(request)
     await driver.send_noResponse_async(request)
+    await driver.send_noResponse_async(request)
     driver.unbind()
     assert not driver.connected
     await driver.aclose()
@@ -85,6 +88,19 @@ def test_capture_logs_restores_logger():
     assert logger.level == original_level
 
 
+def test_capture_logs_preserves_more_verbose_logger_level():
+    case = unittest.TestCase()
+    logger = logging.getLogger("anyldap.verbose-helper-test")
+    original_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    messages = capture_logs(case, logger.name, logging.INFO)
+    logger.info("captured")
+    assert messages == ["captured"]
+    case.doCleanups()
+    assert logger.level == logging.DEBUG
+    logger.setLevel(original_level)
+
+
 class EchoProtocol(Protocol):
     def __init__(self):
         self.received = []
@@ -104,6 +120,8 @@ def test_io_pump_and_connected_protocols():
     assert client.received[-1] == b"to-client"
     assert pump.pump() == 0
     pump.flush()
+    client.transport.loseConnection()
+    assert client.transport.disconnecting
 
 
 async def test_coroutine_function_adapter():
@@ -155,6 +173,17 @@ def test_unittest_failure_and_warning_helpers():
     assert case.flushWarnings() == []
 
 
+async def test_unittest_rejects_invalid_return_and_handles_nested_deferred():
+    case = unittest.TestCase()
+    with pytest.raises(TypeError, match="must return None"):
+        case._callTestMethod(lambda: object())
+
+    async def nested():
+        return succeed("done")
+
+    await case._await_result(nested())
+
+
 async def test_legacy_client_driver_paths():
     request = pureldap.LDAPBindRequest()
     response = pureldap.LDAPBindResponse(resultCode=0)
@@ -179,3 +208,17 @@ def test_string_transport_and_must_raise():
     assert transport.disconnecting
     with pytest.raises(unittest.FailTest):
         testutil.mustRaise(None)
+
+
+def test_calltrace_profiles_calls(capsys):
+    testutil.calltrace()
+    sys.setprofile(None)
+    assert "call" in capsys.readouterr().out
+
+
+async def test_create_server_compatibility_helper():
+    server = testutil.createServer(proxy.Proxy)
+    assert server.connected
+    assert server.client is server.clientTestDriver
+    server.client.responses.clear()
+    server.connectionLost(Exception("closed"))

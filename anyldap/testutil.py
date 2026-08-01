@@ -189,9 +189,9 @@ def createServer(proto, *responses, **kw):
         proto_args = {}
 
     def createClient(factory):
-        factory.doStart()
-        proto = factory.buildProtocol(addr=None)
+        proto = factory()
         proto.connectionMade()
+        return proto
 
     overrides = kw.setdefault("serviceLocationOverrides", {})
     overrides.setdefault("", createClient)

@@ -1,4 +1,7 @@
 from types import SimpleNamespace
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -48,3 +51,24 @@ async def test_generate_returns_deferred(monkeypatch):
     deferred = generate_password.generate(n=3)
     assert isinstance(deferred, Deferred)
     assert await await_result(deferred) == ["3"]
+
+
+async def test_generate_password_module_entrypoint(tmp_path):
+    executable = tmp_path / "pwgen"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' password0 password1 password2 password3 password4\n"
+    )
+    executable.chmod(0o755)
+    environment = os.environ.copy()
+    environment["PATH"] = str(tmp_path) + os.pathsep + environment["PATH"]
+
+    result = subprocess.run(
+        [sys.executable, "-m", generate_password.__name__],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.stdout.splitlines() == [f"password{i}" for i in range(5)]

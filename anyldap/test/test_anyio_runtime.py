@@ -3,10 +3,63 @@ import anyio.lowlevel
 import pytest
 
 from anyldap import inmemory, testutil
+from anyldap._async import await_deferred, await_result
+from anyldap.deferred import succeed
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapsyntax
+from anyldap.runtime import Failure, Protocol
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_await_deferred_accepts_native_deferred_and_awaitable():
+    assert await await_deferred(succeed("deferred")) == "deferred"
+
+    async def native():
+        return "awaitable"
+
+    assert await await_deferred(native()) == "awaitable"
+
+
+async def test_await_deferred_rejects_plain_value():
+    with pytest.raises(TypeError, match="Unsupported deferred object: 42"):
+        await await_deferred(42)
+
+
+async def test_await_result_accepts_all_result_shapes():
+    async def native():
+        return "awaitable"
+
+    assert await await_result(succeed("deferred")) == "deferred"
+    assert await await_result(native()) == "awaitable"
+    assert await await_result("plain") == "plain"
+
+
+async def test_protocol_default_hooks_and_connection():
+    protocol = Protocol()
+    transport = object()
+    protocol.makeConnection(transport)
+    assert protocol.transport is transport
+    assert protocol.connectionMade() is None
+    assert protocol.connectionLost() is None
+    assert protocol.dataReceived(b"ignored") is None
+
+
+async def test_failure_handles_broken_string_and_type_matching():
+    class BrokenStringError(Exception):
+        def __str__(self):
+            raise RuntimeError("cannot stringify")
+
+    error = BrokenStringError("broken")
+    failure = Failure(error)
+    assert "BrokenStringError" in str(failure)
+    assert failure.trap(BrokenStringError) is BrokenStringError
+    assert failure.check(ValueError, BrokenStringError) is BrokenStringError
+    assert failure.check(ValueError) is None
+    with pytest.raises(BrokenStringError):
+        failure.trap(ValueError)
+    with pytest.raises(BrokenStringError):
+        failure.raiseException()
 
 
 async def test_ldap_client_bind_async():
