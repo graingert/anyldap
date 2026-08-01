@@ -364,3 +364,78 @@ class ProxyBase(unittest.TestCase):
         self.assertIsNone(server.client)
         self.assertFalse(server.clientTestDriver.connected)
         self.assertEqual(server.queuedRequests, [])
+
+    async def test_start_tls_unavailable_without_server_options(self):
+        server = proxybase.ProxyBase()
+        server.factory = object()
+        response = await (
+            server.handleStartTLSRequest(
+                pureldap.LDAPStartTLSRequest(), None, lambda value: None
+            )
+        )
+        self.assertEqual(response.resultCode, ldaperrors.LDAPUnavailable.resultCode)
+
+    async def test_start_tls_success_then_rejected(self):
+        class Factory:
+            options = object()
+
+        class TLSTransport(testutil.StringTransport):
+            started_with = None
+
+            def startTLS(self, options):
+                self.started_with = options
+
+        server = proxybase.ProxyBase()
+        server.factory = Factory()
+        server.transport = TLSTransport()
+        replies = []
+        first = await (
+            server.handleStartTLSRequest(
+                pureldap.LDAPStartTLSRequest(), None, replies.append
+            )
+        )
+        self.assertIsNone(first)
+        self.assertEqual(replies[0].resultCode, ldaperrors.Success.resultCode)
+        self.assertIs(server.transport.started_with, server.factory.options)
+
+        second = await (
+            server.handleStartTLSRequest(
+                pureldap.LDAPStartTLSRequest(), None, replies.append
+            )
+        )
+        self.assertEqual(second.resultCode, ldaperrors.LDAPOperationsError.resultCode)
+
+    def test_extended_non_tls_request_is_forwarded(self):
+        server = self.createServer([])
+        request = pureldap.LDAPExtendedRequest(requestName=b"1.2.3")
+        server.handle_LDAPExtendedRequest(request, None, lambda value: None)
+        server.reactor.advance(1)
+        server.clientTestDriver.assertSent(request)
+
+    def test_established_tls_processes_backlog(self):
+        server = proxybase.ProxyBase()
+        request = pureldap.LDAPUnbindRequest()
+        server.queuedRequests.append((request, None, lambda value: None))
+        client = testutil.LDAPClientTestDriver([])
+        client.connectionMade()
+        self.assertIsNone(server._establishedTLS(client))
+        client.assertSent(request)
+
+    async def test_connected_with_tls_starts_tls(self):
+        class TLSClient:
+            def startTLS(self):
+                return succeed(self)
+
+        server = proxybase.ProxyBase()
+        server.use_tls = True
+        client = TLSClient()
+        self.assertIsNone(await server._connectedToProxiedServer(client))
+        self.assertIs(server.client, client)
+
+    async def test_example_proxy_returns_response(self):
+        server = proxybase.ExampleProxy()
+        response = pureldap.LDAPBindResponse(resultCode=0)
+        self.assertIs(
+            await server.handleProxiedResponse(response, None, None),
+            response,
+        )

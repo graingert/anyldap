@@ -8,7 +8,7 @@ from anyldap.protocols.ldap import ldif, ldifdelta
 
 
 def output(tree, outputFile):
-    outputFile.write(ldif.header())
+    outputFile.write(ldif._header().decode("ascii"))
 
     def _write(node):
         outputFile.write(str(node))

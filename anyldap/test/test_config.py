@@ -224,3 +224,53 @@ identity-search = (something=%(name)s)
         result = copied.getIdentitySearch("foo")
 
         self.assertEqual("(&(bar=baz)(quux=foo))", result)
+
+    def testExplicitConfigurationValues(self):
+        sut = config.LDAPConfig(
+            baseDN="dc=example,dc=com",
+            identityBaseDN="ou=people,dc=example,dc=com",
+            identitySearch="(mail=%(name)s)",
+            serviceLocationOverrides={"dc=example,dc=com": ("explicit", 1389)},
+        )
+        self.assertEqual("dc=example,dc=com", sut.getBaseDN().getText())
+        self.assertEqual(
+            "ou=people,dc=example,dc=com", sut.getIdentityBaseDN().getText()
+        )
+        self.assertEqual("(mail=alice)", sut.getIdentitySearch("alice"))
+        overrides = sut.getServiceLocationOverrides()
+        self.assertEqual(("explicit", 1389), next(iter(overrides.values())))
+
+    def testServiceLocationConfiguration(self):
+        reloadFromContent(
+            self,
+            b"""[service-location dc=one,dc=example]
+host=ldap-one.example
+port=1389
+[SERVICE-LOCATION dc=two,dc=example]
+host=
+port=
+[unrelated]
+host=ignored
+""",
+        )
+        overrides = config.LDAPConfig().getServiceLocationOverrides()
+        values = {dn.getText(): value for dn, value in overrides.items()}
+        self.assertEqual(values["dc=one,dc=example"], ("ldap-one.example", "1389"))
+        self.assertEqual(values["dc=two,dc=example"], (None, None))
+
+    def testCopyPreservesAllDefaults(self):
+        original = config.LDAPConfig(
+            baseDN="dc=example",
+            identityBaseDN="ou=people,dc=example",
+            identitySearch="(uid=%(name)s)",
+            serviceLocationOverrides={"dc=example": ("host", 389)},
+        )
+        copied = original.copy()
+        self.assertEqual(copied.baseDN, original.baseDN)
+        self.assertEqual(copied.identityBaseDN, original.identityBaseDN)
+        self.assertEqual(copied.identitySearch, original.identitySearch)
+        self.assertEqual(copied.serviceLocationOverrides, original.serviceLocationOverrides)
+
+    def testUseLMHash(self):
+        reloadFromContent(self, b"[samba]\nuse-lmhash=yes\n")
+        self.assertTrue(config.useLMhash())

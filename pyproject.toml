@@ -73,6 +73,11 @@ include = ["anyldap*"]
 branch = true
 source_pkgs = ["anyldap"]
 parallel = true
+patch = ["subprocess"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
 
 [tool.coverage.paths]
 source = [
@@ -82,7 +87,7 @@ source = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --cov=anyldap --cov-report=term-missing --cov-fail-under=100"
 testpaths = ["anyldap/test"]
 
 [tool.ruff]
@@ -126,11 +131,11 @@ envlist =
 [testenv]
 parallel_show_output = True
 deps = 
-    coverage[toml] >= 5.3
     anyio
     dnspython
     pyparsing
     pytest
+    pytest-cov
     trio
     passlib
     ; Dependecies for local dev environment.
@@ -147,7 +152,7 @@ passenv = *
 commands =
     {envpython} --version
     test: pytest --version
-    test: coverage run --rcfile={toxinidir}/pyproject.toml -m pytest {posargs:anyldap/test}
+    test: pytest {posargs:anyldap/test}
 
     ; Only run on local dev env.
     dev: coverage report --show-missing

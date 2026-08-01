@@ -8,7 +8,7 @@ from anyldap.protocols.ldap import ldif
 
 
 def output(result, outputFile):
-    outputFile.write(ldif.header())
+    outputFile.write(ldif._header().decode("ascii"))
     for operation in result:
         outputFile.write(operation.asLDIF())
 

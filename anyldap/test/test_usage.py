@@ -5,7 +5,15 @@ import re
 
 from anyldap.protocols.ldap.distinguishedname import DistinguishedName
 from anyldap.test.unittest import TestCase
-from anyldap.usage import Options, Options_scope, Options_service_location, UsageError
+from anyldap.usage import (
+    Options,
+    Options_base,
+    Options_bind,
+    Options_bind_mandatory,
+    Options_scope,
+    Options_service_location,
+    UsageError,
+)
 
 
 class ScopeOptionsImplementation(Options, Options_scope):
@@ -39,11 +47,86 @@ class TestOptions_scope(TestCase):
 
 
 class ServiceLocationOptionsImplementation(Options, Options_service_location):
-    """
-    Minimal implementation for a command line using `Options_service_location`.
-    """
+    """Minimal implementation for a command line using service locations."""
 
 
+class CompleteOptions(
+    Options,
+    Options_service_location,
+    Options_scope,
+    Options_base,
+    Options_bind_mandatory,
+):
+    optFlags = (("verbose", "v", "verbose output"),)
+    optParameters = (("custom", "c", "default", "custom value"),)
+
+    def opt_custom_handler(self, value):
+        self.opts["handled"] = value
+
+    def opt_toggle(self, value):
+        self.opts["toggled"] = value
+
+
+class TestCompleteOptions(TestCase):
+    def test_mapping_protocol(self):
+        options = Options()
+        options["key"] = "value"
+        self.assertEqual(options["key"], "value")
+
+    def test_long_short_flags_and_parameters(self):
+        options = CompleteOptions()
+        result = options.parseOptions(
+            [
+                "--base=dc=example,dc=com",
+                "--binddn",
+                "cn=admin",
+                "--bind-auth-fd=7",
+                "--scope=single",
+                "--service-location=dc=example,dc=com:ldap.example.com:1389",
+                "-v",
+                "-c",
+                "chosen",
+                "--custom-handler",
+                "handled",
+                "--toggle=enabled",
+            ]
+        )
+        self.assertTrue(result["verbose"])
+        self.assertEqual(result["custom"], "chosen")
+        self.assertEqual(result["handled"], "handled")
+        self.assertEqual(result["toggled"], "enabled")
+        self.assertEqual(result["bind-auth-fd"], 7)
+
+    def test_double_dash_stops_option_parsing(self):
+        options = Options()
+        self.assertEqual(options.parseOptions(["--", "ignored"]), {})
+
+    def test_option_errors(self):
+        cases = [
+            (["argument"], "Unknown argument"),
+            (["--unknown"], "Unknown option"),
+            (["-z"], "Unknown option"),
+            (["--verbose=yes"], "does not take a value"),
+            (["--custom"], "requires an argument"),
+            (["--toggle"], "requires an argument"),
+        ]
+        for arguments, message in cases:
+            with self.assertRaisesRegex(UsageError, message):
+                CompleteOptions().parseOptions(arguments)
+
+    def test_required_values(self):
+        with self.assertRaisesRegex(UsageError, "base must be given"):
+            CompleteOptions().parseOptions(["--binddn=cn=admin"])
+        with self.assertRaisesRegex(UsageError, "binddn must be given"):
+            CompleteOptions().parseOptions(["--base=dc=example,dc=com"])
+        with self.assertRaisesRegex(UsageError, "must be numeric"):
+            CompleteOptions().parseOptions(
+                [
+                    "--base=dc=example,dc=com",
+                    "--binddn=cn=admin",
+                    "--bind-auth-fd=invalid",
+                ]
+            )
 class TestOptions_service_location(TestCase):
     """
     Unit tests for Options_service_location.
