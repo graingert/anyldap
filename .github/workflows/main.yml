@@ -32,6 +32,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from tags, which a shallow
+          # checkout does not fetch.
+          fetch-depth: 0
 
       - name: Set Up Python
         uses: actions/setup-python@v5
@@ -55,6 +59,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from tags, which a shallow
+          # checkout does not fetch.
+          fetch-depth: 0
 
       - name: Set Up Python
         uses: actions/setup-python@v5
@@ -79,6 +87,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from tags, which a shallow
+          # checkout does not fetch.
+          fetch-depth: 0
 
       - name: Set Up Python
         uses: actions/setup-python@v5

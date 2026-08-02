@@ -22,3 +22,13 @@ recursive-include anyldap *.ldif
 # This is only needed for dev purporse.
 prune docs/build/html
 prune anyldap/test/ldif/webtests.tmp
+
+# setuptools-scm adds every tracked file to the sdist, so the repository-only
+# ones have to be pruned back out here.
+prune .github
+exclude .git-blame-ignore-revs
+exclude .gitignore
+exclude .pre-commit-config.yaml
+exclude .readthedocs.yml
+exclude codecov.yml
+exclude docs/PULL_REQUEST_TEMPLATE.md

@@ -46,18 +46,18 @@ Try not to write the release notes as a commit message.
 Release process
 ---------------
 
-The release is done automatically via GitHub actions when a new tag
-is pushed. A new tag can be pushed with::
-
-    pipx run --spec="zest.releaser[recommended]>=6.22.1" fullrelease
-
-You can also run the zest.releaser process manually:
+The release is done automatically via GitHub actions when a new ``v*`` tag
+is pushed. The version itself comes from that tag via setuptools-scm, so
+there is no version to edit anywhere in the source:
 
 1. pick a new version number!
-2. update the latest version and release date in ``docs/source/NEWS.rst``.
-3. update the ``__version__ = "{version}"`` in ``anyldap/__init__.py``.
-4. tag the new release ``git tag v{version} -m 'Tagging {version}'``
-5. apply steps 2. through 3. for the development release version.
+2. update the latest version and release date in ``docs/source/NEWS.rst``,
+   and commit that on ``main``.
+3. tag the new release ``git tag v{version} -m 'Tagging {version}'``
+4. push it with ``git push origin v{version}``
+
+The tag has to be on a commit reachable from ``main``, otherwise
+setuptools-scm cannot find it and will fall back to a placeholder version.
 
 PyPI access is done via PyPI Trusted Publishing configured for the `pypi`
 GitHub Actions environment and the repository at
