@@ -84,6 +84,119 @@ ignore = [
     "docs/PULL_REQUEST_TEMPLATE.md",
 ]
 
+[tool.mypy]
+strict = true
+plugins = ["mypy_zope:plugin"]
+# Vendored third-party code is not ours to annotate.
+exclude = "^anyldap/samba/_passlib/"
+
+# Modules that predate mypy and are not annotated yet. Strict checking applies
+# to everything not listed here, so new code is covered from the start; delete
+# an entry once its module type-checks.
+[[tool.mypy.overrides]]
+ignore_errors = true
+module = [
+    "anyldap._collections",
+    "anyldap._encoder",
+    "anyldap._scripts.fetchschema",
+    "anyldap._scripts.find_server",
+    "anyldap._scripts.getfreenumber",
+    "anyldap._scripts.ldap2dhcpconf",
+    "anyldap._scripts.ldap2dnszones",
+    "anyldap._scripts.ldap2maradns",
+    "anyldap._scripts.ldap2passwd",
+    "anyldap._scripts.ldap2pdns",
+    "anyldap._scripts.ldifdiff",
+    "anyldap._scripts.ldifpatch",
+    "anyldap._scripts.namingcontexts",
+    "anyldap._scripts.passwd",
+    "anyldap._scripts.rename",
+    "anyldap._scripts.search",
+    "anyldap.attributeset",
+    "anyldap.checkers",
+    "anyldap.config",
+    "anyldap.delta",
+    "anyldap.dns",
+    "anyldap.entry",
+    "anyldap.entryhelpers",
+    "anyldap.generate_password",
+    "anyldap.inmemory",
+    "anyldap.interfaces",
+    "anyldap.ldapfilter",
+    "anyldap.ldiftree",
+    "anyldap.numberalloc",
+    "anyldap.protocols.ldap.autofill.posixAccount",
+    "anyldap.protocols.ldap.autofill.sambaAccount",
+    "anyldap.protocols.ldap.autofill.sambaSamAccount",
+    "anyldap.protocols.ldap.distinguishedname",
+    "anyldap.protocols.ldap.fetchschema",
+    "anyldap.protocols.ldap.ldapclient",
+    "anyldap.protocols.ldap.ldapconnector",
+    "anyldap.protocols.ldap.ldaperrors",
+    "anyldap.protocols.ldap.ldapserver",
+    "anyldap.protocols.ldap.ldapsyntax",
+    "anyldap.protocols.ldap.ldif",
+    "anyldap.protocols.ldap.ldifdelta",
+    "anyldap.protocols.ldap.ldifprotocol",
+    "anyldap.protocols.ldap.merger",
+    "anyldap.protocols.ldap.proxy",
+    "anyldap.protocols.ldap.proxybase",
+    "anyldap.protocols.ldap.svcbindproxy",
+    "anyldap.protocols.pureber",
+    "anyldap.protocols.pureldap",
+    "anyldap.samba._passlib._md4",
+    "anyldap.samba._passlib.des",
+    "anyldap.samba.smbpassword",
+    "anyldap.schema",
+    "anyldap.test._anyio_helpers",
+    "anyldap.test._testing",
+    "anyldap.test.test_anyio_runtime",
+    "anyldap.test.test_anyio_server",
+    "anyldap.test.test_attributeset",
+    "anyldap.test.test_autofill",
+    "anyldap.test.test_autofill_posix",
+    "anyldap.test.test_autofill_samba",
+    "anyldap.test.test_checkers",
+    "anyldap.test.test_collections",
+    "anyldap.test.test_config",
+    "anyldap.test.test_connector",
+    "anyldap.test.test_delta",
+    "anyldap.test.test_distinguishedname",
+    "anyldap.test.test_dns",
+    "anyldap.test.test_encoder",
+    "anyldap.test.test_entry",
+    "anyldap.test.test_examples",
+    "anyldap.test.test_fetchschema",
+    "anyldap.test.test_generate_password",
+    "anyldap.test.test_inmemory",
+    "anyldap.test.test_ldapclient",
+    "anyldap.test.test_ldaperrors",
+    "anyldap.test.test_ldapfilter",
+    "anyldap.test.test_ldapsyntax",
+    "anyldap.test.test_ldif",
+    "anyldap.test.test_ldifdelta",
+    "anyldap.test.test_ldifprotocol",
+    "anyldap.test.test_ldiftree",
+    "anyldap.test.test_match",
+    "anyldap.test.test_merger",
+    "anyldap.test.test_numberalloc",
+    "anyldap.test.test_proxy",
+    "anyldap.test.test_pureber",
+    "anyldap.test.test_pureldap",
+    "anyldap.test.test_schema",
+    "anyldap.test.test_scripts",
+    "anyldap.test.test_server",
+    "anyldap.test.test_smbpassword",
+    "anyldap.test.test_svcbindproxy",
+    "anyldap.test.test_test_helpers",
+    "anyldap.test.test_usage",
+    "anyldap.test.test_vendored_des",
+    "anyldap.test.test_vendored_md4",
+    "anyldap.test.util",
+    "anyldap.testutil",
+    "anyldap.usage",
+]
+
 [tool.coverage.run]
 branch = true
 source_pkgs = ["anyldap"]
@@ -143,6 +256,7 @@ envlist =
     py{310,311,312,313,314,py3}-test
     py312-test-dev
     py312-linters,
+    py312-mypy,
     documentation,
 
 
@@ -158,6 +272,10 @@ deps =
     pytest-cov
     trustme
     trio
+    ; Type checking, on the same env as the tests so imports resolve.
+    mypy: mypy
+    mypy: mypy-zope
+    mypy: pytest
     ; Dependecies for local dev environment.
     dev: diff_cover
     ; Linters are installed both on local dev and the dedicated env.
@@ -181,6 +299,8 @@ commands =
     dev: diff-cover --fail-under 100 --html-report {toxinidir}/build/coverage-diff.html {toxinidir}/build/coverage.xml
     dev: pre-commit run --all-files --show-diff-on-failure
     linters: pre-commit {posargs:run --all-files --show-diff-on-failure}
+
+    mypy: mypy {posargs:anyldap}
 
 [testenv:documentation]
 deps = sphinx
