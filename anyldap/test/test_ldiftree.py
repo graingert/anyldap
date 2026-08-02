@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import unittest as stdlib_unittest
+from unittest import mock
 
 import anyio
 import pytest
@@ -60,16 +61,23 @@ class RandomizedListdir:
     """
 
     @pytest.fixture(autouse=True)
-    def _randomize_listdir(self, monkeypatch):
+    def iterdir(self):
+        """Shuffle directory listings, and record the calls that made them."""
         real_iterdir = anyio.Path.iterdir
 
-        async def randomIterdir(self):
-            entries = [item async for item in real_iterdir(self)]
+        async def randomIterdir(path):
+            entries = [item async for item in real_iterdir(path)]
             random.shuffle(entries)
             for item in entries:
                 yield item
 
-        monkeypatch.setattr(anyio.Path, "iterdir", randomIterdir)
+        with mock.patch(
+            "anyio.Path.iterdir", autospec=True, side_effect=randomIterdir
+        ) as iterdir:
+            yield iterdir
+
+    @pytest.fixture(autouse=True)
+    def _restore_modes_after_chmod(self):
         self._restore_modes = []
         yield
         for path, mode in reversed(self._restore_modes):
@@ -431,6 +439,18 @@ cn: theChild
         self.theChild = await ldiftree.LDIFTreeEntry.open(
             theChild, "cn=theChild,ou=oneChild,dc=example,dc=com"
         )
+
+    async def test_children_listed_through_anyio_path_iterdir(self, iterdir):
+        """The tree must list directories through anyio.Path.iterdir.
+
+        The shuffling fixture patches that method, so if the tree stopped
+        calling it the randomization would silently do nothing -- which is
+        exactly what happened when this backend moved off os.listdir.
+        """
+        children = await self.meta.children()
+
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
+        assert len(children) == 2
 
     async def test_children_empty(self):
         assert await self.empty.children() == []
