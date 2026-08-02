@@ -43,19 +43,23 @@ Quick Usage Example
 
 
     async def example():
-        serverip = b"192.168.128.21"
+        serverip = "192.168.128.21"
         basedn = b"dc=example,dc=com"
         binddn = b"bjensen@example.com"
         bindpw = b"secret"
         query = b"(cn=Babs*)"
-        creator = ldapconnector.LDAPClientCreator(None, ldapclient.LDAPClient)
         overrides = {basedn: (serverip, 389)}
-        client = await creator.connectAsync(basedn, overrides=overrides)
-        await client.bind_async(binddn, bindpw)
-        entry = ldapsyntax.LDAPEntry(client, basedn)
-        results = await entry.search_async(filterText=query)
-        for result in results:
-            print(result.getLDIF())
+        connection = await ldapconnector.connectToLDAPDNAsync(
+            basedn,
+            ldapclient.LDAPClient,
+            overrides=overrides,
+        )
+        async with connection as client:
+            await client.bind_async(binddn, bindpw)
+            entry = ldapsyntax.LDAPEntry(client, basedn)
+            results = await entry.search_async(filterText=query)
+            for result in results:
+                print(result.getLDIF())
 
 
     if __name__ == "__main__":
