@@ -3,7 +3,6 @@
 import anyio
 from anyio.abc import SocketAttribute
 
-from anyldap import config
 from anyldap._encoder import to_bytes
 from anyldap.deferred import DeferredSource, fail, succeed
 from anyldap.runtime import Failure
@@ -12,32 +11,26 @@ from anyldap.test import unittest
 
 async def exchange_async(protocol, wire_data):
     chunks = []
-    server_stopped = anyio.Event()
-
-    async def serve(server_stream):
-        async with anyio.create_task_group() as protocol_tasks:
-            await protocol.attach_stream(server_stream, protocol_tasks)
-            await protocol.wait_closed()
-            protocol_tasks.cancel_scope.cancel()
-        server_stopped.set()
+    from anyldap.protocols.ldap import ldapserver
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = listener.extra(SocketAttribute.local_address)
-    async with listener, anyio.create_task_group() as task_group:
-        task_group.start_soon(listener.serve, serve)
-        client_stream = await anyio.connect_tcp(host, port)
+    client_stream = await anyio.connect_tcp(host, port)
+    server_stream = await listener.listeners[0].accept()
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(ldapserver.serve_stream, server_stream, lambda: protocol)
         await client_stream.send(wire_data)
-        with anyio.move_on_after(0.1):
-            while True:
-                chunks.append(await client_stream.receive())
+        try:
+            with anyio.move_on_after(0.1):
+                while True:
+                    chunks.append(await client_stream.receive())
+        except anyio.EndOfStream:
+            pass
         await client_stream.aclose()
-        await server_stopped.wait()
-        task_group.cancel_scope.cancel()
+        await protocol.wait_closed()
+    await listener.aclose()
     return b"".join(chunks)
 
-
-def exchange(protocol, wire_data):
-    return anyio.run(exchange_async, protocol, wire_data)
 
 def mustRaise(dummy):
     raise unittest.FailTest("Should have raised an exception.")
@@ -129,6 +122,9 @@ class LDAPClientTestDriver:
     def send_multiResponse(self, op, handler, *args, **kwargs):
         return self.send_multiResponse_(op, None, False, handler, *args, **kwargs)
 
+    async def send_multiResponse_async(self, op, handler, *args, **kwargs):
+        self.send_multiResponse(op, handler, *args, **kwargs)
+
     def send_multiResponse_ex(self, op, controls, handler, *args, **kwargs):
         return self.send_multiResponse_(op, controls, True, handler, *args, **kwargs)
 
@@ -139,6 +135,9 @@ class LDAPClientTestDriver:
         else:
             self.responses.pop(0)
         self.sent.append(op)
+
+    async def send_noResponse_async(self, op):
+        self.send_noResponse(op)
 
     def _response(self):
         assert self.responses, "Ran out of responses"
@@ -173,36 +172,11 @@ class LDAPClientTestDriver:
         assert not self.responses, msg
         self.connected = 0
 
+    async def aclose(self):
+        self.connected = 0
+
     def unbind(self):
         assert self.connected
         r = self.fakeUnbindResponse
         self.send_noResponse(r)
         self.connectionLost()
-
-
-def createServer(proto, *responses, **kw):
-    """
-    Create an LDAP server for testing.
-    :param proto: The server protocol factory (e.g. `ProxyBase`).
-    :param responses: The responses to initialize the `LDAPClientTestDrive`.
-    :param proto_args: Optional mapping passed as keyword args to protocol factory.
-    """
-    if "proto_args" in kw:
-        proto_args = kw["proto_args"]
-        del kw["proto_args"]
-    else:
-        proto_args = {}
-
-    def createClient(factory):
-        proto = factory()
-        proto.connectionMade()
-        return proto
-
-    overrides = kw.setdefault("serviceLocationOverrides", {})
-    overrides.setdefault("", createClient)
-    conf = config.LDAPConfig(**kw)
-    server = proto(conf, **proto_args)
-    clientTestDriver = LDAPClientTestDriver(*responses)
-    server.protocol = lambda: clientTestDriver
-    server.clientTestDriver = clientTestDriver
-    return server

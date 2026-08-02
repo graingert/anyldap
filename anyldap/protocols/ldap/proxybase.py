@@ -30,58 +30,13 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         self.queuedRequests = []
         self.startTLS_initiated = False
 
-    def connectionMade(self):
-        """
-        Establish a connection with an LDAP client.
-        """
-        assert self.clientConnector is not None, (
-            "You must set the `clientConnector` property on this instance.  "
-            "It should be a callable that attempts to connect to a server. "
-            "This callable should return a deferred that will fire with a "
-            "protocol instance when the connection is complete."
-        )
-        d = self.clientConnector()
-        d.addCallback(self._connectedToProxiedServer)
-        d.addErrback(self._failedToConnectToProxiedServer)
-        ldapserver.BaseLDAPServer.connectionMade(self)
-
     def connectionLost(self, reason):
         if self.client is not None and self.client.connected:
-            if hasattr(self.client, "aclose") and self._anyio_task_group is not None:
-                self._anyio_task_group.start_soon(self.client.aclose)
-            elif not self.unbound:
-                self.client.unbind()
-            else:
+            if self._anyio_task_group is not None:
                 self._anyio_task_group.start_soon(self.client.aclose)
             self.unbound = True
         self.client = None
         ldapserver.BaseLDAPServer.connectionLost(self, reason)
-
-    def _connectedToProxiedServer(self, proto):
-        """
-        The connection to the proxied server is set up.
-        """
-        if self.use_tls:
-            d = proto.startTLS()
-            d.addCallback(self._establishedTLS)
-            return d
-        else:
-            self.client = proto
-            if not self.connected:
-                # Client no longer connected, proxy shouldn't be either
-                self._anyio_task_group.start_soon(self.client.aclose)
-                self.client = None
-                self.queuedRequests = []
-            else:
-                self._processBacklog()
-
-    def _establishedTLS(self, proto):
-        """
-        TLS has been started.
-        Process any backlog of requests.
-        """
-        self.client = proto
-        self._processBacklog()
 
     def _failedToConnectToProxiedServer(self, err):
         """
@@ -106,50 +61,10 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             reply(msg)
         self._start_anyio_close()
 
-    def _processBacklog(self):
-        """
-        Process the backlog of requests.
-        """
-        while len(self.queuedRequests) > 0:
-            request, controls, reply = self.queuedRequests.pop(0)
-            self._forwardRequestToProxiedServer(request, controls, reply)
-
     async def _processBacklog_async(self):
         while len(self.queuedRequests) > 0:
             request, controls, reply = self.queuedRequests.pop(0)
             await self._forwardRequestToProxiedServer_async(request, controls, reply)
-
-    def _forwardRequestToProxiedServer(self, request, controls, reply):
-        """
-        Forward the original requests to the proxied server.
-        """
-        if self.client is None:
-            self.queuedRequests.append((request, controls, reply))
-            return
-
-        def forwardit(result, reply):
-            """
-            Forward the LDAP request to the proxied server.
-            """
-            if result is None:
-                return
-            request, controls = result
-            if request.needs_answer:
-                dseq = []
-                d2 = self.client.send_multiResponse(
-                    request,
-                    self._gotResponseFromProxiedServer,
-                    reply,
-                    request,
-                    controls,
-                    dseq,
-                )
-                d2.addErrback(logger.exception)
-            else:
-                self.client.send_noResponse(request)
-
-        d = maybeDeferred(self.handleBeforeForwardRequest, request, controls, reply)
-        d.addCallback(forwardit, reply)
 
     async def _forwardRequestToProxiedServer_async(self, request, controls, reply):
         if self.client is None:
@@ -164,29 +79,16 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         request, controls = result
         if request.needs_answer:
             dseq = []
-            if hasattr(self.client, "send_multiResponse_async"):
-                await self.client.send_multiResponse_async(
-                    request,
-                    self._gotResponseFromProxiedServer,
-                    reply,
-                    request,
-                    controls,
-                    dseq,
-                )
-            else:
-                self.client.send_multiResponse(
-                    request,
-                    self._gotResponseFromProxiedServer,
-                    reply,
-                    request,
-                    controls,
-                    dseq,
-                )
+            await self.client.send_multiResponse_async(
+                request,
+                self._gotResponseFromProxiedServer,
+                reply,
+                request,
+                controls,
+                dseq,
+            )
         else:
-            if hasattr(self.client, "send_noResponse_async"):
-                await self.client.send_noResponse_async(request)
-            else:
-                self.client.send_noResponse(request)
+            await self.client.send_noResponse_async(request)
 
     def handleBeforeForwardRequest(self, request, controls, reply):
         """
@@ -235,11 +137,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         And request for which no corresponding `handle_xxx()` method is
         implemented is dispatched to this handler.
         """
-        if self._anyio_stream is not None:
-            return self._forwardRequestToProxiedServer_async(request, controls, reply)
-        d = succeed(request)
-        d.addCallback(self._forwardRequestToProxiedServer, controls, reply)
-        return d
+        return self._forwardRequestToProxiedServer_async(request, controls, reply)
 
     def handle_LDAPExtendedRequest(self, request, controls, reply):
         """

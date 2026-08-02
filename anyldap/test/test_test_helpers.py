@@ -2,12 +2,12 @@ import logging
 import sys
 import warnings
 
+import anyio
 import pytest
 
 from anyldap import testutil
 from anyldap.deferred import fail, succeed
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import proxy
 from anyldap.runtime import Failure
 from anyldap.test import unittest, util
 from anyldap.test._anyio_helpers import AsyncLDAPClientDriver, MemoryByteStream
@@ -18,10 +18,11 @@ pytestmark = pytest.mark.anyio
 
 async def test_memory_byte_stream_all_operations():
     stream = MemoryByteStream()
-    await stream.feed(b"incoming")
-    assert await stream.receive() == b"incoming"
-    await stream.send(b"outgoing")
-    assert await stream.next_write() == b"outgoing"
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(stream.feed, b"incoming")
+        assert await stream.receive() == b"incoming"
+        task_group.start_soon(stream.send, b"outgoing")
+        assert await stream.next_write() == b"outgoing"
     await stream.close_input()
     await stream.aclose()
     assert stream.closed
@@ -185,15 +186,3 @@ def test_calltrace_profiles_calls(capsys):
     testutil.calltrace()
     sys.setprofile(None)
     assert "call" in capsys.readouterr().out
-
-
-async def test_create_server_compatibility_helper():
-    server = testutil.createServer(proxy.Proxy, proto_args={})
-    assert server.connected
-    assert server.client is server.clientTestDriver
-    server.client.responses.clear()
-    server.connectionLost(Exception("closed"))
-
-    server = testutil.createServer(proxy.Proxy)
-    server.client.responses.clear()
-    server.connectionLost(Exception("closed"))

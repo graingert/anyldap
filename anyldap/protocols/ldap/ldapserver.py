@@ -1,21 +1,15 @@
 """LDAP protocol server"""
 
-import inspect
 from contextlib import AsyncExitStack
 
 import anyio
 from anyio.abc import SocketAttribute
 from anyio.streams.tls import TLSStream
+from exceptiongroup import suppress
 
 from anyldap import delta, interfaces
-from anyldap.deferred import (
-    Deferred,
-    DeferredSource,
-    fail,
-    logError,
-    maybeDeferred,
-    succeed,
-)
+from anyldap._async import await_result
+from anyldap.deferred import logError, maybeDeferred
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldaperrors
 from anyldap.runtime import ConnectionDone, Failure, Protocol, logger
@@ -50,24 +44,30 @@ class BaseLDAPServer(Protocol):
         )
     )
 
-    def dataReceived(self, recd):
-        self.buffer += recd
-        while 1:
-            try:
-                o, bytes = pureber.berDecodeObject(self.berdecoder, self.buffer)
-            except pureber.BERExceptionInsufficientData:
-                o, bytes = None, 0
-            self.buffer = self.buffer[bytes:]
-            if o is None:
-                break
-            self.handle(o)
-
     def connectionMade(self):
         """TCP connection has opened"""
         self.connected = 1
 
     async def connectionMade_async(self):
         self.connectionMade()
+
+    @classmethod
+    async def listen(
+        cls,
+        host="127.0.0.1",
+        port=0,
+        *,
+        backlog=65536,
+        task_status=anyio.TASK_STATUS_IGNORED,
+    ):
+        """Listen for TCP clients and report the bound address when ready."""
+        await listen(
+            host,
+            port,
+            cls,
+            backlog=backlog,
+            task_status=task_status,
+        )
 
     def connectionLost(self, reason=Protocol.connectionDone):
         """Called when TCP connection has been lost"""
@@ -86,47 +86,31 @@ class BaseLDAPServer(Protocol):
         self._anyio_task_group = task_group
         self._anyio_closed_event = anyio.Event()
         self._anyio_write_lock = anyio.Lock()
-        task_group.start_soon(self._run_reader)
         await self.connectionMade_async()
+        task_group.start_soon(self._run_reader)
         return self
 
     async def aclose(self):
         stream = self._anyio_stream
-        reader_scope = self._anyio_reader_scope
         self._anyio_stream = None
         self._anyio_closing = True
-        if reader_scope is not None:
-            reader_scope.cancel()
-        if stream is not None:
-            await stream.aclose()
         if self.connected:
             self.connectionLost(Failure(ConnectionDone()))
+        if stream is not None:
+            await stream.aclose()
 
     async def wait_closed(self):
         if self._anyio_closed_event is not None:
             await self._anyio_closed_event.wait()
 
-    def _queue_anyio_write(self, data):
-        if self._tls_upgrade is not None and self._tls_upgrade[1] is None:
-            self._tls_upgrade[1] = data
-            return
-        if (
-            not self.connected
-            or self._anyio_stream is None
-            or self._anyio_task_group is None
-            or self._anyio_write_lock is None
-        ):
-            raise LDAPServerConnectionLostException()
-        self._anyio_task_group.start_soon(self._send_anyio_write, data)
-
     async def _send_anyio_write(self, data):
         lock = self._anyio_write_lock
         if lock is None:
-            raise LDAPServerConnectionLostException()
+            return
         async with lock:
             stream = self._anyio_stream
             if stream is None:
-                raise LDAPServerConnectionLostException()
+                return
             try:
                 await stream.send(data)
             except (anyio.ClosedResourceError, anyio.BrokenResourceError):
@@ -166,45 +150,70 @@ class BaseLDAPServer(Protocol):
         try:
             while True:
                 data = await stream.receive()
-                if not data:
-                    break
-                self.dataReceived(data)
-                tls_upgrade = self._tls_upgrade
-                if tls_upgrade is not None:
-                    self._tls_upgrade = None
-                    await self._upgrade_to_tls(*tls_upgrade)
-                    stream = self._anyio_stream
-                    assert stream is not None
+                await self.data_received_async(data)
+                current_stream = self._anyio_stream
+                if current_stream is not None:
+                    stream = current_stream
         except (anyio.EndOfStream, anyio.ClosedResourceError, anyio.BrokenResourceError):
             pass
         finally:
             if self.connected:
                 stream = self._anyio_stream
                 self._anyio_stream = None
-                if stream is not None:
-                    await stream.aclose()
+                assert stream is not None
+                await stream.aclose()
                 self.connectionLost(Failure(ConnectionDone()))
 
-    async def _run_reader(self):
-        with anyio.CancelScope() as cancel_scope:
-            self._anyio_reader_scope = cancel_scope
-            await self._read_from_stream()
+    async def data_received_async(self, recd):
+        self.buffer += recd
+        while True:
+            try:
+                message, used = pureber.berDecodeObject(self.berdecoder, self.buffer)
+            except pureber.BERExceptionInsufficientData:
+                message, used = None, 0
+            self.buffer = self.buffer[used:]
+            if message is None:
+                return
+            await self.handle_async(message)
 
-    async def _resolve_awaitable(self, awaitable, deferred):
-        try:
-            result = await awaitable
-        except Exception as exc:
-            deferred.errback(exc)
-        else:
-            deferred.callback(result)
-
-    def queue(self, id, op):
-        if not self.connected:
-            raise LDAPServerConnectionLostException()
-        msg = pureldap.LDAPMessage(op, id=id)
+    async def handle_async(self, msg):
+        assert isinstance(msg.value, pureldap.LDAPProtocolRequest)
         if self.debug:
-            logger.debug("S->C %s", repr(msg))
-        self._queue_anyio_write(msg.toWire())
+            logger.debug("S<-C %s", repr(msg))
+        if msg.id == 0:
+            self.unsolicitedNotification(msg.value)
+            return
+
+        name = msg.value.__class__.__name__
+        handler = getattr(self, "handle_" + name, self.handleUnknown)
+        responses = []
+        try:
+            result = await await_result(
+                handler(msg.value, msg.controls, responses.append)
+            )
+        except ldaperrors.LDAPException as exc:
+            result = self._callErrorHandler(
+                name=name,
+                resultCode=exc.resultCode,
+                errorMessage=exc.message,
+            )
+        except Exception as exc:
+            result = self._cbOtherError(Failure(exc), name)
+        if result is not None:
+            responses.append(result)
+
+        for response in responses:
+            message = pureldap.LDAPMessage(response, id=msg.id)
+            if self.debug:
+                logger.debug("S->C %s", repr(message))
+            tls_upgrade = self._tls_upgrade
+            if tls_upgrade is None:
+                await self._send_anyio_write(message.toWire())
+            else:
+                self._tls_upgrade = None
+                await self._upgrade_to_tls(tls_upgrade[0], message.toWire())
+    async def _run_reader(self):
+        await self._read_from_stream()
 
     def unsolicitedNotification(self, msg):
         logger.info("Got unsolicited notification: %s", repr(msg))
@@ -231,18 +240,6 @@ class BaseLDAPServer(Protocol):
         )
         return msg
 
-    def _cbLDAPError(self, reason, name):
-        reason.trap(ldaperrors.LDAPException)
-        return self._callErrorHandler(
-            name=name,
-            resultCode=reason.value.resultCode,
-            errorMessage=reason.value.message,
-        )
-
-    def _cbHandle(self, response, id):
-        if response is not None:
-            self.queue(id, response)
-
     def failDefault(self, resultCode, errorMessage):
         return pureldap.LDAPExtendedResponse(
             resultCode=resultCode,
@@ -261,41 +258,6 @@ class BaseLDAPServer(Protocol):
             errorMessage=reason.getErrorMessage(),
         )
 
-    def handle(self, msg):
-        assert isinstance(msg.value, pureldap.LDAPProtocolRequest)
-        if self.debug:
-            logger.debug("S<-C %s", repr(msg))
-
-        if msg.id == 0:
-            self.unsolicitedNotification(msg.value)
-        else:
-            name = msg.value.__class__.__name__
-            handler = getattr(self, "handle_" + name, self.handleUnknown)
-            try:
-                result = handler(
-                    msg.value,
-                    msg.controls,
-                    lambda response: self._cbHandle(response, msg.id),
-                )
-            except Exception as exc:
-                d = fail(exc)
-            else:
-                if isinstance(result, Deferred):
-                    d = result
-                elif inspect.isawaitable(result):
-                    d = DeferredSource()
-                    self._anyio_task_group.start_soon(
-                        self._resolve_awaitable, result, d
-                    )
-                    d = d.deferred
-                else:
-                    d = succeed(result)
-            d.addErrback(self._cbLDAPError, name)
-            d.addErrback(logError)
-            d.addErrback(self._cbOtherError, name)
-            d.addCallback(self._cbHandle, msg.id)
-
-
 async def serve_stream(stream, protocol_factory):
     server = protocol_factory()
     async with AsyncExitStack() as exit_stack:
@@ -304,6 +266,14 @@ async def serve_stream(stream, protocol_factory):
         exit_stack.push_async_callback(server.aclose)
         await server.wait_closed()
     return server
+
+
+async def serve(listener, protocol_factory):
+    async with listener:
+        with suppress(anyio.ClosedResourceError):
+            await listener.serve(
+                lambda stream: serve_stream(stream, protocol_factory)
+            )
 
 
 async def listen(
@@ -319,9 +289,8 @@ async def listen(
         local_port=port,
         backlog=backlog,
     )
-    async with listener:
-        task_status.started(listener.extra(SocketAttribute.local_address))
-        await listener.serve(lambda stream: serve_stream(stream, protocol_factory))
+    task_status.started(listener.extra(SocketAttribute.local_address))
+    await serve(listener, protocol_factory)
 
 
 class LDAPServer(BaseLDAPServer):

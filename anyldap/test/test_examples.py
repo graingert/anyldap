@@ -36,22 +36,20 @@ class LDAPServerWithUPNBind(unittest.TestCase):
 
         server = anyldap_with_upn_bind.LDAPServerWithUPNBind()
         server.factory = self.root
-        server.output = testutil.MemoryStreamOutput()
-        server.output.connect(server)
-        server.connectionMade()
         self.server = server
 
-    def checkSuccessfulBIND(self, bind_dn, password):
+    async def checkSuccessfulBIND(self, bind_dn, password):
         """
         Do a BIND request and check that is succeeds.
         """
-        self.server.dataReceived(
+        response = await testutil.exchange_async(
+            self.server,
             pureldap.LDAPMessage(
                 pureldap.LDAPBindRequest(dn=bind_dn, auth=password), id=4
-            ).toWire()
+            ).toWire(),
         )
         self.assertEqual(
-            self.server.output.value(),
+            response,
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=0, matchedDN="cn=bob,dc=example,dc=com"
@@ -60,30 +58,31 @@ class LDAPServerWithUPNBind(unittest.TestCase):
             ).toWire(),
         )
 
-    def test_bindSuccessUPN(self):
+    async def test_bindSuccessUPN(self):
         """
         It can authenticate based on the UPN.
         """
-        self.checkSuccessfulBIND("bob@ad.example.com", b"secret")
+        await self.checkSuccessfulBIND("bob@ad.example.com", b"secret")
 
-    def test_bindSuccessDN(self):
+    async def test_bindSuccessDN(self):
         """
         It can still authenticate based on the normal DN.
         """
-        self.checkSuccessfulBIND("cn=bob,dc=example,dc=com", b"secret")
+        await self.checkSuccessfulBIND("cn=bob,dc=example,dc=com", b"secret")
 
-    def test_bindBadPassword(self):
+    async def test_bindBadPassword(self):
         """
         When password don't match the BIND fails.
         """
-        self.server.dataReceived(
+        response = await testutil.exchange_async(
+            self.server,
             pureldap.LDAPMessage(
                 pureldap.LDAPBindRequest(dn="bob@ad.example.com", auth="invalid"),
                 id=734,
-            ).toWire()
+            ).toWire(),
         )
         self.assertEqual(
-            self.server.output.value(),
+            response,
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPInvalidCredentials.resultCode

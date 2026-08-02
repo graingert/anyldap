@@ -67,22 +67,15 @@ async def test_ldap_client_bind_async():
         def handle_LDAPBindRequest(self, request, controls, reply):
             return pureldap.LDAPBindResponse(resultCode=0, matchedDN=request.dn)
 
-    server_stopped = anyio.Event()
-
-    async def serve(server_stream):
-        await ldapserver.serve_stream(server_stream, BindServer)
-        server_stopped.set()
-
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = listener.extra(SocketAttribute.local_address)
-    async with listener, anyio.create_task_group() as task_group:
-        task_group.start_soon(listener.serve, serve)
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(ldapserver.serve, listener, BindServer)
         client_stream = await anyio.connect_tcp(host, port)
         await client.attach_stream(client_stream, task_group)
         assert await client.bind_async(*creds) == (creds[0], None)
         await client.aclose()
-        await server_stopped.wait()
-        task_group.cancel_scope.cancel()
+        await listener.aclose()
 
 
 async def test_ldapsyntax_commit_async():

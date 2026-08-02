@@ -47,6 +47,7 @@ class AsyncLDAPClientDriver:
         self.sent = []
         self.connected = True
         self.closed = False
+        self.closed_event = anyio.Event()
 
     def _response(self):
         assert self.responses, "Ran out of responses"
@@ -94,6 +95,7 @@ class AsyncLDAPClientDriver:
     async def aclose(self):
         self.closed = True
         self.connected = False
+        self.closed_event.set()
 
     def assert_sent(self, *expected):
         assert self.sent == list(expected)
