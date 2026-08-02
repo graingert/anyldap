@@ -123,7 +123,6 @@ module = [
     "anyldap.protocols.ldap.fetchschema",
     "anyldap.protocols.ldap.ldapclient",
     "anyldap.protocols.ldap.ldapconnector",
-    "anyldap.protocols.ldap.ldaperrors",
     "anyldap.protocols.ldap.ldapserver",
     "anyldap.protocols.ldap.ldapsyntax",
     "anyldap.protocols.ldap.ldif",

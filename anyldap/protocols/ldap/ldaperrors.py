@@ -1,7 +1,10 @@
+from typing import Any, ClassVar
+
 from anyldap._encoder import to_bytes
+from anyldap.protocols.ldap.distinguishedname import DistinguishedName
 
 
-def get(resultCode, errorMessage):
+def get(resultCode: int, errorMessage: str) -> "LDAPResult":
     """Get an instance of the correct exception for this resultCode."""
     return LDAPExceptionCollection.get_instance(resultCode, errorMessage)
 
@@ -12,9 +15,17 @@ class LDAPExceptionCollection(type):
     the corresponding classes.
     """
 
-    collection = {}
+    # Values are the registered classes. They are not all constructed the
+    # same way -- Success takes a message, LDAPResult itself takes nothing --
+    # so this cannot be narrowed past the class object.
+    collection: ClassVar[dict[int, Any]] = {}
 
-    def __new__(mcs, name, bases, attributes):
+    def __new__(
+        mcs,
+        name: str,
+        bases: tuple[type, ...],
+        attributes: dict[str, Any],
+    ) -> Any:
         cls = type.__new__(mcs, name, bases, attributes)
         code = attributes.get("resultCode")
         if code is not None:
@@ -24,37 +35,43 @@ class LDAPExceptionCollection(type):
         return cls
 
     @classmethod
-    def get_instance(mcs, code, message):
+    def get_instance(mcs, code: int, message: Any) -> "LDAPResult":
         """Get an instance of the correct exception for this result code."""
         cls = mcs.collection.get(code)
         if cls is not None:
-            return cls(message)
+            instance: LDAPResult = cls(message)
+            return instance
         return LDAPUnknownError(code, message)
 
 
 class LDAPResult(metaclass=LDAPExceptionCollection):
-    resultCode = None
-    name = None
+    # The base really does have None here -- toWire() tests for it -- and
+    # subclasses narrow it, so the defaults have to stay rather than becoming
+    # bare declarations.
+    resultCode: ClassVar[int | None] = None
+    name: ClassVar[bytes | None] = None
 
 
 class Success(LDAPResult):
     resultCode = 0
     name = b"success"
 
-    def __init__(self, msg):
+    def __init__(self, msg: str):
         pass
 
 
 class LDAPException(Exception, LDAPResult):
-    def __init__(self, message=None):
+    def __init__(
+        self, message: str | bytes | DistinguishedName | None = None
+    ) -> None:
         Exception.__init__(self)
         self.message = message
 
-    def __str__(self):
+    def __str__(self) -> str:
         message = self.toWire()
         return message.decode("utf-8")
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         if self.message:
             return b"%s: %s" % (self.name, to_bytes(self.message))
         if self.name:
@@ -63,14 +80,14 @@ class LDAPException(Exception, LDAPResult):
 
 
 class LDAPUnknownError(LDAPException):
-    def __init__(self, resultCode, message=None):
+    def __init__(self, resultCode: int, message: str | None=None):
         assert resultCode not in LDAPExceptionCollection.collection, (
             "resultCode %r must be unknown" % resultCode
         )
         self.code = resultCode
         LDAPException.__init__(self, message)
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         codeName = b"unknownError(%d)" % self.code
         if self.message:
             return b"%s: %s" % (codeName, to_bytes(self.message))
