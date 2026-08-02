@@ -1,5 +1,5 @@
 """A Pure-Python AnyIO library for LDAP."""
-__version__ = "21.2.1.dev0"
+__version__ = "0.0.1"
 
 __title__ = "anyldap"
 __description__ = "A Pure-Python AnyIO library for LDAP"
