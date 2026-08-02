@@ -74,7 +74,7 @@ class ReadOnlyInMemoryLDAPEntry(
         if self._parent is None:
             raise LDAPCannotRemoveRootError()
         if self._children:
-            raise ldaperrors.LDAPNotAllowedOnNonLeaf(self.dn)
+            raise ldaperrors.LDAPNotAllowedOnNonLeaf(self.dn.getText())
         return await self._parent.deleteChild(self.dn.split()[0])
 
     delete_async = delete

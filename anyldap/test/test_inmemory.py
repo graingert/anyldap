@@ -279,10 +279,15 @@ class TestInMemoryDatabase:
             await newRoot.delete()
 
     async def test_delete_nonLeaf(self):
-
-
-        with pytest.raises(ldaperrors.LDAPNotAllowedOnNonLeaf):
+        with pytest.raises(ldaperrors.LDAPNotAllowedOnNonLeaf) as excinfo:
             await self.meta.delete()
+
+        # The error has to survive being rendered: it used to carry the DN
+        # object itself, and encoding that raised TypeError instead of
+        # reporting the LDAP failure.
+        assert excinfo.value.toWire() == (
+            b"notAllowedOnNonLeaf: ou=metasyntactic,dc=example,dc=com"
+        )
 
     async def test_delete(self):
         _result = await self.foo.delete()

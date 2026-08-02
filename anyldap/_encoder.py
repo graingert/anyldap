@@ -3,10 +3,23 @@
 """
 
 import warnings
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, Protocol, overload
 
 
-def to_bytes(value: Any) -> bytes:
+class SupportsToWire(Protocol):
+    """Anything that can render itself as LDAP wire bytes."""
+
+    def toWire(self) -> bytes: ...
+
+
+@overload
+def to_bytes(value: SupportsToWire) -> bytes: ...
+@overload
+def to_bytes(value: int | str | bytes | bytearray | memoryview | Iterable[int]) -> bytes: ...
+def to_bytes(
+    value: SupportsToWire | int | str | bytes | bytearray | memoryview | Iterable[int],
+) -> bytes:
     """
     Converts value to its bytes representation:
 
@@ -15,8 +28,7 @@ def to_bytes(value: Any) -> bytes:
     * Otherwise wraps value into bytes()
     """
     if hasattr(value, "toWire"):
-        wire: bytes = value.toWire()
-        return wire
+        return value.toWire()
     if isinstance(value, int):
         return str(value).encode("utf-8")
     if isinstance(value, str):

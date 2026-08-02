@@ -119,7 +119,6 @@ module = [
     "anyldap.numberalloc",
     "anyldap.protocols.ldap.autofill.posixAccount",
     "anyldap.protocols.ldap.autofill.sambaSamAccount",
-    "anyldap.protocols.ldap.distinguishedname",
     "anyldap.protocols.ldap.fetchschema",
     "anyldap.protocols.ldap.ldapclient",
     "anyldap.protocols.ldap.ldapconnector",

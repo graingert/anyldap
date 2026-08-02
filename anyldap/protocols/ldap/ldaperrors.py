@@ -1,7 +1,6 @@
 from typing import Any, ClassVar
 
 from anyldap._encoder import to_bytes
-from anyldap.protocols.ldap.distinguishedname import DistinguishedName
 
 
 def get(resultCode: int, errorMessage: str) -> "LDAPResult":
@@ -62,7 +61,7 @@ class Success(LDAPResult):
 
 class LDAPException(Exception, LDAPResult):
     def __init__(
-        self, message: str | bytes | DistinguishedName | None = None
+        self, message: str | bytes | None = None
     ) -> None:
         Exception.__init__(self)
         self.message = message
