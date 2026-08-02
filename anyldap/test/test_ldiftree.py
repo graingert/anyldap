@@ -329,7 +329,7 @@ class TestLDIFTreeEntry(RandomizedListdir):
     # TODO share the actual tests with inmemory and any other
     # implementations of the same interface
     @pytest.fixture(autouse=True)
-    def _tree(self, tmp_path):
+    async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
         os.mkdir(self.tree)
         com = os.path.join(self.tree, "dc=com.dir")
@@ -407,20 +407,24 @@ cn: theChild
         # Invalid file
         writeFile(os.path.join(oneChild, "cn=invalidChild.lddd"), b"invalid data")
 
-        self.root = ldiftree.LDIFTreeEntry(self.tree)
-        self.example = ldiftree.LDIFTreeEntry(example, "dc=example,dc=com")
-        self.empty = ldiftree.LDIFTreeEntry(empty, "ou=empty,dc=example,dc=com")
-        self.meta = ldiftree.LDIFTreeEntry(meta, "ou=metasyntactic,dc=example,dc=com")
-        self.foo = ldiftree.LDIFTreeEntry(
+        self.root = await ldiftree.LDIFTreeEntry.open(self.tree)
+        self.example = await ldiftree.LDIFTreeEntry.open(example, "dc=example,dc=com")
+        self.empty = await ldiftree.LDIFTreeEntry.open(
+            empty, "ou=empty,dc=example,dc=com"
+        )
+        self.meta = await ldiftree.LDIFTreeEntry.open(
+            meta, "ou=metasyntactic,dc=example,dc=com"
+        )
+        self.foo = await ldiftree.LDIFTreeEntry.open(
             foo, "cn=foo,ou=metasyntactic,dc=example,dc=com"
         )
-        self.bar = ldiftree.LDIFTreeEntry(
+        self.bar = await ldiftree.LDIFTreeEntry.open(
             bar, "cn=bar,ou=metasyntactic,dc=example,dc=com"
         )
-        self.oneChild = ldiftree.LDIFTreeEntry(
+        self.oneChild = await ldiftree.LDIFTreeEntry.open(
             oneChild, "ou=oneChild,dc=example,dc=com"
         )
-        self.theChild = ldiftree.LDIFTreeEntry(
+        self.theChild = await ldiftree.LDIFTreeEntry.open(
             theChild, "cn=theChild,ou=oneChild,dc=example,dc=com"
         )
 
@@ -502,7 +506,7 @@ cn: theChild
         assert excinfo.value.errno == errno.EACCES
 
     async def test_addChild(self):
-        self.empty.addChild(
+        await self.empty.addChild(
             rdn="a=b",
             attributes={
                 "objectClass": ["a", "b"],
@@ -521,9 +525,9 @@ cn: theChild
         want.sort()
         assert got == want
 
-    def test_addChild_Exists(self):
+    async def test_addChild_Exists(self):
         with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
-            self.meta.addChild(
+            await self.meta.addChild(
                 rdn="cn=foo",
                 attributes={
                     "objectClass": ["a"],
@@ -531,8 +535,8 @@ cn: theChild
                 },
             )
 
-    def test_addChild_to_existing_directory(self):
-        child = self.meta.addChild(
+    async def test_addChild_to_existing_directory(self):
+        child = await self.meta.addChild(
             rdn="cn=baz",
             attributes={"objectClass": ["a"], "cn": ["baz"]},
         )
@@ -551,10 +555,10 @@ cn: theChild
         assert result
         assert self.empty.dn == "ou=moved,dc=example,dc=com"
 
-    def test_parent(self):
-        assert self.foo.parent() == self.meta
-        assert self.meta.parent() == self.example
-        assert self.root.parent() is None
+    async def test_parent(self):
+        assert await self.foo.parent() == self.meta
+        assert await self.meta.parent() == self.example
+        assert await self.root.parent() is None
 
     async def test_subtree_empty(self):
         assert len(await self.empty.subtree()) == 1
@@ -678,7 +682,7 @@ objectClass: top
         with pytest.raises(ldaperrors.LDAPNoSuchObject):
             await self.root.deleteChild("cn=not-exist")
 
-    def test_setPassword(self):
+    async def test_setPassword(self):
         self.foo.setPassword(b"s3krit", salt=b"\xf2\x4a")
         assert "userPassword" in self.foo
         assert self.foo["userPassword"] == [b"{SSHA}0n/Iw1NhUOKyaI9gm9v5YsO3ZInySg=="]
@@ -696,13 +700,13 @@ objectClass: top
     async def test_diffTree_copy(self, tmp_path):
         otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
         assert await self.root.diffTree(other) == []
 
     async def test_diffTree_addChild(self, tmp_path):
         otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
         e = entry.BaseLDAPEntry(dn="cn=foo,dc=example,dc=com")
         await ldiftree.put(otherDir, e)
 
@@ -712,7 +716,7 @@ objectClass: top
     async def test_diffTree_delChild(self, tmp_path):
         otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
         await otherEmpty.delete()
@@ -722,7 +726,7 @@ objectClass: top
     async def test_diffTree_edit_failure(self, tmp_path):
         otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
         otherEmpty["foo"] = ["bar"]
@@ -740,7 +744,7 @@ objectClass: top
     async def test_diffTree_edit(self, tmp_path):
         otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
         otherEmpty["foo"] = ["bar"]
@@ -790,7 +794,7 @@ objectClass: top
             _moved("ou=moved,ou=oneChild,dc=example,dc=com"),
         }
 
-    def testCompareOtherTypes(self):
+    async def testCompareOtherTypes(self):
         """
         It can't be compared with other types.
         """
@@ -800,7 +804,7 @@ objectClass: top
         with pytest.raises(TypeError):
             self.example > object()
 
-    def testCompareGreater(self):
+    async def testCompareGreater(self):
         """
         It is compared with other entries based on DN, where child is
         greater than the parent.
@@ -808,7 +812,7 @@ objectClass: top
         assert self.oneChild > self.example
         assert not (self.example > self.oneChild)
 
-    def testCompareLess(self):
+    async def testCompareLess(self):
         """
         It is compared with other entries based on DN, where parent is
         less than the child.
@@ -816,7 +820,7 @@ objectClass: top
         assert self.example < self.oneChild
         assert not (self.oneChild < self.example)
 
-    def testRepresentation(self):
+    async def testRepresentation(self):
         assert self.example.dn.getText() in repr(self.example)
 
 

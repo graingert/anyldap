@@ -6,6 +6,7 @@ changing of location in tree)
 """
 
 from anyldap import attributeset
+from anyldap._async import await_result
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldif
 
@@ -225,7 +226,8 @@ class AddOp(Operation):
 
     async def patch(self, root):
         parent = await root.lookup(self.entry.dn.up())
-        parent.addChild(self.entry.dn.split()[0], self.entry)
+        # ldiftree's addChild has to await; inmemory's does not.
+        await await_result(parent.addChild(self.entry.dn.split()[0], self.entry))
 
     def __repr__(self):
         return self.__class__.__name__ + "(" + "%r" % self.entry + ")"

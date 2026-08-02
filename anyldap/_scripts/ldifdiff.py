@@ -13,9 +13,9 @@ def output(result, outputFile):
 
 
 async def main(filename1, filename2, outputFile):
-    with open(filename1, "rb") as file1:
+    async with await anyio.Path(filename1).open("rb") as file1:
         db1 = await inmemory.fromLDIFFile(file1)
-    with open(filename2, "rb") as file2:
+    async with await anyio.Path(filename2).open("rb") as file2:
         db2 = await inmemory.fromLDIFFile(file2)
     output(await db1.diffTree(db2), outputFile)
 

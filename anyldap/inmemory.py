@@ -1,7 +1,7 @@
 from zope.interface import implementer
 
 from anyldap import entry, entryhelpers, interfaces
-from anyldap._async import ResultSlot
+from anyldap._async import ResultSlot, await_result
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
 from anyldap.runtime import ConnectionDone, Failure, unwrap_failure
 
@@ -198,7 +198,8 @@ async def fromLDIFFile(f):
 
     p = InMemoryLDIFProtocol()
     while 1:
-        data = f.read()
+        # `f` may be a plain file-like or an anyio AsyncFile.
+        data = await await_result(f.read(8192))
         if not data:
             break
         p.dataReceived(data)
