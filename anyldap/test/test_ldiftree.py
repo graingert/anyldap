@@ -1,6 +1,7 @@
 """
 Test cases for LDIF directory tree writing/reading.
 """
+import contextlib
 import errno
 import logging
 import os
@@ -50,31 +51,31 @@ skipIfWindows = stdlib_unittest.skipIf(
 )
 
 
-class RandomizedListdir:
-    """
-    Base class that makes directory listings come back in a random order, so
-    tests cannot quietly depend on directory ordering.
+@contextlib.contextmanager
+def randomizedListdir():
+    """Make directory listings come back in a random order.
 
-    This patches anyio.Path.iterdir, which is what the tree walks. Patching
+    Patches anyio.Path.iterdir, which is what the tree walks; patching
     os.listdir instead would only bite on the CPython versions whose pathlib
-    happens to be implemented in terms of it.
+    happens to be implemented in terms of it. Yields the mock, so a caller can
+    assert the listing really went through it.
     """
+    real_iterdir = anyio.Path.iterdir
 
-    @pytest.fixture(autouse=True)
-    def iterdir(self):
-        """Shuffle directory listings, and record the calls that made them."""
-        real_iterdir = anyio.Path.iterdir
+    async def randomIterdir(path):
+        entries = [item async for item in real_iterdir(path)]
+        random.shuffle(entries)
+        for item in entries:
+            yield item
 
-        async def randomIterdir(path):
-            entries = [item async for item in real_iterdir(path)]
-            random.shuffle(entries)
-            for item in entries:
-                yield item
+    with mock.patch(
+        "anyio.Path.iterdir", autospec=True, side_effect=randomIterdir
+    ) as iterdir:
+        yield iterdir
 
-        with mock.patch(
-            "anyio.Path.iterdir", autospec=True, side_effect=randomIterdir
-        ) as iterdir:
-            yield iterdir
+
+class RestoresModes:
+    """Base class that puts back any file modes a test changed."""
 
     @pytest.fixture(autouse=True)
     def _restore_modes_after_chmod(self):
@@ -88,7 +89,7 @@ class RandomizedListdir:
         await anyio.Path(path).chmod(mode)
 
 
-class TestDir2LDIF(RandomizedListdir):
+class TestDir2LDIF(RestoresModes):
     @pytest.fixture(autouse=True)
     async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
@@ -198,7 +199,7 @@ objectClass: top
         assert await ldiftree.get(self.tree, want.dn) == want
 
 
-class TestLDIF2Dir(RandomizedListdir):
+class TestLDIF2Dir(RestoresModes):
     @pytest.fixture(autouse=True)
     async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
@@ -333,7 +334,7 @@ dc: org
 """)
 
 
-class TestLDIFTreeEntry(RandomizedListdir):
+class TestLDIFTreeEntry(RestoresModes):
     """
     Tests for LDIFTreeEntry.
     """
@@ -440,17 +441,22 @@ cn: theChild
             theChild, "cn=theChild,ou=oneChild,dc=example,dc=com"
         )
 
-    async def test_children_listed_through_anyio_path_iterdir(self, iterdir):
-        """The tree must list directories through anyio.Path.iterdir.
+    async def test_children_do_not_depend_on_directory_order(self):
+        """Listing children must go through anyio.Path.iterdir, and must not
+        care what order it hands entries back.
 
-        The shuffling fixture patches that method, so if the tree stopped
-        calling it the randomization would silently do nothing -- which is
-        exactly what happened when this backend moved off os.listdir.
+        randomizedListdir patches that method, so if the tree stopped calling
+        it the shuffling would silently do nothing -- which is exactly what
+        happened when this backend moved off os.listdir.
         """
-        children = await self.meta.children()
+        with randomizedListdir() as iterdir:
+            children = await self.meta.children()
 
         assert iterdir.mock_calls == [mock.call(self.meta.path)]
-        assert len(children) == 2
+        util.assert_permutation(
+            [c.dn for c in children],
+            [self.foo.dn, self.bar.dn],
+        )
 
     async def test_children_empty(self):
         assert await self.empty.children() == []
