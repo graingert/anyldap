@@ -84,6 +84,5 @@ Dependencies:
 
 - `AnyIO <https://pypi.org/project/anyio/>`_ for asynchronous networking
 - `dnspython <https://pypi.org/project/dnspython/>`_ for LDAP service discovery
-- `Passlib <https://pypi.org/project/passlib/>`_ for Samba passwords
 - `pyparsing <https://pypi.org/project/pyparsing/>`_ for LDAP filters
 - `zope.interface <https://pypi.org/project/zope.interface/>`_

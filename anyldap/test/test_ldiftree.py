@@ -22,9 +22,13 @@ pytestmark = pytest.mark.anyio
 
 
 def writeFile(path, content):
-    f = open(path, "wb")
-    f.write(content)
-    f.close()
+    with open(path, "wb") as f:
+        f.write(content)
+
+
+def _readFile(path):
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def _moved(dn):
@@ -224,7 +228,7 @@ objectClass: organizationalUnit
     def _cb_testSimpleWrite(self):
         path = os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif")
         assert os.path.isfile(path)
-        assert open(path, "rb").read() == (b"""\
+        assert _readFile(path) == (b"""\
 dn: cn=foo,dc=example,dc=com
 objectClass: top
 cn: foo
@@ -251,7 +255,7 @@ cn: foo
             "cn=create-me.ldif",
         )
         assert os.path.isfile(path)
-        assert open(path, "rb").read() == (b"""\
+        assert _readFile(path) == (b"""\
 dn: cn=create-me,ou=OrgUnit,dc=example,dc=com
 objectClass: top
 cn: create-me
@@ -276,7 +280,7 @@ cn: create-me
     def _cb_testDirExists(self, dirpath):
         path = os.path.join(dirpath, "cn=create-me.ldif")
         assert os.path.isfile(path)
-        assert open(path, "rb").read() == (b"""\
+        assert _readFile(path) == (b"""\
 dn: cn=create-me,ou=OrgUnit,dc=example,dc=com
 objectClass: top
 cn: create-me
@@ -309,7 +313,7 @@ cn: create-me
     def _cb_testAddTopLevel(self):
         path = os.path.join(self.tree, "dc=org.ldif")
         assert os.path.isfile(path)
-        assert open(path, "rb").read() == (b"""\
+        assert _readFile(path) == (b"""\
 dn: dc=org
 objectClass: dcObject
 dc: org

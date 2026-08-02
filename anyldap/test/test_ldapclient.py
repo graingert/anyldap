@@ -256,14 +256,15 @@ async def test_async_close_and_empty_stream_disconnect():
     peer_closed = anyio.Event()
 
     async def wait_for_close(stream):
-        with suppress(anyio.EndOfStream):
-            await stream.receive()
+        async with stream:
+            with suppress(anyio.EndOfStream):
+                await stream.receive()
         peer_closed.set()
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = listener.extra(SocketAttribute.local_address)
     client = ldapclient.LDAPClient()
-    async with anyio.create_task_group() as task_group:
+    async with listener, anyio.create_task_group() as task_group:
         task_group.start_soon(listener.serve, wait_for_close)
         await client.attach_stream(await anyio.connect_tcp(host, port), task_group)
         await client.aclose()

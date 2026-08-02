@@ -58,6 +58,7 @@ import string
 from pyparsing import (
     CharsNotIn,
     Combine,
+    DelimitedList,
     Forward,
     Group,
     Literal,
@@ -69,7 +70,6 @@ from pyparsing import (
     Suppress,
     Word,
     ZeroOrMore,
-    delimitedList,
 )
 
 filter_ = Forward()
@@ -77,12 +77,12 @@ attr = Word(
     string.ascii_letters,
     string.ascii_letters + string.digits + ";-",
 )
-attr.leaveWhitespace()
-attr.setName("attr")
+attr.leave_whitespace()
+attr.set_name("attr")
 hexdigits = Word(string.hexdigits, exact=2)
-hexdigits.setName("hexdigits")
+hexdigits.set_name("hexdigits")
 escaped = Suppress(Literal("\\")) + hexdigits
-escaped.setName("escaped")
+escaped.set_name("escaped")
 
 
 def _p_escaped(s, l, t):
@@ -90,22 +90,22 @@ def _p_escaped(s, l, t):
     return chr(int(text, 16))
 
 
-escaped.setParseAction(_p_escaped)
+escaped.set_parse_action(_p_escaped)
 value = Combine(OneOrMore(CharsNotIn("*()\\\0") | escaped))
-value.setName("value")
+value.set_name("value")
 equal = Literal("=")
-equal.setParseAction(lambda s, l, t: pureldap.LDAPFilter_equalityMatch)
+equal.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_equalityMatch)
 approx = Literal("~=")
-approx.setParseAction(lambda s, l, t: pureldap.LDAPFilter_approxMatch)
+approx.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_approxMatch)
 greater = Literal(">=")
-greater.setParseAction(lambda s, l, t: pureldap.LDAPFilter_greaterOrEqual)
+greater.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_greaterOrEqual)
 less = Literal("<=")
-less.setParseAction(lambda s, l, t: pureldap.LDAPFilter_lessOrEqual)
+less.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_lessOrEqual)
 filtertype = equal | approx | greater | less
-filtertype.setName("filtertype")
+filtertype.set_name("filtertype")
 simple = attr + filtertype + value
-simple.leaveWhitespace()
-simple.setName("simple")
+simple.leave_whitespace()
+simple.set_name("simple")
 
 
 def _p_simple(s, l, t):
@@ -116,23 +116,23 @@ def _p_simple(s, l, t):
     )
 
 
-simple.setParseAction(_p_simple)
+simple.set_parse_action(_p_simple)
 present = attr + "=*"
-present.setParseAction(lambda s, l, t: pureldap.LDAPFilter_present(t[0]))
+present.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_present(t[0]))
 initial = value.copy()
-initial.setParseAction(lambda s, l, t: pureldap.LDAPFilter_substrings_initial(t[0]))
-initial.setName("initial")
+initial.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_substrings_initial(t[0]))
+initial.set_name("initial")
 any_value = value + Suppress(Literal("*"))
-any_value.setParseAction(lambda s, l, t: pureldap.LDAPFilter_substrings_any(t[0]))
+any_value.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_substrings_any(t[0]))
 any = Suppress(Literal("*")) + ZeroOrMore(any_value)
-any.setName("any")
+any.set_name("any")
 final = value.copy()
-final.setName("final")
-final.setParseAction(lambda s, l, t: pureldap.LDAPFilter_substrings_final(t[0]))
+final.set_name("final")
+final.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_substrings_final(t[0]))
 substring = (
     attr + Suppress(Literal("=")) + Group(Optional(initial) + any + Optional(final))
 )
-substring.setName("substring")
+substring.set_name("substring")
 
 
 def _p_substring(s, l, t):
@@ -140,16 +140,16 @@ def _p_substring(s, l, t):
     return pureldap.LDAPFilter_substrings(type=attrtype, substrings=substrings)
 
 
-substring.setParseAction(_p_substring)
+substring.set_parse_action(_p_substring)
 
 keystring = Word(string.ascii_letters, string.ascii_letters + string.digits + ";-")
-keystring.setName("keystring")
-numericoid = delimitedList(Word(string.digits), delim=".", combine=True)
-numericoid.setName("numericoid")
+keystring.set_name("keystring")
+numericoid = DelimitedList(Word(string.digits), delim=".", combine=True)
+numericoid.set_name("numericoid")
 oid = numericoid | keystring
-oid.setName("oid")
+oid.set_name("oid")
 matchingrule = oid.copy()
-matchingrule.setName("matchingrule")
+matchingrule.set_name("matchingrule")
 
 extensible_dn = Optional(":dn")
 
@@ -158,7 +158,7 @@ def _p_extensible_dn(s, l, t):
     return bool(t)
 
 
-extensible_dn.setParseAction(_p_extensible_dn)
+extensible_dn.set_parse_action(_p_extensible_dn)
 
 matchingrule_or_none = Optional(Suppress(":") + matchingrule)
 
@@ -170,32 +170,32 @@ def _p_matchingrule_or_none(s, l, t):
         return t[0]
 
 
-matchingrule_or_none.setParseAction(_p_matchingrule_or_none)
+matchingrule_or_none.set_parse_action(_p_matchingrule_or_none)
 
 extensible_attr = attr + extensible_dn + matchingrule_or_none + Suppress(":=") + value
-extensible_attr.setName("extensible_attr")
+extensible_attr.set_name("extensible_attr")
 
 
 def _p_extensible_attr(s, l, t):
     return list(t)
 
 
-extensible_attr.setParseAction(_p_extensible_attr)
+extensible_attr.set_parse_action(_p_extensible_attr)
 
 extensible_noattr = (
     extensible_dn + Suppress(":") + matchingrule + Suppress(":=") + value
 )
-extensible_noattr.setName("extensible_noattr")
+extensible_noattr.set_name("extensible_noattr")
 
 
 def _p_extensible_noattr(s, l, t):
     return [None] + list(t)
 
 
-extensible_noattr.setParseAction(_p_extensible_noattr)
+extensible_noattr.set_parse_action(_p_extensible_noattr)
 
 extensible = extensible_attr | extensible_noattr
-extensible.setName("extensible")
+extensible.set_name("extensible")
 
 
 def _p_extensible(s, l, t):
@@ -205,34 +205,34 @@ def _p_extensible(s, l, t):
     )
 
 
-extensible.setParseAction(_p_extensible)
+extensible.set_parse_action(_p_extensible)
 item = simple ^ present ^ substring ^ extensible
-item.setName("item")
-item.leaveWhitespace()
+item.set_name("item")
+item.leave_whitespace()
 not_ = Suppress(Literal("!")) + filter_
-not_.setParseAction(lambda s, l, t: pureldap.LDAPFilter_not(t[0]))
-not_.setName("not")
+not_.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_not(t[0]))
+not_.set_name("not")
 filterlist = OneOrMore(filter_)
 or_ = Suppress(Literal("|")) + filterlist
-or_.setParseAction(lambda s, l, t: pureldap.LDAPFilter_or(t))
-or_.setName("or")
+or_.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_or(t))
+or_.set_name("or")
 and_ = Suppress(Literal("&")) + filterlist
-and_.setParseAction(lambda s, l, t: pureldap.LDAPFilter_and(t))
-and_.setName("and")
+and_.set_parse_action(lambda s, l, t: pureldap.LDAPFilter_and(t))
+and_.set_name("and")
 filtercomp = and_ | or_ | not_ | item
-filtercomp.setName("filtercomp")
+filtercomp.set_name("filtercomp")
 filter_ << (
-    Suppress(Literal("(").leaveWhitespace())
+    Suppress(Literal("(").leave_whitespace())
     + filtercomp
-    + Suppress(Literal(")").leaveWhitespace())
+    + Suppress(Literal(")").leave_whitespace())
 )
-filter_.setName("filter")
-filtercomp.leaveWhitespace()
-filter_.leaveWhitespace()
+filter_.set_name("filter")
+filtercomp.leave_whitespace()
+filter_.leave_whitespace()
 
-toplevel = StringStart().leaveWhitespace() + filter_ + StringEnd().leaveWhitespace()
-toplevel.leaveWhitespace()
-toplevel.setName("toplevel")
+toplevel = StringStart().leave_whitespace() + filter_ + StringEnd().leave_whitespace()
+toplevel.leave_whitespace()
+toplevel.set_name("toplevel")
 
 
 def parseFilter(s):
@@ -244,7 +244,7 @@ def parseFilter(s):
     """
     s = to_unicode(s)
     try:
-        x = toplevel.parseString(s)
+        x = toplevel.parse_string(s)
     except ParseException as e:
         raise InvalidLDAPFilter(e.msg, e.loc, e.line)
     assert len(x) == 1
@@ -263,7 +263,7 @@ def _p_maybeSubString_simple(s, l, t):
     )
 
 
-maybeSubString_simple.setParseAction(_p_maybeSubString_simple)
+maybeSubString_simple.set_parse_action(_p_maybeSubString_simple)
 
 maybeSubString_present = Literal("*")
 
@@ -272,7 +272,7 @@ def _p_maybeSubString_present(s, l, t):
     return lambda attr: pureldap.LDAPFilter_present(attr)
 
 
-maybeSubString_present.setParseAction(_p_maybeSubString_present)
+maybeSubString_present.set_parse_action(_p_maybeSubString_present)
 
 maybeSubString_substring = Optional(initial) + any + Optional(final)
 
@@ -281,7 +281,7 @@ def _p_maybeSubString_substring(s, l, t):
     return lambda attr: pureldap.LDAPFilter_substrings(type=attr, substrings=t)
 
 
-maybeSubString_substring.setParseAction(_p_maybeSubString_substring)
+maybeSubString_substring.set_parse_action(_p_maybeSubString_substring)
 
 maybeSubString = (
     maybeSubString_simple ^ maybeSubString_present ^ maybeSubString_substring
@@ -290,7 +290,7 @@ maybeSubString = (
 
 def parseMaybeSubstring(attrType, s):
     try:
-        x = maybeSubString.parseString(s)
+        x = maybeSubString.parse_string(s)
     except ParseException as e:
         raise InvalidLDAPFilter(e.msg, e.loc, e.line)
     assert len(x) == 1

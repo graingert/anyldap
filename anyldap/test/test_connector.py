@@ -183,10 +183,11 @@ async def test_creator_connects_to_real_endpoint():
     port = listener.extra(SocketAttribute.local_port)
 
     async def hold_open(stream):
-        try:
-            await stream.receive()
-        except anyio.EndOfStream:
-            pass
+        async with stream:
+            try:
+                await stream.receive()
+            except anyio.EndOfStream:
+                pass
 
     creator = ldapconnector.LDAPClientCreator(None, ldapclient.LDAPClient)
     async with listener, anyio.create_task_group() as task_group:

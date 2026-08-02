@@ -9,9 +9,9 @@ description = "A Pure-Python AnyIO library for LDAP"
 authors = [{ name = "Tommi Virtanen", email = "tv@eagain.net" }]
 maintainers = [{ name = "Bret Curtis", email = "psi29a@gmail.com" }]
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "anyldap/samba/_passlib/LICENSE"]
 requires-python = ">=3.10"
-dependencies = ["anyio", "dnspython", "exceptiongroup", "outcome", "passlib", "pyparsing", "zope.interface"]
+dependencies = ["anyio", "dnspython", "exceptiongroup", "outcome", "pyparsing", "zope.interface"]
 classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -105,6 +105,8 @@ source = [
 [tool.pytest.ini_options]
 addopts = "-ra --cov=anyldap --cov-report=term-missing --cov-fail-under=100"
 testpaths = ["anyldap/test"]
+strict = true
+filterwarnings = ["error"]
 
 [tool.ruff]
 line-length = 368
@@ -156,7 +158,6 @@ deps =
     pytest-cov
     trustme
     trio
-    passlib
     ; Dependecies for local dev environment.
     dev: diff_cover
     ; Linters are installed both on local dev and the dedicated env.

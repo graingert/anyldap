@@ -3,6 +3,7 @@ include *.md
 include LICENSE
 include docs/source/examples/ldif2ldif
 include anyldap.schema
+include anyldap/samba/_passlib/LICENSE
 recursive-include docs *.cfg
 recursive-include docs *.conf
 recursive-include docs *.dia

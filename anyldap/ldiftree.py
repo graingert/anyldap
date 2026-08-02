@@ -57,12 +57,12 @@ def _get(path, dn):
 
     entry = os.path.join(path, *("%s.dir" % rdn.getText() for rdn in l[:-1]))
     entry = os.path.join(entry, "%s.ldif" % l[-1].getText())
-    f = open(entry, "rb")
-    while 1:
-        data = f.read(8192)
-        if not data:
-            break
-        parser.dataReceived(data)
+    with open(entry, "rb") as f:
+        while 1:
+            data = f.read(8192)
+            if not data:
+                break
+            parser.dataReceived(data)
     parser.connectionLost(Failure(ConnectionDone()))
 
     assert parser.done
@@ -78,9 +78,8 @@ def _get(path, dn):
 def _putEntry(fileName, entry):
     """fileName is without extension."""
     tmp = f"{fileName}.{uuid.uuid4()!s}.tmp"
-    f = open(tmp, "wb")
-    f.write(entry.toWire())
-    f.close()
+    with open(tmp, "wb") as f:
+        f.write(entry.toWire())
     os.rename(tmp, fileName + ".ldif")
     return True
 
@@ -138,11 +137,12 @@ class LDIFTreeEntry(
                 return
             else:
                 raise
-        while 1:
-            data = f.read(8192)
-            if not data:
-                break
-            parser.dataReceived(data)
+        with f:
+            while 1:
+                data = f.read(8192)
+                if not data:
+                    break
+                parser.dataReceived(data)
         parser.connectionLost(Failure(ConnectionDone()))
         assert parser.done
 
@@ -240,9 +240,8 @@ class LDIFTreeEntry(
             os.mkdir(self.path)
         fileName = os.path.join(self.path, "%s" % rdn.getText())
         tmp = f"{fileName}.{uuid.uuid4()!s}.tmp"
-        f = open(tmp, "wb")
-        f.write(e.toWire())
-        f.close()
+        with open(tmp, "wb") as f:
+            f.write(e.toWire())
         os.rename(tmp, fileName + ".ldif")
         dirName = os.path.join(self.path, "%s.dir" % rdn.getText())
         e = self.__class__(dirName, dn)
@@ -294,7 +293,7 @@ class LDIFTreeEntry(
         try:
             return _putEntry(entryPath, self)
         except Exception:
-            logger.error("[ERROR] Could not commit entry: %s.", self.dn)
+            logger.error("[ERROR] Could not commit entry: %s.", self.dn.getText())
             return False
 
     commit_async = commit
