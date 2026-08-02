@@ -1,8 +1,10 @@
+from typing import Any
+
 from anyldap.protocols.ldap.autofill import ObjectMissingObjectClassException
 
 
 class Autofill_samba:  # TODO baseclass
-    def start(self, ldapObject):
+    def start(self, ldapObject: Any) -> None:
         assert "objectClass" in ldapObject
         if "sambaAccount" not in ldapObject["objectClass"]:
             raise ObjectMissingObjectClassException(ldapObject)
@@ -20,7 +22,7 @@ class Autofill_samba:  # TODO baseclass
         assert "pwdMustChange" not in ldapObject
         ldapObject["pwdMustChange"] = ["0"]
 
-    def notify(self, ldapObject, attributeType):
+    def notify(self, ldapObject: Any, attributeType: Any) -> None:
 
         # rid=2*uid+1000
         if attributeType == "uidNumber":

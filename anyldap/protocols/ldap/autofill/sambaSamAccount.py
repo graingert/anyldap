@@ -1,12 +1,14 @@
+from typing import Any
+
 from anyldap.protocols.ldap.autofill import ObjectMissingObjectClassException
 
 
 class Autofill_samba:  # TODO baseclass
-    def __init__(self, domainSID, fixedPrimaryGroupSID=None):
+    def __init__(self, domainSID, fixedPrimaryGroupSID=None) -> None:
         self.domainSID = domainSID
         self.fixedPrimaryGroupSID = fixedPrimaryGroupSID
 
-    def start(self, ldapObject):
+    def start(self, ldapObject: Any) -> None:
         assert "objectClass" in ldapObject
         if "sambaSamAccount" not in ldapObject["objectClass"]:
             raise ObjectMissingObjectClassException(ldapObject)
@@ -36,7 +38,7 @@ class Autofill_samba:  # TODO baseclass
         for attributeType in ldapObject.keys():
             self.notify(ldapObject, attributeType)
 
-    def notify(self, ldapObject, attributeType):
+    def notify(self, ldapObject: Any, attributeType: Any) -> None:
         # sambaSID=2*uidNumber+1000
         if attributeType == "uidNumber":
             assert "uidNumber" in ldapObject

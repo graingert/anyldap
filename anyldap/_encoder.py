@@ -3,9 +3,10 @@
 """
 
 import warnings
+from typing import Any
 
 
-def to_bytes(value):
+def to_bytes(value: Any) -> bytes:
     """
     Converts value to its bytes representation:
 
@@ -14,7 +15,8 @@ def to_bytes(value):
     * Otherwise wraps value into bytes()
     """
     if hasattr(value, "toWire"):
-        return value.toWire()
+        wire: bytes = value.toWire()
+        return wire
     if isinstance(value, int):
         return str(value).encode("utf-8")
     if isinstance(value, str):
@@ -22,7 +24,7 @@ def to_bytes(value):
     return bytes(value)
 
 
-def to_unicode(value):
+def to_unicode(value: Any) -> Any:
     """
     Converts string to unicode:
 
@@ -34,7 +36,7 @@ def to_unicode(value):
     return value
 
 
-def get_strings(value):
+def get_strings(value: Any) -> tuple[Any, ...]:
     """
     Getting tuple of available string values
     (byte string and unicode string) for
@@ -53,7 +55,7 @@ class WireStrAlias:
     as an alias of toWire method but marks it as deprecated
     """
 
-    def __str__(self):
+    def __str__(self) -> str:
         warnings.simplefilter("always", DeprecationWarning)
         warnings.warn(
             f"{self.__class__.__name__}.__str__ method is deprecated and will not be used "
@@ -63,9 +65,11 @@ class WireStrAlias:
             stacklevel=2,
         )
         warnings.simplefilter("default", DeprecationWarning)
-        return self.toWire()
+        # Deliberately wrong: toWire returns bytes, so this raises TypeError.
+        # The method only exists to warn callers off, and is tested for it.
+        return self.toWire()  # type: ignore[return-value]
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         raise NotImplementedError("toWire method is not implemented")
 
 
@@ -75,7 +79,7 @@ class TextStrAlias:
     as an alias of getText method but marks it as deprecated
     """
 
-    def __str__(self):
+    def __str__(self) -> str:
         warnings.simplefilter("always", DeprecationWarning)
         warnings.warn(
             f"{self.__class__.__name__}.__str__ method is deprecated and will not be used "
@@ -88,5 +92,5 @@ class TextStrAlias:
         text = self.getText()
         return text
 
-    def getText(self):
+    def getText(self) -> str:
         raise NotImplementedError("getText method is not implemented")

@@ -96,16 +96,10 @@ exclude = "^anyldap/samba/_passlib/"
 [[tool.mypy.overrides]]
 ignore_errors = true
 module = [
-    "anyldap._collections",
-    "anyldap._encoder",
     "anyldap._scripts.fetchschema",
     "anyldap._scripts.find_server",
     "anyldap._scripts.getfreenumber",
-    "anyldap._scripts.ldap2dhcpconf",
-    "anyldap._scripts.ldap2dnszones",
-    "anyldap._scripts.ldap2maradns",
     "anyldap._scripts.ldap2passwd",
-    "anyldap._scripts.ldap2pdns",
     "anyldap._scripts.ldifdiff",
     "anyldap._scripts.ldifpatch",
     "anyldap._scripts.namingcontexts",
@@ -126,7 +120,6 @@ module = [
     "anyldap.ldiftree",
     "anyldap.numberalloc",
     "anyldap.protocols.ldap.autofill.posixAccount",
-    "anyldap.protocols.ldap.autofill.sambaAccount",
     "anyldap.protocols.ldap.autofill.sambaSamAccount",
     "anyldap.protocols.ldap.distinguishedname",
     "anyldap.protocols.ldap.fetchschema",
