@@ -18,21 +18,26 @@ from anyldap.test._anyio_helpers import (
 pytestmark = pytest.mark.anyio
 
 
-class LegacyClient:
+class StubClient:
     connected = True
 
     def __init__(self):
         self.calls = []
-        self.transport = MemoryByteStream()
 
-    def send_multiResponse(self, request, callback, reply):
+    async def send_multiResponse_async(self, request, callback, reply):
         self.calls.append(("multi", request, callback, reply))
 
-    def send_noResponse(self, request):
+    async def send_noResponse_async(self, request):
         self.calls.append(("none", request))
 
-    def unbind(self):
-        self.calls.append(("unbind",))
+    async def aclose(self):
+        self.connected = False
+
+
+async def test_stub_client_close_uses_async_interface():
+    client = StubClient()
+    await client.aclose()
+    assert not client.connected
 
 
 def _legacy_server(client=None):
@@ -47,7 +52,7 @@ async def test_legacy_waits_for_connection_and_forwards_result():
     deferred = server._whenConnected(lambda value: value + 1, 4)
 
     assert not deferred.called
-    server._cbConnectionMade(LegacyClient())
+    server._cbConnectionMade(StubClient())
     assert await deferred == 5
 
 
@@ -58,32 +63,13 @@ async def test_legacy_waits_for_connection_and_forwards_failure():
         raise ValueError("broken")
 
     deferred = server._whenConnected(broken)
-    server._cbConnectionMade(LegacyClient())
+    server._cbConnectionMade(StubClient())
     with pytest.raises(ValueError, match="broken"):
         await deferred
 
 
-async def test_legacy_connected_call_and_request_queues():
-    client = LegacyClient()
-    server = _legacy_server(client)
-    assert await server._whenConnected(lambda value: value, "ready") == "ready"
-
-    replies = []
-    bind = pureldap.LDAPBindRequest()
-    unbind = pureldap.LDAPUnbindRequest()
-    server._clientQueue(bind, None, replies.append)
-    server._clientQueue(unbind, None, replies.append)
-    assert client.calls[0][0:2] == ("multi", bind)
-    assert client.calls[1] == ("none", unbind)
-
-    assert not server._gotResponse(pureldap.LDAPSearchResultEntry("cn=a", []), replies.append)
-    assert server._gotResponse(pureldap.LDAPSearchResultDone(resultCode=0), replies.append)
-    assert server._gotResponse(pureldap.LDAPBindResponse(resultCode=0), replies.append)
-    assert len(replies) == 3
-
-
-async def test_async_queue_falls_back_to_legacy_client_methods():
-    client = LegacyClient()
+async def test_async_queue_uses_client_async_interface():
+    client = StubClient()
     server = _legacy_server(client)
     await server._clientQueue_async(pureldap.LDAPBindRequest(), None, lambda response: None)
     await server._clientQueue_async(pureldap.LDAPUnbindRequest(), None, lambda response: None)
@@ -108,52 +94,23 @@ async def test_async_queue_uses_async_client_methods():
     assert [call[0] for call in client.calls] == ["multi", "none"]
 
 
-async def test_legacy_unknown_and_unbind_handlers():
-    client = LegacyClient()
-    server = _legacy_server(client)
-    bind = pureldap.LDAPBindRequest()
-    await server.handleUnknown(bind, None, lambda response: None)
-    assert client.calls[0][0:2] == ("multi", bind)
-
-    await server.handle_LDAPUnbindRequest(
-        pureldap.LDAPUnbindRequest(), None, lambda response: None
-    )
-    assert server.unbound
-    assert client.calls[1][0] == "none"
-
-
 async def test_async_unknown_handler_waits_for_connection():
-    server = _legacy_server(LegacyClient())
+    server = _legacy_server(StubClient())
     await server._handleUnknown_async(
         pureldap.LDAPBindRequest(), None, lambda response: None
     )
     assert server.client.calls[0][0] == "multi"
 
 
-async def test_connection_lost_unbinds_then_closes_legacy_client():
-    client = LegacyClient()
+async def test_connection_lost_without_task_group_detaches_client():
+    client = StubClient()
     server = _legacy_server(client)
     server.connectionLost(Exception("closed"))
-    assert client.calls == [("unbind",)]
     assert server.client is None
-
-    class Transport:
-        def __init__(self):
-            self.closed = False
-
-        def loseConnection(self):
-            self.closed = True
-
-    client = LegacyClient()
-    client.transport = Transport()
-    server = _legacy_server(client)
-    server.unbound = True
-    server.connectionLost(Exception("closed"))
-    assert client.transport.closed
 
 
 async def test_connection_lost_ignores_disconnected_client():
-    client = LegacyClient()
+    client = StubClient()
     client.connected = False
     server = _legacy_server(client)
     server.connectionLost(Exception("closed"))
@@ -161,18 +118,8 @@ async def test_connection_lost_ignores_disconnected_client():
     assert server._failConnection(ValueError("no server")).args == ("no server",)
 
 
-async def test_legacy_connection_made_uses_configured_override():
-    client = LegacyClient()
-    configured = config.LDAPConfig(serviceLocationOverrides={"": lambda factory: client})
-    server = proxy.Proxy(configured)
-    server.waitingConnect = []
-    server.connectionMade()
-    assert server.client is client
-    assert server.connected == 1
-
-
 async def test_async_connection_made_uses_configured_override():
-    client = LegacyClient()
+    client = StubClient()
     configured = config.LDAPConfig(serviceLocationOverrides={"": lambda factory: client})
     server = proxy.Proxy(configured)
     server.waitingConnect = []
@@ -310,8 +257,9 @@ async def test_search(monkeypatch):
         await stream.feed(
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=2).toWire()
         )
-        await stream.feed(
-            pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=3).toWire()
+        task_group.start_soon(
+            stream.feed,
+            pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=3).toWire(),
         )
         bind_response = decode_message(await stream.next_write())
         entry1 = decode_message(await stream.next_write())
@@ -350,7 +298,7 @@ async def test_unbind_client_unbinds(monkeypatch):
         client.assert_sent(pureldap.LDAPBindRequest(), pureldap.LDAPUnbindRequest())
 
 
-async def test_unbind_client_eof(monkeypatch):
+async def test_eof_closes_upstream_client(monkeypatch):
     server, stream, client = await _create_server(
         monkeypatch,
         [pureldap.LDAPBindResponse(resultCode=0)],
@@ -364,4 +312,6 @@ async def test_unbind_client_eof(monkeypatch):
         await stream.next_write()
         await anyio.lowlevel.checkpoint()
         await server.aclose()
-        client.assert_sent(pureldap.LDAPBindRequest(), pureldap.LDAPUnbindRequest())
+        await client.closed_event.wait()
+        client.assert_sent(pureldap.LDAPBindRequest())
+        assert client.closed

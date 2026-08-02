@@ -10,7 +10,7 @@ authors = [{ name = "Tommi Virtanen", email = "tv@eagain.net" }]
 maintainers = [{ name = "Bret Curtis", email = "psi29a@gmail.com" }]
 license = { text = "MIT" }
 requires-python = ">=3.10"
-dependencies = ["anyio", "dnspython", "passlib", "pyparsing", "zope.interface"]
+dependencies = ["anyio", "dnspython", "exceptiongroup", "passlib", "pyparsing", "zope.interface"]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
@@ -134,6 +134,7 @@ parallel_show_output = True
 deps = 
     anyio
     dnspython
+    exceptiongroup
     pyparsing
     pytest
     pytest-cov

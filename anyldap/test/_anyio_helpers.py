@@ -7,8 +7,8 @@ from anyldap.protocols.ldap import ldapserver
 
 class MemoryByteStream:
     def __init__(self):
-        self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream(10)
-        self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream(10)
+        self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream(0)
+        self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream(0)
         self.closed = False
 
     async def send(self, data):
@@ -47,6 +47,7 @@ class AsyncLDAPClientDriver:
         self.sent = []
         self.connected = True
         self.closed = False
+        self.closed_event = anyio.Event()
 
     def _response(self):
         assert self.responses, "Ran out of responses"
@@ -94,6 +95,7 @@ class AsyncLDAPClientDriver:
     async def aclose(self):
         self.closed = True
         self.connected = False
+        self.closed_event.set()
 
     def assert_sent(self, *expected):
         assert self.sent == list(expected)

@@ -1,7 +1,7 @@
 """LDAP protocol proxy server"""
 
 from anyldap._async import await_result
-from anyldap.deferred import DeferredSource, maybeDeferred, succeed
+from anyldap.deferred import DeferredSource, maybeDeferred
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapserver
 
@@ -38,27 +38,11 @@ class Proxy(ldapserver.BaseLDAPServer):
             d2 = maybeDeferred(fn, *a, **kw)
             d2.addCallbacks(d.callback, d.errback)
 
-    def _clientQueue(self, request, controls, reply):
-        # TODO controls
-        if request.needs_answer:
-            self.client.send_multiResponse(request, self._gotResponse, reply)
-            # TODO handle errbacks from the deferred above
-        else:
-            self.client.send_noResponse(request)
-
     async def _clientQueue_async(self, request, controls, reply):
         if request.needs_answer:
-            if hasattr(self.client, "send_multiResponse_async"):
-                await self.client.send_multiResponse_async(
-                    request, self._gotResponse, reply
-                )
-            else:
-                self.client.send_multiResponse(request, self._gotResponse, reply)
+            await self.client.send_multiResponse_async(request, self._gotResponse, reply)
         else:
-            if hasattr(self.client, "send_noResponse_async"):
-                await self.client.send_noResponse_async(request)
-            else:
-                self.client.send_noResponse(request)
+            await self.client.send_noResponse_async(request)
 
     def _gotResponse(self, response, reply):
         reply(response)
@@ -76,42 +60,17 @@ class Proxy(ldapserver.BaseLDAPServer):
         # TODO self.loseConnection()
         return reason  # TODO
 
-    def connectionMade(self):
-        clientCreator = ldapconnector.LDAPClientCreator(None, self.protocol)
-        d = clientCreator.connect(
-            dn="", overrides=self.config.getServiceLocationOverrides()
-        )
-        d.addCallback(self._cbConnectionMade)
-        d.addErrback(self._failConnection)
-
-        ldapserver.BaseLDAPServer.connectionMade(self)
-
     def connectionLost(self, reason):
         assert self.client is not None
         if self.client.connected:
-            if not self.unbound:
-                if hasattr(self.client, "unbind"):
-                    self.client.unbind()
-                elif hasattr(self.client, "aclose") and self._anyio_task_group is not None:
-                    self._anyio_task_group.start_soon(self.client.aclose)
-                self.unbound = True
-            else:
-                if hasattr(self.client, "transport"):
-                    self.client.transport.loseConnection()
-                elif hasattr(self.client, "aclose") and self._anyio_task_group is not None:
-                    self._anyio_task_group.start_soon(self.client.aclose)
+            if self._anyio_task_group is not None:
+                self._anyio_task_group.start_soon(self.client.aclose)
+            self.unbound = True
         self.client = None
         ldapserver.BaseLDAPServer.connectionLost(self, reason)
 
-    def _handleUnknown(self, request, controls, reply):
-        self._whenConnected(self._clientQueue, request, controls, reply)
-
     def handleUnknown(self, request, controls, reply):
-        if self._anyio_stream is not None:
-            return self._handleUnknown_async(request, controls, reply)
-        d = succeed(request)
-        d.addCallback(self._handleUnknown, controls, reply)
-        return d
+        return self._handleUnknown_async(request, controls, reply)
 
     async def _handleUnknown_async(self, request, controls, reply):
         await await_result(self._whenConnected(self._clientQueue_async, request, controls, reply))

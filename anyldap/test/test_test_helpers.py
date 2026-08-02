@@ -2,13 +2,13 @@ import logging
 import sys
 import warnings
 
+import anyio
 import pytest
 
 from anyldap import testutil
 from anyldap.deferred import fail, succeed
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import proxy
-from anyldap.runtime import Failure, Protocol
+from anyldap.runtime import Failure
 from anyldap.test import unittest, util
 from anyldap.test._anyio_helpers import AsyncLDAPClientDriver, MemoryByteStream
 from anyldap.test._testing import Clock, capture_logs
@@ -18,10 +18,11 @@ pytestmark = pytest.mark.anyio
 
 async def test_memory_byte_stream_all_operations():
     stream = MemoryByteStream()
-    await stream.feed(b"incoming")
-    assert await stream.receive() == b"incoming"
-    await stream.send(b"outgoing")
-    assert await stream.next_write() == b"outgoing"
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(stream.feed, b"incoming")
+        assert await stream.receive() == b"incoming"
+        task_group.start_soon(stream.send, b"outgoing")
+        assert await stream.next_write() == b"outgoing"
     await stream.close_input()
     await stream.aclose()
     assert stream.closed
@@ -101,33 +102,6 @@ def test_capture_logs_preserves_more_verbose_logger_level():
     logger.setLevel(original_level)
 
 
-class EchoProtocol(Protocol):
-    def __init__(self):
-        self.received = []
-
-    def dataReceived(self, data):
-        self.received.append(data)
-
-
-def test_io_pump_and_connected_protocols():
-    client = EchoProtocol()
-    server = EchoProtocol()
-    pump = util.returnConnected(server, client)
-    client.transport.write(b"to-server")
-    server.transport.write(b"to-client")
-    assert pump.pump() == 1
-    assert server.received[-1] == b"to-server"
-    assert client.received[-1] == b"to-client"
-    assert pump.pump() == 0
-    pump.flush()
-    client.transport.loseConnection()
-    assert client.transport.disconnecting
-
-    client.transport.write(b"flush-to-server")
-    pump.flush()
-    assert b"flush-to-server" in server.received
-
-
 async def test_coroutine_function_adapter():
     async def add(left, right):
         return left + right
@@ -202,14 +176,7 @@ async def test_legacy_client_driver_paths():
     assert not driver.connected
 
 
-def test_string_transport_and_must_raise():
-    transport = testutil.StringTransport()
-    transport.write(b"value")
-    assert transport.value() == b"value"
-    transport.clear()
-    assert transport.value() == b""
-    transport.loseConnection()
-    assert transport.disconnecting
+def test_must_raise():
     with pytest.raises(unittest.FailTest):
         testutil.mustRaise(None)
 
@@ -219,15 +186,3 @@ def test_calltrace_profiles_calls(capsys):
     testutil.calltrace()
     sys.setprofile(None)
     assert "call" in capsys.readouterr().out
-
-
-async def test_create_server_compatibility_helper():
-    server = testutil.createServer(proxy.Proxy, proto_args={})
-    assert server.connected
-    assert server.client is server.clientTestDriver
-    server.client.responses.clear()
-    server.connectionLost(Exception("closed"))
-
-    server = testutil.createServer(proxy.Proxy)
-    server.client.responses.clear()
-    server.connectionLost(Exception("closed"))

@@ -1,29 +1,35 @@
 """Utilities for writing unit tests and debugging."""
 
-from anyldap import config
+import anyio
+from anyio.abc import SocketAttribute
+
 from anyldap._encoder import to_bytes
 from anyldap.deferred import DeferredSource, fail, succeed
 from anyldap.runtime import Failure
 from anyldap.test import unittest
 
 
-class StringTransport:
-    disconnecting = False
+async def exchange_async(protocol, wire_data):
+    chunks = []
+    from anyldap.protocols.ldap import ldapserver
 
-    def __init__(self):
-        self._data = bytearray()
-
-    def write(self, data):
-        self._data.extend(data)
-
-    def value(self):
-        return bytes(self._data)
-
-    def clear(self):
-        self._data.clear()
-
-    def loseConnection(self):
-        self.disconnecting = True
+    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
+    host, port = listener.extra(SocketAttribute.local_address)
+    client_stream = await anyio.connect_tcp(host, port)
+    server_stream = await listener.listeners[0].accept()
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(ldapserver.serve_stream, server_stream, lambda: protocol)
+        await client_stream.send(wire_data)
+        try:
+            with anyio.move_on_after(0.1):
+                while True:
+                    chunks.append(await client_stream.receive())
+        except anyio.EndOfStream:
+            pass
+        await client_stream.aclose()
+        await protocol.wait_closed()
+    await listener.aclose()
+    return b"".join(chunks)
 
 
 def mustRaise(dummy):
@@ -50,14 +56,6 @@ def calltrace():
     sys.setprofile(_print_func_name)
 
 
-class FakeTransport:
-    def __init__(self, proto):
-        self.proto = proto
-
-    def loseConnection(self):
-        self.proto.connectionLost()
-
-
 class LDAPClientTestDriver:
     """
 
@@ -80,7 +78,6 @@ class LDAPClientTestDriver:
         self.sent = []
         self.responses = list(responses)
         self.connected = None
-        self.transport = FakeTransport(self)
 
     def send(self, op):
         self.sent.append(op)
@@ -125,6 +122,9 @@ class LDAPClientTestDriver:
     def send_multiResponse(self, op, handler, *args, **kwargs):
         return self.send_multiResponse_(op, None, False, handler, *args, **kwargs)
 
+    async def send_multiResponse_async(self, op, handler, *args, **kwargs):
+        self.send_multiResponse(op, handler, *args, **kwargs)
+
     def send_multiResponse_ex(self, op, controls, handler, *args, **kwargs):
         return self.send_multiResponse_(op, controls, True, handler, *args, **kwargs)
 
@@ -135,6 +135,9 @@ class LDAPClientTestDriver:
         else:
             self.responses.pop(0)
         self.sent.append(op)
+
+    async def send_noResponse_async(self, op):
+        self.send_noResponse(op)
 
     def _response(self):
         assert self.responses, "Ran out of responses"
@@ -169,38 +172,11 @@ class LDAPClientTestDriver:
         assert not self.responses, msg
         self.connected = 0
 
+    async def aclose(self):
+        self.connected = 0
+
     def unbind(self):
         assert self.connected
         r = self.fakeUnbindResponse
         self.send_noResponse(r)
-        self.transport.loseConnection()
-
-
-def createServer(proto, *responses, **kw):
-    """
-    Create an LDAP server for testing.
-    :param proto: The server protocol factory (e.g. `ProxyBase`).
-    :param responses: The responses to initialize the `LDAPClientTestDrive`.
-    :param proto_args: Optional mapping passed as keyword args to protocol factory.
-    """
-    if "proto_args" in kw:
-        proto_args = kw["proto_args"]
-        del kw["proto_args"]
-    else:
-        proto_args = {}
-
-    def createClient(factory):
-        proto = factory()
-        proto.connectionMade()
-        return proto
-
-    overrides = kw.setdefault("serviceLocationOverrides", {})
-    overrides.setdefault("", createClient)
-    conf = config.LDAPConfig(**kw)
-    server = proto(conf, **proto_args)
-    clientTestDriver = LDAPClientTestDriver(*responses)
-    server.protocol = lambda: clientTestDriver
-    server.clientTestDriver = clientTestDriver
-    server.transport = StringTransport()
-    server.connectionMade()
-    return server
+        self.connectionLost()
