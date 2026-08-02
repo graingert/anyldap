@@ -51,20 +51,25 @@ skipIfWindows = stdlib_unittest.skipIf(
 
 class RandomizedListdir:
     """
-    Base class that makes os.listdir return its members in a random order, so
+    Base class that makes directory listings come back in a random order, so
     tests cannot quietly depend on directory ordering.
+
+    This patches anyio.Path.iterdir, which is what the tree walks. Patching
+    os.listdir instead would only bite on the CPython versions whose pathlib
+    happens to be implemented in terms of it.
     """
 
     @pytest.fixture(autouse=True)
     def _randomize_listdir(self, monkeypatch):
-        real_listdir = os.listdir
+        real_iterdir = anyio.Path.iterdir
 
-        def randomListdir(*args, **kwargs):
-            r = real_listdir(*args, **kwargs)
-            random.shuffle(r)
-            return r
+        async def randomIterdir(self):
+            entries = [item async for item in real_iterdir(self)]
+            random.shuffle(entries)
+            for item in entries:
+                yield item
 
-        monkeypatch.setattr(os, "listdir", randomListdir)
+        monkeypatch.setattr(anyio.Path, "iterdir", randomIterdir)
         self._restore_modes = []
         yield
         for path, mode in reversed(self._restore_modes):
