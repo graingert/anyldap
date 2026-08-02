@@ -32,10 +32,10 @@ __all__ = ["md4"]
 #=============================================================================
 # utils
 #=============================================================================
-def F(x,y,z):
+def F(x: int, y: int, z: int) -> int:
     return (x&y) | ((~x) & z)
 
-def G(x,y,z):
+def G(x: int, y: int, z: int) -> int:
     return (x&y) | (x&z) | (y&z)
 
 ##def H(x,y,z):
@@ -76,11 +76,13 @@ class md4:
     digest_size = digestsize = 16
     block_size = 64
 
-    _count = 0 # number of 64-byte blocks processed so far (not including _buf)
-    _state = None # list of [a,b,c,d] 32 bit ints used as internal register
-    _buf = None # data processed in 64 byte blocks, this holds leftover from last update
+    # __init__ always sets these; the annotations replace the None placeholders
+    # the original carried, which made every use look optional.
+    _count: int = 0 # number of 64-byte blocks processed so far (not including _buf)
+    _state: list[int] # list of [a,b,c,d] 32 bit ints used as internal register
+    _buf: bytes # data processed in 64 byte blocks, this holds leftover from last update
 
-    def __init__(self, content=None):
+    def __init__(self, content: bytes | None = None) -> None:
         self._count = 0
         self._state = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476]
         self._buf = b''
@@ -156,7 +158,7 @@ class md4:
         [1,2,3,0, 15,15],
     ]
 
-    def _process(self, block):
+    def _process(self, block: bytes) -> None:
         """process 64 byte block"""
         # unpack block into 16 32-bit ints
         X = struct.unpack("<16I", block)
@@ -184,7 +186,7 @@ class md4:
         for i in range(4):
             orig[i] = (orig[i]+state[i]) & MASK_32
 
-    def update(self, content):
+    def update(self, content: bytes) -> None:
         if not isinstance(content, bytes):
             raise TypeError("expected bytes")
         buf = self._buf
@@ -202,14 +204,16 @@ class md4:
                 self._buf = content[idx:]
                 return
 
-    def copy(self):
+    def copy(self) -> "md4":
+        # NOTE: hard-codes md4() rather than type(self)(), so a subclass copies
+        # as a plain md4. Left as upstream had it.
         other = md4()
         other._count = self._count
         other._state = list(self._state)
         other._buf = self._buf
         return other
 
-    def digest(self):
+    def digest(self) -> bytes:
         # NOTE: backing up state so we can restore it after _process is called,
         #       in case object is updated again (this is only attr altered by this method)
         orig = list(self._state)
@@ -233,7 +237,7 @@ class md4:
         self._state = orig
         return out
 
-    def hexdigest(self):
+    def hexdigest(self) -> str:
         return hexlify(self.digest()).decode("ascii")
 
     #===================================================================

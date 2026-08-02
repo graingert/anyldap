@@ -50,11 +50,13 @@ The netbsd des-crypt implementation has some nice notes on how this all works -
 #=============================================================================
 # core
 import struct
+from collections.abc import Iterable, Iterator
+from typing import Any, overload
 
 # pkg
 
 # Shims for the passlib helpers this module used; anyldap is Python 3 only.
-def join_byte_values(values):
+def join_byte_values(values: Iterable[int]) -> bytes:
     return bytes(values)
 
 
@@ -86,10 +88,14 @@ _KS_MASK = 0xfcfcfcfcffffffff
 # static DES tables
 #=============================================================================
 
-# placeholders filled in by _load_tables()
-PCXROT = IE3264 = SPE = CF6464 = None
+# placeholders filled in by _load_tables(); the tables are nests of int
+# tuples whose exact shape is not worth spelling out for lookups.
+PCXROT: Any = None
+IE3264: Any = None
+SPE: Any = None
+CF6464: Any = None
 
-def _load_tables():
+def _load_tables() -> None:
     """delay loading tables until they are actually needed"""
     global PCXROT, IE3264, SPE, CF6464
 
@@ -577,7 +583,7 @@ def _load_tables():
 # support
 #=============================================================================
 
-def _permute(c, p):
+def _permute(c: int, p: Any) -> int:
     """Returns the permutation of the given 32-bit or 64-bit code with
     the specified permutation table."""
     # NOTE: only difference between 32 & 64 bit permutations
@@ -594,17 +600,19 @@ def _permute(c, p):
 # FIXME: more properly named _uint8_struct...
 _uint64_struct = struct.Struct(">Q")
 
-def _pack64(value):
+def _pack64(value: int) -> bytes:
     return _uint64_struct.pack(value)
 
-def _unpack64(value):
-    return _uint64_struct.unpack(value)[0]
+def _unpack64(value: bytes) -> int:
+    result: int = _uint64_struct.unpack(value)[0]
+    return result
 
-def _pack56(value):
+def _pack56(value: int) -> bytes:
     return _uint64_struct.pack(value)[1:]
 
-def _unpack56(value):
-    return _uint64_struct.unpack(b'\x00' + value)[0]
+def _unpack56(value: bytes) -> int:
+    result: int = _uint64_struct.unpack(b'\x00' + value)[0]
+    return result
 
 #=============================================================================
 # 56->64 key manipulation
@@ -619,7 +627,11 @@ def _unpack56(value):
 
 _EXPAND_ITER = irange(49,-7,-7)
 
-def expand_des_key(key):
+@overload
+def expand_des_key(key: bytes) -> bytes: ...
+@overload
+def expand_des_key(key: int) -> int: ...
+def expand_des_key(key: bytes | int) -> bytes | int:
     """convert DES from 7 bytes to 8 bytes (by inserting empty parity bits)"""
     if isinstance(key, bytes):
         if len(key) != 7:
@@ -630,16 +642,20 @@ def expand_des_key(key):
         return _unpack64(expand_des_key(_pack56(key)))
     else:
         raise TypeError(f"key must be bytes or int, not {type(key).__name__}")
-    key = _unpack56(key)
     # NOTE: the following would insert correctly-valued parity bits in each key,
     # but the parity bit would just be ignored in des_encrypt_block(),
     # so not bothering to use it.
     # XXX: could make parity-restoring optionally available via flag
     ##return join_byte_values(expand_7bit((key >> shift) & 0x7f)
     ##                        for shift in _EXPAND_ITER)
-    return join_byte_values(((key>>shift) & 0x7f)<<1 for shift in _EXPAND_ITER)
+    value = _unpack56(key)
+    return join_byte_values(((value>>shift) & 0x7f)<<1 for shift in _EXPAND_ITER)
 
-def shrink_des_key(key):
+@overload
+def shrink_des_key(key: bytes) -> bytes: ...
+@overload
+def shrink_des_key(key: int) -> int: ...
+def shrink_des_key(key: bytes | int) -> bytes | int:
     """convert DES key from 8 bytes to 7 bytes (by discarding the parity bits)"""
     if isinstance(key, bytes):
         if len(key) != 8:
@@ -663,7 +679,9 @@ def shrink_des_key(key):
 #=============================================================================
 # des encryption
 #=============================================================================
-def des_encrypt_block(key, input, salt=0, rounds=1):
+def des_encrypt_block(
+    key: bytes | int, input: bytes, salt: int = 0, rounds: int = 1
+) -> bytes:
     """encrypt single block of data using DES, operates on 8-byte strings.
 
     :arg key:
@@ -701,7 +719,7 @@ def des_encrypt_block(key, input, salt=0, rounds=1):
             key = expand_des_key(key)
         elif len(key) != 8:
             raise ValueError("key must be 7 or 8 bytes")
-        key = _unpack64(key)
+        key_int = _unpack64(key)
     else:
         raise TypeError(f"key must be bytes, not {type(key).__name__}")
 
@@ -709,17 +727,19 @@ def des_encrypt_block(key, input, salt=0, rounds=1):
     if isinstance(input, bytes):
         if len(input) != 8:
             raise ValueError("input block must be 8 bytes")
-        input = _unpack64(input)
+        input_int = _unpack64(input)
     else:
         raise TypeError(f"input must be bytes, not {type(input).__name__}")
 
     # hand things off to other func
-    result = des_encrypt_int_block(key, input, salt, rounds)
+    result = des_encrypt_int_block(key_int, input_int, salt, rounds)
 
     # repack result
     return _pack64(result)
 
-def des_encrypt_int_block(key, input, salt=0, rounds=1):
+def des_encrypt_int_block(
+    key: int, input: int, salt: int = 0, rounds: int = 1
+) -> int:
     """encrypt single block of data using DES, operates on 64-bit integers.
 
     this function is essentially the same as :func:`des_encrypt_block`,
@@ -787,7 +807,7 @@ def des_encrypt_int_block(key, input, salt=0, rounds=1):
     # generate key schedule
     # NOTE: generation was modified to output two elements at a time,
     # so that per-round loop could do two passes at once.
-    def _iter_key_schedule(ks_odd):
+    def _iter_key_schedule(ks_odd: int) -> Iterator[tuple[int, int]]:
         """given 64-bit key, iterates over the 8 (even,odd) key schedule pairs"""
         for p_even, p_odd in PCXROT:
             ks_even = _permute(ks_odd, p_even)

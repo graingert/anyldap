@@ -87,8 +87,6 @@ ignore = [
 [tool.mypy]
 strict = true
 plugins = ["mypy_zope:plugin"]
-# Vendored third-party code is not ours to annotate.
-exclude = "^anyldap/samba/_passlib/"
 
 # Modules that predate mypy and are not annotated yet. Strict checking applies
 # to everything not listed here, so new code is covered from the start; delete
@@ -137,8 +135,6 @@ module = [
     "anyldap.protocols.ldap.svcbindproxy",
     "anyldap.protocols.pureber",
     "anyldap.protocols.pureldap",
-    "anyldap.samba._passlib._md4",
-    "anyldap.samba._passlib.des",
     "anyldap.samba.smbpassword",
     "anyldap.schema",
     "anyldap.test._anyio_helpers",
