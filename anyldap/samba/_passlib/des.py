@@ -51,7 +51,11 @@ The netbsd des-crypt implementation has some nice notes on how this all works -
 # core
 import struct
 from collections.abc import Iterable, Iterator
-from typing import Any, overload
+from typing import Any, TypeVar
+
+# These convert a key without changing its representation: bytes in, bytes
+# out; int in, int out. A constrained TypeVar says exactly that.
+_Key = TypeVar("_Key", bytes, int)
 
 # pkg
 
@@ -627,11 +631,7 @@ def _unpack56(value: bytes) -> int:
 
 _EXPAND_ITER = irange(49,-7,-7)
 
-@overload
-def expand_des_key(key: bytes) -> bytes: ...
-@overload
-def expand_des_key(key: int) -> int: ...
-def expand_des_key(key: bytes | int) -> bytes | int:
+def expand_des_key(key: _Key) -> _Key:
     """convert DES from 7 bytes to 8 bytes (by inserting empty parity bits)"""
     if isinstance(key, bytes):
         if len(key) != 7:
@@ -651,11 +651,7 @@ def expand_des_key(key: bytes | int) -> bytes | int:
     value = _unpack56(key)
     return join_byte_values(((value>>shift) & 0x7f)<<1 for shift in _EXPAND_ITER)
 
-@overload
-def shrink_des_key(key: bytes) -> bytes: ...
-@overload
-def shrink_des_key(key: int) -> int: ...
-def shrink_des_key(key: bytes | int) -> bytes | int:
+def shrink_des_key(key: _Key) -> _Key:
     """convert DES key from 8 bytes to 7 bytes (by discarding the parity bits)"""
     if isinstance(key, bytes):
         if len(key) != 8:
