@@ -10,6 +10,7 @@ import subprocess
 import sys
 import unittest as stdlib_unittest
 
+import anyio
 import pytest
 
 from anyldap import delta, entry, ldiftree
@@ -21,14 +22,12 @@ from anyldap.test._testing import capture_logs
 pytestmark = pytest.mark.anyio
 
 
-def writeFile(path, content):
-    with open(path, "wb") as f:
-        f.write(content)
+async def writeFile(path, content):
+    await anyio.Path(path).write_bytes(content)
 
 
-def _readFile(path):
-    with open(path, "rb") as f:
-        return f.read()
+async def _readFile(path):
+    return await anyio.Path(path).read_bytes()
 
 
 def _moved(dn):
@@ -71,21 +70,21 @@ class RandomizedListdir:
         for path, mode in reversed(self._restore_modes):
             os.chmod(path, mode)
 
-    def chmod(self, path, mode):
-        self._restore_modes.append((path, os.stat(path).st_mode))
-        os.chmod(path, mode)
+    async def chmod(self, path, mode):
+        self._restore_modes.append((path, (await anyio.Path(path).stat()).st_mode))
+        await anyio.Path(path).chmod(mode)
 
 
 class TestDir2LDIF(RandomizedListdir):
     @pytest.fixture(autouse=True)
-    def _tree(self, tmp_path):
+    async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
-        os.mkdir(self.tree)
+        await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
-        os.mkdir(com)
+        await anyio.Path(com).mkdir()
         example = os.path.join(com, "dc=example.dir")
-        os.mkdir(example)
-        writeFile(
+        await anyio.Path(example).mkdir()
+        await writeFile(
             os.path.join(example, "cn=foo.ldif"),
             b"""\
 dn: cn=foo,dc=example,dc=com
@@ -94,7 +93,7 @@ objectClass: top
 
 """,
         )
-        writeFile(
+        await writeFile(
             os.path.join(example, "cn=bad-two-entries.ldif"),
             b"""\
 dn: cn=bad-two-entries,dc=example,dc=com
@@ -107,7 +106,7 @@ objectClass: top
 
 """,
         )
-        writeFile(
+        await writeFile(
             os.path.join(example, "cn=bad-missing-end.ldif"),
             b"""\
 dn: cn=bad-missing-end,dc=example,dc=com
@@ -115,11 +114,11 @@ cn: bad-missing-end
 objectClass: top
 """,
         )
-        writeFile(os.path.join(example, "cn=bad-empty.ldif"), b"")
-        writeFile(os.path.join(example, "cn=bad-only-newline.ldif"), b"\n")
+        await writeFile(os.path.join(example, "cn=bad-empty.ldif"), b"")
+        await writeFile(os.path.join(example, "cn=bad-only-newline.ldif"), b"\n")
         sales = os.path.join(example, "ou=Sales.dir")
-        os.mkdir(sales)
-        writeFile(
+        await anyio.Path(sales).mkdir()
+        await writeFile(
             os.path.join(sales, "cn=sales-thingie.ldif"),
             b"""\
 dn: cn=sales-thingie,ou=Sales,dc=example,dc=com
@@ -141,7 +140,7 @@ objectClass: top
 
     @skipIfWindowsOrRoot
     async def testNoAccess(self):
-        self.chmod(
+        await self.chmod(
             os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif"), 0
         )
         with pytest.raises(OSError) as excinfo:
@@ -188,14 +187,14 @@ objectClass: top
 
 class TestLDIF2Dir(RandomizedListdir):
     @pytest.fixture(autouse=True)
-    def _tree(self, tmp_path):
+    async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
-        os.mkdir(self.tree)
+        await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
-        os.mkdir(com)
+        await anyio.Path(com).mkdir()
         example = os.path.join(com, "dc=example.dir")
-        os.mkdir(example)
-        writeFile(
+        await anyio.Path(example).mkdir()
+        await writeFile(
             os.path.join(example, "cn=pre-existing.ldif"),
             b"""\
 dn: cn=pre-existing,dc=example,dc=com
@@ -204,7 +203,7 @@ objectClass: top
 
 """,
         )
-        writeFile(
+        await writeFile(
             os.path.join(example, "ou=OrgUnit.ldif"),
             b"""\
 dn: ou=OrgUnit,dc=example,dc=com
@@ -223,12 +222,12 @@ objectClass: organizationalUnit
             },
         )
         await ldiftree.put(self.tree, e)
-        self._cb_testSimpleWrite()
+        await self._cb_testSimpleWrite()
 
-    def _cb_testSimpleWrite(self):
+    async def _cb_testSimpleWrite(self):
         path = os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif")
         assert os.path.isfile(path)
-        assert _readFile(path) == (b"""\
+        assert await _readFile(path) == (b"""\
 dn: cn=foo,dc=example,dc=com
 objectClass: top
 cn: foo
@@ -244,9 +243,9 @@ cn: foo
             },
         )
         await ldiftree.put(self.tree, e)
-        self._cb_testDirCreation()
+        await self._cb_testDirCreation()
 
-    def _cb_testDirCreation(self):
+    async def _cb_testDirCreation(self):
         path = os.path.join(
             self.tree,
             "dc=com.dir",
@@ -255,7 +254,7 @@ cn: foo
             "cn=create-me.ldif",
         )
         assert os.path.isfile(path)
-        assert _readFile(path) == (b"""\
+        assert await _readFile(path) == (b"""\
 dn: cn=create-me,ou=OrgUnit,dc=example,dc=com
 objectClass: top
 cn: create-me
@@ -273,14 +272,14 @@ cn: create-me
         dirpath = os.path.join(
             self.tree, "dc=com.dir", "dc=example.dir", "ou=OrgUnit.dir"
         )
-        os.mkdir(dirpath)
+        await anyio.Path(dirpath).mkdir()
         await ldiftree.put(self.tree, e)
-        self._cb_testDirExists(dirpath)
+        await self._cb_testDirExists(dirpath)
 
-    def _cb_testDirExists(self, dirpath):
+    async def _cb_testDirExists(self, dirpath):
         path = os.path.join(dirpath, "cn=create-me.ldif")
         assert os.path.isfile(path)
-        assert _readFile(path) == (b"""\
+        assert await _readFile(path) == (b"""\
 dn: cn=create-me,ou=OrgUnit,dc=example,dc=com
 objectClass: top
 cn: create-me
@@ -308,12 +307,12 @@ cn: create-me
             },
         )
         await ldiftree.put(self.tree, e)
-        self._cb_testAddTopLevel()
+        await self._cb_testAddTopLevel()
 
-    def _cb_testAddTopLevel(self):
+    async def _cb_testAddTopLevel(self):
         path = os.path.join(self.tree, "dc=org.ldif")
         assert os.path.isfile(path)
-        assert _readFile(path) == (b"""\
+        assert await _readFile(path) == (b"""\
 dn: dc=org
 objectClass: dcObject
 dc: org
@@ -331,14 +330,14 @@ class TestLDIFTreeEntry(RandomizedListdir):
     @pytest.fixture(autouse=True)
     async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
-        os.mkdir(self.tree)
+        await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
-        os.mkdir(com)
+        await anyio.Path(com).mkdir()
         example = os.path.join(com, "dc=example.dir")
-        os.mkdir(example)
+        await anyio.Path(example).mkdir()
         meta = os.path.join(example, "ou=metasyntactic.dir")
-        os.mkdir(meta)
-        writeFile(
+        await anyio.Path(meta).mkdir()
+        await writeFile(
             os.path.join(example, "ou=metasyntactic.ldif"),
             b"""\
 dn: ou=metasyntactic,dc=example,dc=com
@@ -349,7 +348,7 @@ ou: metasyntactic
 """,
         )
         foo = os.path.join(meta, "cn=foo.dir")
-        writeFile(
+        await writeFile(
             os.path.join(meta, "cn=foo.ldif"),
             b"""\
 dn: cn=foo,ou=metasyntactic,dc=example,dc=com
@@ -360,7 +359,7 @@ cn: foo
 """,
         )
         bar = os.path.join(meta, "cn=bar.dir")
-        writeFile(
+        await writeFile(
             os.path.join(meta, "cn=bar.ldif"),
             b"""\
 dn: cn=bar,ou=metasyntactic,dc=example,dc=com
@@ -371,7 +370,7 @@ cn: bar
 """,
         )
         empty = os.path.join(example, "ou=empty.dir")
-        writeFile(
+        await writeFile(
             os.path.join(example, "ou=empty.ldif"),
             b"""\
 dn: ou=empty,dc=example,dc=com
@@ -382,8 +381,8 @@ ou: empty
 """,
         )
         oneChild = os.path.join(example, "ou=oneChild.dir")
-        os.mkdir(oneChild)
-        writeFile(
+        await anyio.Path(oneChild).mkdir()
+        await writeFile(
             os.path.join(example, "ou=oneChild.ldif"),
             b"""\
 dn: ou=oneChild,dc=example,dc=com
@@ -394,7 +393,7 @@ ou: oneChild
 """,
         )
         theChild = os.path.join(oneChild, "cn=theChild.dir")
-        writeFile(
+        await writeFile(
             os.path.join(oneChild, "cn=theChild.ldif"),
             b"""\
 dn: cn=theChild,ou=oneChild,dc=example,dc=com
@@ -405,7 +404,7 @@ cn: theChild
 """,
         )
         # Invalid file
-        writeFile(os.path.join(oneChild, "cn=invalidChild.lddd"), b"invalid data")
+        await writeFile(os.path.join(oneChild, "cn=invalidChild.lddd"), b"invalid data")
 
         self.root = await ldiftree.LDIFTreeEntry.open(self.tree)
         self.example = await ldiftree.LDIFTreeEntry.open(example, "dc=example,dc=com")
@@ -484,23 +483,23 @@ cn: theChild
 
     @skipIfWindowsOrRoot
     async def test_children_noAccess_dir_noRead(self):
-        self.chmod(self.meta.path, 0o300)
+        await self.chmod(self.meta.path, 0o300)
         with pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
-        self.chmod(self.meta.path, 0o755)
+        await self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
     async def test_children_noAccess_dir_noExec(self):
-        self.chmod(self.meta.path, 0o600)
+        await self.chmod(self.meta.path, 0o600)
         with pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
-        self.chmod(self.meta.path, 0o755)
+        await self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
     async def test_children_noAccess_file(self):
-        self.chmod(os.path.join(self.meta.path, "cn=foo.ldif"), 0)
+        await self.chmod(os.path.join(self.meta.path, "cn=foo.ldif"), 0)
         with pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
@@ -637,7 +636,7 @@ cn: theChild
         assert excinfo.value.message == dn
 
     async def test_lookup_fail_multipleError(self):
-        writeFile(
+        await writeFile(
             os.path.join(self.example.path, "cn=bad-two-entries.ldif"),
             b"""\
 dn: cn=bad-two-entries,dc=example,dc=com
@@ -654,7 +653,7 @@ objectClass: top
             await self.example.lookup("cn=bad-two-entries,dc=example,dc=com")
 
     async def test_lookup_fail_emptyError(self):
-        writeFile(os.path.join(self.example.path, "cn=bad-empty.ldif"), b"")
+        await writeFile(os.path.join(self.example.path, "cn=bad-empty.ldif"), b"")
         with pytest.raises(ldiftree.LDIFTreeEntryContainsNoEntries):
             await self.example.lookup("cn=bad-empty,dc=example,dc=com")
 
@@ -699,13 +698,13 @@ objectClass: top
 
     async def test_diffTree_copy(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
         assert await self.root.diffTree(other) == []
 
     async def test_diffTree_addChild(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
         e = entry.BaseLDAPEntry(dn="cn=foo,dc=example,dc=com")
         await ldiftree.put(otherDir, e)
@@ -715,7 +714,7 @@ objectClass: top
 
     async def test_diffTree_delChild(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
@@ -725,12 +724,12 @@ objectClass: top
 
     async def test_diffTree_edit_failure(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
         otherEmpty["foo"] = ["bar"]
-        shutil.rmtree(otherDir)
+        await anyio.to_thread.run_sync(shutil.rmtree, otherDir)
         cleanups = []
         messages = capture_logs(cleanups, level=logging.ERROR)
         try:
@@ -743,7 +742,7 @@ objectClass: top
     @skipIfWindows
     async def test_diffTree_edit(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
