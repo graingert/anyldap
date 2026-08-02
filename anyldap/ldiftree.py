@@ -2,7 +2,6 @@
 Manage LDAP data as a tree of LDIF files.
 """
 import errno
-import os
 import uuid
 
 import anyio
@@ -48,7 +47,7 @@ async def get(path, dn):
 
 
 async def _get(path, dn):
-    path = to_unicode(path)
+    path = anyio.Path(to_unicode(path))
     dn = distinguishedname.DistinguishedName(dn)
     l = list(dn.split())
     assert len(l) >= 1
@@ -56,8 +55,8 @@ async def _get(path, dn):
 
     parser = StoreParsedLDIF()
 
-    entry = os.path.join(path, *("%s.dir" % rdn.getText() for rdn in l[:-1]))
-    entry = os.path.join(entry, "%s.ldif" % l[-1].getText())
+    entry = path.joinpath(*("%s.dir" % rdn.getText() for rdn in l[:-1]))
+    entry = entry / ("%s.ldif" % l[-1].getText())
     async with await anyio.Path(entry).open("rb") as f:
         while 1:
             data = await f.read(8192)
@@ -78,32 +77,31 @@ async def _get(path, dn):
 
 async def _putEntry(fileName, entry):
     """fileName is without extension."""
-    tmp = anyio.Path(f"{fileName}.{uuid.uuid4()!s}.tmp")
+    fileName = anyio.Path(fileName)
+    tmp = fileName.with_name(f"{fileName.name}.{uuid.uuid4()!s}.tmp")
     await tmp.write_bytes(entry.toWire())
-    await tmp.rename(fileName + ".ldif")
+    await tmp.rename(fileName.with_name(fileName.name + ".ldif"))
     return True
 
 
 async def _put(path, entry):
-    path = to_unicode(path)
+    path = anyio.Path(to_unicode(path))
     l = list(entry.dn.split())
     assert len(l) >= 1
     l.reverse()
 
     entryRDN = l.pop()
     if l:
-        grandParent = os.path.join(path, *("%s.dir" % rdn.getText() for rdn in l[:-1]))
-        parentEntry = os.path.join(grandParent, "%s.ldif" % l[-1].getText())
-        parentDir = os.path.join(grandParent, "%s.dir" % l[-1].getText())
-        if not await anyio.Path(parentDir).exists():
-            if not await anyio.Path(parentEntry).exists():
+        grandParent = path.joinpath(*("%s.dir" % rdn.getText() for rdn in l[:-1]))
+        parentEntry = grandParent / ("%s.ldif" % l[-1].getText())
+        parentDir = grandParent / ("%s.dir" % l[-1].getText())
+        if not await parentDir.exists():
+            if not await parentEntry.exists():
                 raise LDIFTreeNoSuchObject(entry.dn.up())
-            await anyio.Path(parentDir).mkdir(parents=True, exist_ok=True)
+            await parentDir.mkdir(parents=True, exist_ok=True)
     else:
         parentDir = path
-    return await _putEntry(
-        os.path.join(parentDir, "%s" % entryRDN.getText()), entry
-    )
+    return await _putEntry(parentDir / entryRDN.getText(), entry)
 
 
 async def put(path, entry):
@@ -127,7 +125,7 @@ class LDIFTreeEntry(
         if dn is None:
             dn = ""
         entry.BaseLDAPEntry.__init__(self, dn, *a, **kw)
-        self.path = to_unicode(path)
+        self.path = anyio.Path(to_unicode(path))
 
     @classmethod
     async def open(cls, path, dn=None, *a, **kw):
@@ -138,13 +136,13 @@ class LDIFTreeEntry(
         return self
 
     async def _load(self):
-        assert self.path.endswith(".dir")
-        entryPath = "%s.ldif" % self.path[: -len(".dir")]
+        assert self.path.suffix == ".dir"
+        entryPath = self.path.with_suffix(".ldif")
 
         parser = StoreParsedLDIF()
 
         try:
-            f = await anyio.Path(entryPath).open("rb")
+            f = await entryPath.open("rb")
         except OSError as e:
             if e.errno == errno.ENOENT:
                 return
@@ -172,13 +170,12 @@ class LDIFTreeEntry(
         if self.dn == "":
             # root
             return None
-        parentPath, _ = os.path.split(self.path)
-        return await self.__class__.open(parentPath, self.dn.up())
+        return await self.__class__.open(self.path.parent, self.dn.up())
 
     async def _child_entries(self):
         children = []
         try:
-            filenames = [item.name async for item in anyio.Path(self.path).iterdir()]
+            filenames = [item.name async for item in self.path.iterdir()]
         except OSError as e:
             if e.errno == errno.ENOENT:
                 pass
@@ -187,7 +184,7 @@ class LDIFTreeEntry(
         else:
             seen = set()
             for fn in filenames:
-                base, ext = os.path.splitext(fn)
+                base, ext = anyio.Path(fn).stem, anyio.Path(fn).suffix
                 if ext not in [".dir", ".ldif"]:
                     continue
                 if base in seen:
@@ -200,9 +197,7 @@ class LDIFTreeEntry(
                         + self.dn.split()
                     )
                 )
-                e = await self.__class__.open(
-                    os.path.join(self.path, base + ".dir"), dn
-                )
+                e = await self.__class__.open(self.path / (base + ".dir"), dn)
                 children.append(e)
         return children
 
@@ -228,9 +223,9 @@ class LDIFTreeEntry(
         assert len(it) > len(me)
         assert (len(me) == 0) or (it[-len(me) :] == me)
         rdn = it[-len(me) - 1]
-        path = os.path.join(self.path, "%s.dir" % rdn.getText())
-        entry = os.path.join(self.path, "%s.ldif" % rdn.getText())
-        if not await anyio.Path(path).is_dir() and not await anyio.Path(entry).is_file():
+        path = self.path / ("%s.dir" % rdn.getText())
+        entry = self.path / ("%s.ldif" % rdn.getText())
+        if not await path.is_dir() and not await entry.is_file():
             raise ldaperrors.LDAPNoSuchObject(dn.getText())
         childDN = distinguishedname.DistinguishedName(listOfRDNs=(rdn,) + me)
         c = await self.__class__.open(path, childDN)
@@ -246,13 +241,13 @@ class LDIFTreeEntry(
 
         dn = distinguishedname.DistinguishedName(listOfRDNs=(rdn,) + self.dn.split())
         e = entry.BaseLDAPEntry(dn, attributes)
-        if not await anyio.Path(self.path).exists():
-            await anyio.Path(self.path).mkdir()
-        fileName = os.path.join(self.path, "%s" % rdn.getText())
-        tmp = anyio.Path(f"{fileName}.{uuid.uuid4()!s}.tmp")
+        if not await self.path.exists():
+            await self.path.mkdir()
+        fileName = self.path / rdn.getText()
+        tmp = fileName.with_name(f"{fileName.name}.{uuid.uuid4()!s}.tmp")
         await tmp.write_bytes(e.toWire())
-        await tmp.rename(fileName + ".ldif")
-        dirName = os.path.join(self.path, "%s.dir" % rdn.getText())
+        await tmp.rename(fileName.with_name(fileName.name + ".ldif"))
+        dirName = self.path / ("%s.dir" % rdn.getText())
         return await self.__class__.open(dirName, dn)
 
     async def addChild(self, rdn, attributes):
@@ -267,9 +262,8 @@ class LDIFTreeEntry(
             raise ldaperrors.LDAPNotAllowedOnNonLeaf(
                 "Cannot remove entry with children: %s" % self.dn.getText()
             )
-        assert self.path.endswith(".dir")
-        entryPath = "%s.ldif" % self.path[: -len(".dir")]
-        await anyio.Path(entryPath).unlink()
+        assert self.path.suffix == ".dir"
+        await self.path.with_suffix(".ldif").unlink()
         return self
 
     delete_async = delete
@@ -298,8 +292,8 @@ class LDIFTreeEntry(
         return self.dn > other.dn
 
     async def commit(self):
-        assert self.path.endswith(".dir")
-        entryPath = self.path[: -len(".dir")]
+        assert self.path.suffix == ".dir"
+        entryPath = self.path.with_suffix("")
         try:
             return await _putEntry(entryPath, self)
         except Exception:
@@ -317,7 +311,7 @@ class LDIFTreeEntry(
             rootPath = self.path
             while rootDN != "":
                 rootDN = rootDN.up()
-                rootPath = os.path.dirname(rootPath)
+                rootPath = rootPath.parent
             root = await self.__class__.open(path=rootPath, dn=rootDN)
             newParent = await root.lookup(newDN.up())
         else:
@@ -334,19 +328,18 @@ class LDIFTreeEntry(
         for attr in newDN.split()[0].split():
             self[attr.attributeType].add(attr.value)
         newRDN = newDN.split()[0]
-        srcdir = os.path.dirname(self.path)
+        srcdir = self.path.parent
         if newParent is None:
             dstdir = srcdir
         else:
             dstdir = newParent.path
 
-        newpath = os.path.join(dstdir, "%s.dir" % newRDN.getText())
-        if await anyio.Path(self.path).exists():
-            await anyio.Path(self.path).rename(newpath)
-        basename, ext = os.path.splitext(self.path)
-        assert ext == ".dir"
-        await anyio.Path("%s.ldif" % basename).rename(
-            os.path.join(dstdir, "%s.ldif" % newRDN.getText())
+        newpath = dstdir / ("%s.dir" % newRDN.getText())
+        if await self.path.exists():
+            await self.path.rename(newpath)
+        assert self.path.suffix == ".dir"
+        await self.path.with_suffix(".ldif").rename(
+            dstdir / ("%s.ldif" % newRDN.getText())
         )
         self.dn = newDN
         self.path = newpath
