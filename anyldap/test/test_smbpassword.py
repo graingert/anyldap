@@ -4,10 +4,9 @@ Test cases for the anyldap.samba.smbpassword module.
 
 from anyldap import config
 from anyldap.samba import smbpassword
-from anyldap.test import unittest
 
 
-class TestNTHash(unittest.TestCase):
+class TestNTHash:
     """
     Unit tests for smbpassword.nthash.
     """
@@ -23,12 +22,10 @@ class TestNTHash(unittest.TestCase):
 
     def testKnownValues(self):
         """nthash(...) gives known results"""
-        self.assertEqual(
-            self.knownValues, [(p, smbpassword.nthash(p)) for p, _ in self.knownValues]
-        )
+        assert self.knownValues == [(p, smbpassword.nthash(p)) for p, _ in self.knownValues]
 
 
-class TestLMHash(unittest.TestCase):
+class TestLMHash:
     """
     Unit tests for smbpassword.lmhash.
     """
@@ -52,9 +49,7 @@ class TestLMHash(unittest.TestCase):
         """
         cfg = config.loadConfig()
         cfg.set("samba", "use-lmhash", "yes")
-        self.assertEqual(
-            self.knownValues, [(p, smbpassword.lmhash(p)) for p, _ in self.knownValues]
-        )
+        assert self.knownValues == [(p, smbpassword.lmhash(p)) for p, _ in self.knownValues]
 
     def testLMHashConfiguationDisabled(self):
         """
@@ -66,4 +61,4 @@ class TestLMHash(unittest.TestCase):
 
         result = smbpassword.lmhash(b"any-pass")
 
-        self.assertEqual(32 * b"X", result)
+        assert 32 * b"X" == result

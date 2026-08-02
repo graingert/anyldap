@@ -120,7 +120,7 @@ class ILDAPEntry(Interface):
         """
         Try to authenticate with given secret.
 
-        @return: Deferred ILDAPEntry (that is, self).
+        @return: ILDAPEntry (that is, self).
 
         @raise ldaperrors.LDAPInvalidCredentials: password was
         incorrect.
@@ -171,8 +171,7 @@ class IEditableLDAPEntry(Interface):
         """
         Send all pending changes to the LDAP server.
 
-        @returns: a Deferred that fires True (operation succeeded)
-        or False (operation failed).
+        @returns: True (operation succeeded) or False (operation failed).
         """
 
     def move(self, newDN):
@@ -182,7 +181,7 @@ class IEditableLDAPEntry(Interface):
 
         @param newDN: the new DistinguishedName
 
-        @return: A Deferred that will complete when the move is done.
+        @return: Completes when the move is done.
 
         """
 
@@ -191,7 +190,7 @@ class IEditableLDAPEntry(Interface):
 
         Delete this object from the LDAP server.
 
-        @return: A Deferred that will complete when the delete is done.
+        @return: Completes when the delete is done.
 
         """
 
@@ -202,8 +201,7 @@ class IEditableLDAPEntry(Interface):
 
         @param newPasswd: A string containing the new password.
 
-        @return: A Deferred that will complete when the operation is
-        done.
+        @return: Completes when the operation is done.
 
         """
 
@@ -228,8 +226,7 @@ class IConnectedLDAPEntry(Interface):
         fetching all attributes, attributes that are not on the server
         are removed.
 
-        @return: A Deferred that will complete when the operation is
-        done.
+        @return: Completes when the operation is done.
         """
 
     def search(
@@ -273,12 +270,12 @@ class IConnectedLDAPEntry(Interface):
         also values.
 
         @param callback: Callback function to call for each resulting
-        LDAPEntry. None means gather the results into a list and give
-        that to the Deferred returned from here.
+        LDAPEntry. None means gather the results into a list and
+        return it from here.
 
-        @return: A Deferred that will complete when the search is
-        done. The Deferred gives None if callback was given and a list
-        of the search results if callback is not given or is None.
+        @return: Completes when the search is done, giving None if
+        callback was given and a list of the search results if callback
+        is not given or is None.
 
         """
 
@@ -290,12 +287,12 @@ class IConnectedLDAPEntry(Interface):
         on LDAP backends.
 
         @param callback: Callback function to call for each resulting
-        LDAPEntry. None means gather the results into a list and give
-        that to the Deferred returned from here.
+        LDAPEntry. None means gather the results into a list and
+        return it from here.
 
-        @return: A Deferred that will complete when the list is
-        over. The Deferred gives None if callback was given and a list
-        of the children if callback is not given or is None.
+        @return: Completes when the list is over, giving None if
+        callback was given and a list of the children if callback is
+        not given or is None.
 
         """
 
@@ -307,12 +304,12 @@ class IConnectedLDAPEntry(Interface):
         later to implement .search() on LDAP backends.
 
         @param callback: Callback function to call for each resulting
-        LDAPEntry. None means gather the results into a list and give
-        that to the Deferred returned from here.
+        LDAPEntry. None means gather the results into a list and
+        return it from here.
 
-        @return: A Deferred that will complete when the list is
-        over. The Deferred gives None if callback was given and a list
-        of the children if callback is not given or is None.
+        @return: Completes when the list is over, giving None if
+        callback was given and a list of the children if callback is
+        not given or is None.
 
         """
 
@@ -320,8 +317,7 @@ class IConnectedLDAPEntry(Interface):
         """
         Lookup the referred to by dn.
 
-        @return: A Deferred returning an ILDAPEntry, or failing with e.g.
-        LDAPNoSuchObject.
+        @return: An ILDAPEntry, or raises e.g. LDAPNoSuchObject.
         """
 
     def match(self, filter):

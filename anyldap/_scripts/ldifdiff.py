@@ -3,7 +3,6 @@ import sys
 import anyio
 
 from anyldap import inmemory, usage
-from anyldap._async import await_result
 from anyldap.protocols.ldap import ldif
 
 
@@ -15,10 +14,10 @@ def output(result, outputFile):
 
 async def main(filename1, filename2, outputFile):
     with open(filename1, "rb") as file1:
-        db1 = await await_result(inmemory.fromLDIFFile(file1))
+        db1 = await inmemory.fromLDIFFile(file1)
     with open(filename2, "rb") as file2:
-        db2 = await await_result(inmemory.fromLDIFFile(file2))
-    output(await await_result(db1.diffTree(db2)), outputFile)
+        db2 = await inmemory.fromLDIFFile(file2)
+    output(await db1.diffTree(db2), outputFile)
 
 
 class MyOptions(usage.Options):

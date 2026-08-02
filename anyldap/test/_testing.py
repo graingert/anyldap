@@ -45,7 +45,7 @@ class _LogCaptureHandler(logging.Handler):
         self.messages.append(record.getMessage())
 
 
-def capture_logs(test_case, logger_name="anyldap", level=logging.INFO):
+def capture_logs(cleanups, logger_name="anyldap", level=logging.INFO):
     logger = logging.getLogger(logger_name)
     handler = _LogCaptureHandler(level)
     previous_level = logger.level
@@ -57,5 +57,5 @@ def capture_logs(test_case, logger_name="anyldap", level=logging.INFO):
         logger.removeHandler(handler)
         logger.setLevel(previous_level)
 
-    test_case.addCleanup(cleanup)
+    cleanups.append(cleanup)
     return handler.messages

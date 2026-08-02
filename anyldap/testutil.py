@@ -4,9 +4,8 @@ import anyio
 from anyio.abc import SocketAttribute
 
 from anyldap._encoder import to_bytes
-from anyldap.deferred import DeferredSource, fail, succeed
 from anyldap.runtime import Failure
-from anyldap.test import unittest
+from anyldap.test import util
 
 
 async def exchange_async(protocol, wire_data):
@@ -33,7 +32,7 @@ async def exchange_async(protocol, wire_data):
 
 
 def mustRaise(dummy):
-    raise unittest.FailTest("Should have raised an exception.")
+    raise util.FailTest("Should have raised an exception.")
 
 
 def _print_func_name(frame, event, arg):
@@ -68,8 +67,7 @@ class LDAPClientTestDriver:
     messages are what they are supposed to be.
 
     It is also possible to include a Failure instance instead of a list
-    of LDAPProtocolResponses which will cause the errback to be called
-    with the failure.
+    of LDAPProtocolResponses, which makes the call raise instead.
     """
 
     fakeUnbindResponse = "fake-unbind-by-LDAPClientTestDriver"
@@ -79,28 +77,27 @@ class LDAPClientTestDriver:
         self.responses = list(responses)
         self.connected = None
 
-    def send(self, op):
+    async def send(self, op):
         self.sent.append(op)
         resps = self._response()
         assert len(resps) == 1, "got %d responses for a .send()" % len(resps)
         r = resps[0]
         if isinstance(r, Failure):
-            return fail(r)
-        else:
-            return succeed(r)
+            r.raiseException()
+        return r
 
-    def send_multiResponse_(
+    send_async = send
+
+    async def send_multiResponse_(
         self, op, controls, return_controls, handler, *args, **kwargs
     ):
-        d = DeferredSource()
         self.sent.append(op)
         responses = self._response()
         response_controls = None
         while responses:
             r = responses.pop(0)
             if isinstance(r, Failure):
-                d.errback(r)
-                break
+                r.raiseException()
             if return_controls:
                 ret = handler(r, response_controls, *args, **kwargs)
             else:
@@ -117,16 +114,16 @@ class LDAPClientTestDriver:
                     "still wants more (got %r)." % ret
                 )
                 assert ret, msg
-        return d.deferred
 
-    def send_multiResponse(self, op, handler, *args, **kwargs):
-        return self.send_multiResponse_(op, None, False, handler, *args, **kwargs)
+    async def send_multiResponse(self, op, handler, *args, **kwargs):
+        await self.send_multiResponse_(op, None, False, handler, *args, **kwargs)
 
-    async def send_multiResponse_async(self, op, handler, *args, **kwargs):
-        self.send_multiResponse(op, handler, *args, **kwargs)
+    send_multiResponse_async = send_multiResponse
 
-    def send_multiResponse_ex(self, op, controls, handler, *args, **kwargs):
-        return self.send_multiResponse_(op, controls, True, handler, *args, **kwargs)
+    async def send_multiResponse_ex(self, op, controls, handler, *args, **kwargs):
+        await self.send_multiResponse_(op, controls, True, handler, *args, **kwargs)
+
+    send_multiResponse_ex_async = send_multiResponse_ex
 
     def send_noResponse(self, op):
         if len(self.responses) == 0:

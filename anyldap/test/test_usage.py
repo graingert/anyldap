@@ -4,8 +4,9 @@ Test cases for anyldap.usage
 import re
 import sys
 
+import pytest
+
 from anyldap.protocols.ldap.distinguishedname import DistinguishedName
-from anyldap.test.unittest import TestCase
 from anyldap.usage import (
     Options,
     Options_base,
@@ -43,28 +44,28 @@ def test_duplicate_inherited_flags_are_yielded_once():
     """
 
 
-class TestOptions_scope(TestCase):
+class TestOptions_scope:
     def test_parseOptions_bad_scope(self):
         """
         It fails to parse the option when the scope is bad
         """
-        self.assertRaisesRegex(
-            UsageError,
-            re.escape("bad scope: this is a bad scope"),
-            ScopeOptionsImplementation().parseOptions,
-            options=["--scope", "this is a bad scope"],
-        )
+        with pytest.raises(
+            UsageError, match=re.escape("bad scope: this is a bad scope")
+        ):
+            ScopeOptionsImplementation().parseOptions(
+                options=["--scope", "this is a bad scope"]
+            )
 
     def test_parseOptions_default(self):
         """
         When no explicit options is provided it will set an empty dict.
         """
         sut = ServiceLocationOptionsImplementation()
-        self.assertNotIn("service-location", sut.opts)
+        assert "service-location" not in sut.opts
 
         sut.parseOptions(options=[])
 
-        self.assertEqual({}, sut.opts["service-location"])
+        assert {} == sut.opts["service-location"]
 
 
 class ServiceLocationOptionsImplementation(Options, Options_service_location):
@@ -99,7 +100,7 @@ class HandlerOptions(Options):
         self.opts["handled-parameter"] = value
 
 
-class TestCompleteOptions(TestCase):
+class TestCompleteOptions:
     def test_uses_process_arguments_and_option_handlers(self):
         previous = sys.argv
         try:
@@ -107,13 +108,13 @@ class TestCompleteOptions(TestCase):
             result = HandlerOptions().parseOptions()
         finally:
             sys.argv = previous
-        self.assertTrue(result["handled-flag"])
-        self.assertEqual(result["handled-parameter"], "value")
+        assert result["handled-flag"]
+        assert result["handled-parameter"] == "value"
 
     def test_mapping_protocol(self):
         options = Options()
         options["key"] = "value"
-        self.assertEqual(options["key"], "value")
+        assert options["key"] == "value"
 
     def test_long_short_flags_and_parameters(self):
         options = CompleteOptions()
@@ -133,22 +134,22 @@ class TestCompleteOptions(TestCase):
                 "--toggle=enabled",
             ]
         )
-        self.assertTrue(result["verbose"])
-        self.assertEqual(result["custom"], "chosen")
-        self.assertEqual(result["handled"], "handled")
-        self.assertEqual(result["toggled"], "enabled")
-        self.assertEqual(result["bind-auth-fd"], 7)
+        assert result["verbose"]
+        assert result["custom"] == "chosen"
+        assert result["handled"] == "handled"
+        assert result["toggled"] == "enabled"
+        assert result["bind-auth-fd"] == 7
 
     def test_double_dash_stops_option_parsing(self):
         options = Options()
-        self.assertEqual(options.parseOptions(["--", "ignored"]), {})
+        assert options.parseOptions(["--", "ignored"]) == {}
 
     def test_positional_arguments_are_dispatched(self):
         options = HandlerOptions()
         received = []
         options.parseArgs = lambda *args: received.extend(args)
         options.parseOptions(["first", "second"])
-        self.assertEqual(received, ["first", "second"])
+        assert received == ["first", "second"]
 
     def test_option_errors(self):
         cases = [
@@ -160,15 +161,15 @@ class TestCompleteOptions(TestCase):
             (["--toggle"], "requires an argument"),
         ]
         for arguments, message in cases:
-            with self.assertRaisesRegex(UsageError, message):
+            with pytest.raises(UsageError, match=message):
                 CompleteOptions().parseOptions(arguments)
 
     def test_required_values(self):
-        with self.assertRaisesRegex(UsageError, "base must be given"):
+        with pytest.raises(UsageError, match="base must be given"):
             CompleteOptions().parseOptions(["--binddn=cn=admin"])
-        with self.assertRaisesRegex(UsageError, "binddn must be given"):
+        with pytest.raises(UsageError, match="binddn must be given"):
             CompleteOptions().parseOptions(["--base=dc=example,dc=com"])
-        with self.assertRaisesRegex(UsageError, "must be numeric"):
+        with pytest.raises(UsageError, match="must be numeric"):
             CompleteOptions().parseOptions(
                 [
                     "--base=dc=example,dc=com",
@@ -176,7 +177,7 @@ class TestCompleteOptions(TestCase):
                     "--bind-auth-fd=invalid",
                 ]
             )
-class TestOptions_service_location(TestCase):
+class TestOptions_service_location:
     """
     Unit tests for Options_service_location.
     """
@@ -186,11 +187,11 @@ class TestOptions_service_location(TestCase):
         When no explicit options is provided it will set an empty dict.
         """
         sut = ServiceLocationOptionsImplementation()
-        self.assertNotIn("service-location", sut.opts)
+        assert "service-location" not in sut.opts
 
         sut.parseOptions(options=[])
 
-        self.assertEqual({}, sut.opts["service-location"])
+        assert {} == sut.opts["service-location"]
 
     def test_parseOptions_single(self):
         """
@@ -204,7 +205,7 @@ class TestOptions_service_location(TestCase):
 
         base = DistinguishedName("dc=example,dc=com")
         value = sut.opts["service-location"][base]
-        self.assertEqual(("127.0.0.1", "1234"), value)
+        assert ("127.0.0.1", "1234") == value
 
     def test_parseOptions_invalid_DN(self):
         """
@@ -212,15 +213,10 @@ class TestOptions_service_location(TestCase):
         """
         sut = ServiceLocationOptionsImplementation()
 
-        exception = self.assertRaises(
-            UsageError,
-            sut.parseOptions,
-            options=["--service-location", "example.com:1.2.3.4"],
-        )
+        with pytest.raises(UsageError) as excinfo:
+            sut.parseOptions(options=["--service-location", "example.com:1.2.3.4"])
 
-        self.assertEqual(
-            "Invalid relative distinguished name 'example.com'.", exception.args[0]
-        )
+        assert "Invalid relative distinguished name 'example.com'." == excinfo.value.args[0]
 
     def test_parseOptions_no_server(self):
         """
@@ -229,13 +225,10 @@ class TestOptions_service_location(TestCase):
         """
         sut = ServiceLocationOptionsImplementation()
 
-        exception = self.assertRaises(
-            UsageError,
-            sut.parseOptions,
-            options=["--service-location", "dc=example,dc=com"],
-        )
+        with pytest.raises(UsageError) as excinfo:
+            sut.parseOptions(options=["--service-location", "dc=example,dc=com"])
 
-        self.assertEqual("service-location must specify host", exception.args[0])
+        assert "service-location must specify host" == excinfo.value.args[0]
 
     def test_parseOptions_multiple(self):
         """
@@ -257,5 +250,5 @@ class TestOptions_service_location(TestCase):
         base_org = DistinguishedName("dc=example,dc=org")
         value_com = sut.opts["service-location"][base_com]
         value_org = sut.opts["service-location"][base_org]
-        self.assertEqual(("127.0.0.1", None), value_com)
-        self.assertEqual(("172.0.0.1", None), value_org)
+        assert ("127.0.0.1", None) == value_com
+        assert ("172.0.0.1", None) == value_org

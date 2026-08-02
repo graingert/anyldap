@@ -5,13 +5,14 @@ from io import BytesIO
 
 import pytest
 
-from anyldap import delta, inmemory, testutil
+from anyldap import delta, inmemory
 from anyldap.protocols.ldap import distinguishedname, ldaperrors
-from anyldap.runtime import Failure
-from anyldap.test import unittest
+from anyldap.runtime import ConnectionDone, Failure
+from anyldap.test import util
+
+pytestmark = pytest.mark.anyio
 
 
-@pytest.mark.anyio
 async def test_async_entry_operations_use_the_in_memory_tree():
     root = inmemory.ReadOnlyInMemoryLDAPEntry(
         "dc=example,dc=com", {"dc": ["example"]}
@@ -28,22 +29,21 @@ async def test_async_entry_operations_use_the_in_memory_tree():
     assert await root.move_async("dc=renamed") is root
 
 
-@pytest.mark.anyio
 async def test_ldif_protocol_reports_abnormal_disconnect():
     protocol = inmemory.InMemoryLDIFProtocol()
     protocol.dataReceived(b"version: 1\n\n")
     protocol.connectionLost(Failure(RuntimeError("input failed")))
 
     with pytest.raises(RuntimeError, match="input failed"):
-        await protocol.completed
+        await protocol.completed()
 
 
 class SubclassEntry(inmemory.ReadOnlyInMemoryLDAPEntry):
     pass
 
 
-class TestInMemoryDatabase(unittest.TestCase):
-    def setUp(self):
+class TestInMemoryDatabase:
+    def setup_method(self):
         self.root = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -92,69 +92,51 @@ class TestInMemoryDatabase(unittest.TestCase):
             },
         )
 
-    def test_children_empty(self):
-        d = self.empty.children()
-        d.addCallback(lambda actual: self.assertCountEqual(actual, []))
-        return d
+    async def test_children_empty(self):
+        _result = await self.empty.children()
+        util.assert_permutation(_result, [])
 
-    def test_children_oneChild(self):
-        d = self.oneChild.children()
+    async def test_children_oneChild(self):
 
-        def cb(children):
-            self.assertEqual(len(children), 1)
-            got = [e.dn for e in children]
-            want = [
-                distinguishedname.DistinguishedName(
-                    "cn=theChild,ou=oneChild,dc=example,dc=com"
-                )
-            ]
-            got.sort()
-            want.sort()
-            self.assertCountEqual(got, want)
 
-        d.addCallback(cb)
-        return d
+        children = await self.oneChild.children()
+        assert len(children) == 1
+        got = [e.dn for e in children]
+        want = [
+            distinguishedname.DistinguishedName(
+                "cn=theChild,ou=oneChild,dc=example,dc=com"
+            )
+        ]
+        got.sort()
+        want.sort()
+        util.assert_permutation(got, want)
 
-    def test_children_repeat(self):
+    async def test_children_repeat(self):
         """Test that .children() returns a copy of the data so that modifying it does not affect behaviour."""
-        d = self.oneChild.children()
+        children1 = await self.oneChild.children()
+        assert len(children1) == 1
 
-        def cb1(children1):
-            self.assertEqual(len(children1), 1)
+        children1.pop()
 
-            children1.pop()
+        assert len(await self.oneChild.children()) == 1
 
-            d = self.oneChild.children()
-            return d
+    async def test_children_twoChildren(self):
 
-        d.addCallback(cb1)
 
-        def cb2(children2):
-            self.assertEqual(len(children2), 1)
+        children = await self.meta.children()
+        assert len(children) == 2
+        want = [
+            distinguishedname.DistinguishedName(
+                "cn=foo,ou=metasyntactic,dc=example,dc=com"
+            ),
+            distinguishedname.DistinguishedName(
+                "cn=bar,ou=metasyntactic,dc=example,dc=com"
+            ),
+        ]
+        got = [e.dn for e in children]
+        util.assert_permutation(got, want)
 
-        d.addCallback(cb2)
-        return d
-
-    def test_children_twoChildren(self):
-        d = self.meta.children()
-
-        def cb(children):
-            self.assertEqual(len(children), 2)
-            want = [
-                distinguishedname.DistinguishedName(
-                    "cn=foo,ou=metasyntactic,dc=example,dc=com"
-                ),
-                distinguishedname.DistinguishedName(
-                    "cn=bar,ou=metasyntactic,dc=example,dc=com"
-                ),
-            ]
-            got = [e.dn for e in children]
-            self.assertCountEqual(got, want)
-
-        d.addCallback(cb)
-        return d
-
-    def test_addChild(self):
+    async def test_addChild(self):
         self.empty.addChild(
             rdn="a=b",
             attributes={
@@ -162,31 +144,27 @@ class TestInMemoryDatabase(unittest.TestCase):
                 "a": "b",
             },
         )
-        d = self.empty.children()
 
-        def cb(children):
-            self.assertEqual(len(children), 1)
-            got = [e.dn for e in children]
-            want = [
-                distinguishedname.DistinguishedName("a=b,ou=empty,dc=example,dc=com"),
-            ]
-            got.sort()
-            want.sort()
-            self.assertCountEqual(got, want)
 
-        d.addCallback(cb)
-        return d
+        children = await self.empty.children()
+        assert len(children) == 1
+        got = [e.dn for e in children]
+        want = [
+            distinguishedname.DistinguishedName("a=b,ou=empty,dc=example,dc=com"),
+        ]
+        got.sort()
+        want.sort()
+        util.assert_permutation(got, want)
 
     def test_addChild_Exists(self):
-        self.assertRaises(
-            ldaperrors.LDAPEntryAlreadyExists,
-            self.meta.addChild,
-            rdn="cn=foo",
-            attributes={
-                "objectClass": ["a"],
-                "cn": "foo",
-            },
-        )
+        with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
+            self.meta.addChild(
+                rdn="cn=foo",
+                attributes={
+                    "objectClass": ["a"],
+                    "cn": "foo",
+                },
+            )
 
     def test_addChild_subclass(self):
         """
@@ -195,232 +173,172 @@ class TestInMemoryDatabase(unittest.TestCase):
         """
         entry = SubclassEntry(dn="dc=example,dc=com")
         child = entry.addChild(rdn="ou=empty", attributes={"objectClass": ["a"]})
-        self.assertIsInstance(child, SubclassEntry)
+        assert isinstance(child, SubclassEntry)
 
     def test_parent(self):
-        self.assertEqual(self.foo.parent(), self.meta)
-        self.assertEqual(self.meta.parent(), self.root)
-        self.assertEqual(self.root.parent(), None)
+        assert self.foo.parent() == self.meta
+        assert self.meta.parent() == self.root
+        assert self.root.parent() is None
 
-    def test_subtree_empty(self):
-        d = self.empty.subtree()
+    async def test_subtree_empty(self):
 
-        def cb(entries):
-            self.assertEqual(len(entries), 1)
 
-        d.addCallback(cb)
-        return d
+        entries = await self.empty.subtree()
+        assert len(entries) == 1
 
-    def test_subtree_oneChild(self):
-        d = self.oneChild.subtree()
-        d.addCallback(
-            lambda actual: self.assertCountEqual(
-                actual,
-                [
+    async def test_subtree_oneChild(self):
+        _result = await self.oneChild.subtree()
+        util.assert_permutation(_result, [
                     self.oneChild,
                     self.theChild,
-                ],
-            )
+                ])
+
+    async def test_subtree_oneChild_cb(self):
+        got = []
+        assert await self.oneChild.subtree(got.append) is None
+        util.assert_permutation(
+            got,
+            [
+                self.oneChild,
+                self.theChild,
+            ],
         )
-        return d
 
-    def test_subtree_oneChild_cb(self):
+    async def test_subtree_many(self):
+
+
+        results = await self.root.subtree()
+        got = results
+        want = [
+            self.root,
+            self.oneChild,
+            self.theChild,
+            self.empty,
+            self.meta,
+            self.bar,
+            self.foo,
+        ]
+        util.assert_permutation(got, want)
+
+    async def test_subtree_many_cb(self):
         got = []
-        d = self.oneChild.subtree(got.append)
-        d.addCallback(self.assertEqual, None)
 
-        def cb(dummy):
-            want = [
-                self.oneChild,
-                self.theChild,
-            ]
-            self.assertCountEqual(got, want)
 
-        d.addCallback(cb)
-        return d
+        r = await self.root.subtree(callback=got.append)
+        assert r is None
 
-    def test_subtree_many(self):
-        d = self.root.subtree()
+        want = [
+            self.root,
+            self.oneChild,
+            self.theChild,
+            self.empty,
+            self.meta,
+            self.bar,
+            self.foo,
+        ]
+        util.assert_permutation(got, want)
 
-        def cb(results):
-            got = results
-            want = [
-                self.root,
-                self.oneChild,
-                self.theChild,
-                self.empty,
-                self.meta,
-                self.bar,
-                self.foo,
-            ]
-            self.assertCountEqual(got, want)
-
-        d.addCallback(cb)
-        return d
-
-    def test_subtree_many_cb(self):
-        got = []
-        d = self.root.subtree(callback=got.append)
-
-        def cb(r):
-            self.assertEqual(r, None)
-
-            want = [
-                self.root,
-                self.oneChild,
-                self.theChild,
-                self.empty,
-                self.meta,
-                self.bar,
-                self.foo,
-            ]
-            self.assertCountEqual(got, want)
-
-        d.addCallback(cb)
-        return d
-
-    def test_lookup_fail(self):
+    async def test_lookup_fail(self):
         dn = distinguishedname.DistinguishedName(
             "cn=thud,ou=metasyntactic,dc=example,dc=com"
         )
-        d = self.root.lookup(dn)
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNoSuchObject)
-            self.assertEqual(fail.value.message, dn)
 
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+        with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
+            await self.root.lookup(dn)
+        assert excinfo.value.message == dn
 
-    def test_lookup_fail_outOfTree(self):
+    async def test_lookup_fail_outOfTree(self):
         dn = distinguishedname.DistinguishedName("dc=invalid")
-        d = self.root.lookup(dn)
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNoSuchObject)
-            self.assertEqual(fail.value.message, dn)
 
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+        with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
+            await self.root.lookup(dn)
+        assert excinfo.value.message == dn
 
-    def test_lookup_deep_dn(self):
+    async def test_lookup_deep_dn(self):
         """Entry lookup with a DN instance returns entry instance with this DN"""
         dn = distinguishedname.DistinguishedName(
             "cn=bar,ou=metasyntactic,dc=example,dc=com"
         )
-        d = self.root.lookup(dn)
-        d.addCallback(self.assertEqual, self.bar)
-        return d
+        _result = await self.root.lookup(dn)
+        assert _result == self.bar
 
-    def test_lookup_deep_str(self):
+    async def test_lookup_deep_str(self):
         """Entry lookup with a DN as a string returns entry instance with this DN"""
-        d = self.root.lookup("cn=bar,ou=metasyntactic,dc=example,dc=com")
-        d.addCallback(self.assertEqual, self.bar)
-        return d
+        _result = await self.root.lookup("cn=bar,ou=metasyntactic,dc=example,dc=com")
+        assert _result == self.bar
 
-    def test_delete_root(self):
+    async def test_delete_root(self):
         newRoot = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
-        d = newRoot.delete()
 
-        def eb(fail):
-            fail.trap(inmemory.LDAPCannotRemoveRootError)
 
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+        with pytest.raises(inmemory.LDAPCannotRemoveRootError):
+            await newRoot.delete()
 
-    def test_delete_nonLeaf(self):
-        d = self.meta.delete()
+    async def test_delete_nonLeaf(self):
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNotAllowedOnNonLeaf)
 
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+        with pytest.raises(ldaperrors.LDAPNotAllowedOnNonLeaf):
+            await self.meta.delete()
 
-    def test_delete(self):
-        d = self.foo.delete()
-        d.addCallback(self.assertEqual, self.foo)
-        d.addCallback(lambda _: self.meta.children())
-        d.addCallback(lambda actual: self.assertCountEqual(actual, [self.bar]))
-        return d
+    async def test_delete(self):
+        _result = await self.foo.delete()
+        assert _result == self.foo
+        _result = await self.meta.children()
+        util.assert_permutation(_result, [self.bar])
 
-    def test_deleteChild(self):
-        d = self.meta.deleteChild("cn=bar")
-        d.addCallback(self.assertEqual, self.bar)
-        d.addCallback(lambda _: self.meta.children())
-        d.addCallback(lambda actual: self.assertCountEqual(actual, [self.foo]))
-        return d
+    async def test_deleteChild(self):
+        _result = await self.meta.deleteChild("cn=bar")
+        assert _result == self.bar
+        _result = await self.meta.children()
+        util.assert_permutation(_result, [self.foo])
 
-    def test_deleteChild_NonExisting(self):
-        d = self.root.deleteChild("cn=not-exist")
+    async def test_deleteChild_NonExisting(self):
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNoSuchObject)
 
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+        with pytest.raises(ldaperrors.LDAPNoSuchObject):
+            await self.root.deleteChild("cn=not-exist")
 
     def test_setPassword(self):
         self.foo.setPassword(b"s3krit", salt=b"\xf2\x4a")
-        self.assertEqual(
-            self.foo["userPassword"], [b"{SSHA}0n/Iw1NhUOKyaI9gm9v5YsO3ZInySg=="]
-        )
+        assert self.foo["userPassword"] == [b"{SSHA}0n/Iw1NhUOKyaI9gm9v5YsO3ZInySg=="]
 
-    def test_setPassword_noSalt(self):
+    async def test_setPassword_noSalt(self):
         self.foo.setPassword(b"s3krit")
-        self.assertTrue("userPassword" in self.foo)
-        d = self.foo.bind(b"s3krit")
-        d.addCallback(self.assertIdentical, self.foo)
-        d.addCallback(lambda _: self.foo.bind(b"s4krit"))
+        assert "userPassword" in self.foo
+        assert await self.foo.bind(b"s3krit") is self.foo
+        with pytest.raises(ldaperrors.LDAPInvalidCredentials):
+            await self.foo.bind(b"s4krit")
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPInvalidCredentials)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
-
-    def testSearch_withCallback(self):
+    async def testSearch_withCallback(self):
         got = []
-        d = self.root.search(filterText="(|(cn=foo)(cn=bar))", callback=got.append)
 
-        def cb(r):
-            self.assertEqual(r, None)
 
-            want = [
-                self.bar,
-                self.foo,
-            ]
-            self.assertCountEqual(got, want)
+        r = await self.root.search(filterText="(|(cn=foo)(cn=bar))", callback=got.append)
+        assert r is None
 
-        d.addCallback(cb)
-        return d
+        want = [
+            self.bar,
+            self.foo,
+        ]
+        util.assert_permutation(got, want)
 
-    def testSearch_withoutCallback(self):
-        d = self.root.search(filterText="(|(cn=foo)(cn=bar))")
-        d.addCallback(
-            lambda actual: self.assertCountEqual(
-                actual,
-                [
+    async def testSearch_withoutCallback(self):
+        _result = await self.root.search(filterText="(|(cn=foo)(cn=bar))")
+        util.assert_permutation(_result, [
                     self.bar,
                     self.foo,
-                ],
-            )
-        )
-        return d
+                ])
 
-    def test_move_noChildren_sameSuperior(self):
-        d = self.empty.move("ou=moved,dc=example,dc=com")
+    async def test_move_noChildren_sameSuperior(self):
 
-        def getChildren(dummy):
-            return self.root.children()
 
-        d.addCallback(getChildren)
-        d.addCallback(
-            lambda actual: self.assertCountEqual(
-                actual,
-                [
+        _result = await self.empty.move("ou=moved,dc=example,dc=com")
+        _result = await self.root.children()
+        util.assert_permutation(_result, [
                     self.meta,
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         dn="ou=moved,dc=example,dc=com",
@@ -430,22 +348,14 @@ class TestInMemoryDatabase(unittest.TestCase):
                         },
                     ),
                     self.oneChild,
-                ],
-            )
-        )
-        return d
+                ])
 
-    def test_move_children_sameSuperior(self):
-        d = self.meta.move("ou=moved,dc=example,dc=com")
+    async def test_move_children_sameSuperior(self):
 
-        def getChildren(dummy):
-            return self.root.children()
 
-        d.addCallback(getChildren)
-        d.addCallback(
-            lambda actual: self.assertCountEqual(
-                actual,
-                [
+        _result = await self.meta.move("ou=moved,dc=example,dc=com")
+        _result = await self.root.children()
+        util.assert_permutation(_result, [
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         dn="ou=moved,dc=example,dc=com",
                         attributes={
@@ -455,36 +365,21 @@ class TestInMemoryDatabase(unittest.TestCase):
                     ),
                     self.empty,
                     self.oneChild,
-                ],
-            )
-        )
-        return d
+                ])
 
-    def test_move_noChildren_newSuperior(self):
-        d = self.empty.move("ou=moved,ou=oneChild,dc=example,dc=com")
+    async def test_move_noChildren_newSuperior(self):
 
-        def getChildren(dummy):
-            return self.root.children()
 
-        d.addCallback(getChildren)
-        d.addCallback(
-            lambda actual: self.assertCountEqual(
-                actual,
-                [
+
+
+        _result = await self.empty.move("ou=moved,ou=oneChild,dc=example,dc=com")
+        _result = await self.root.children()
+        util.assert_permutation(_result, [
                     self.meta,
                     self.oneChild,
-                ],
-            )
-        )
-
-        def getChildren2(dummy):
-            return self.oneChild.children()
-
-        d.addCallback(getChildren2)
-        d.addCallback(
-            lambda actual: self.assertCountEqual(
-                actual,
-                [
+                ])
+        _result = await self.oneChild.children()
+        util.assert_permutation(_result, [
                     self.theChild,
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         dn="ou=moved,ou=oneChild,dc=example,dc=com",
@@ -493,36 +388,21 @@ class TestInMemoryDatabase(unittest.TestCase):
                             "ou": ["moved"],
                         },
                     ),
-                ],
-            )
-        )
-        return d
+                ])
 
-    def test_move_children_newSuperior(self):
-        d = self.meta.move("ou=moved,ou=oneChild,dc=example,dc=com")
+    async def test_move_children_newSuperior(self):
 
-        def getChildren(dummy):
-            return self.root.children()
 
-        d.addCallback(getChildren)
-        d.addCallback(
-            lambda actual: self.assertCountEqual(
-                actual,
-                [
+
+
+        _result = await self.meta.move("ou=moved,ou=oneChild,dc=example,dc=com")
+        _result = await self.root.children()
+        util.assert_permutation(_result, [
                     self.empty,
                     self.oneChild,
-                ],
-            )
-        )
-
-        def getChildren2(dummy):
-            return self.oneChild.children()
-
-        d.addCallback(getChildren2)
-        d.addCallback(
-            lambda actual: self.assertCountEqual(
-                actual,
-                [
+                ])
+        _result = await self.oneChild.children()
+        util.assert_permutation(_result, [
                     self.theChild,
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         dn="ou=moved,ou=oneChild,dc=example,dc=com",
@@ -531,20 +411,79 @@ class TestInMemoryDatabase(unittest.TestCase):
                             "ou": ["moved"],
                         },
                     ),
-                ],
-            )
-        )
-        return d
+                ])
 
-    def test_commit(self):
-        """ReadOnlyInMemoryLDAPEntry.commit() succeeds immediately."""
+    async def test_commit(self):
+        """ReadOnlyInMemoryLDAPEntry.commit() always reports success."""
         self.meta["foo"] = ["bar"]
-        d = self.meta.commit()
-        self.assertTrue(d.called)
+        assert await self.meta.commit() is True
 
 
-class FromLDIF(unittest.TestCase):
-    def test_single(self):
+class TestLDIFLoadFailureHooks:
+    """The lookupFailed/addFailed hooks decide whether a bad entry aborts."""
+
+    orphan = b"""\
+dn: dc=example,dc=com
+objectClass: dcObject
+dc: example
+
+dn: cn=foo,ou=nonexisting,dc=example,dc=com
+objectClass: a
+cn: foo
+
+"""
+
+    duplicate = b"""\
+dn: dc=example,dc=com
+objectClass: dcObject
+dc: example
+
+dn: cn=foo,dc=example,dc=com
+objectClass: a
+cn: foo
+
+dn: cn=foo,dc=example,dc=com
+objectClass: a
+cn: foo
+
+"""
+
+    async def _load(self, protocol, data):
+        protocol.dataReceived(data)
+        protocol.connectionLost(Failure(ConnectionDone()))
+        return await protocol.completed()
+
+    async def test_lookupFailed_can_skip_the_entry(self):
+        skipped = []
+
+        class SkipMissingParents(inmemory.InMemoryLDIFProtocol):
+            def lookupFailed(self, reason, entry):
+                skipped.append(entry.dn.getText())
+
+        db = await self._load(SkipMissingParents(), self.orphan)
+
+        assert skipped == ["cn=foo,ou=nonexisting,dc=example,dc=com"]
+        assert await db.children() == []
+
+    async def test_addFailed_aborts_by_default(self):
+        with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
+            await self._load(inmemory.InMemoryLDIFProtocol(), self.duplicate)
+
+    async def test_addFailed_can_skip_the_entry(self):
+        skipped = []
+
+        class SkipDuplicates(inmemory.InMemoryLDIFProtocol):
+            def addFailed(self, reason, entry):
+                skipped.append(entry.dn.getText())
+
+        db = await self._load(SkipDuplicates(), self.duplicate)
+
+        assert skipped == ["cn=foo,dc=example,dc=com"]
+        assert len(await db.children()) == 1
+
+
+class TestFromLDIF:
+    async def test_single(self):
         ldif = BytesIO(
             b"""\
 dn: cn=foo,dc=example,dc=com
@@ -556,19 +495,11 @@ bValue: c
 
 """
         )
-        d = inmemory.fromLDIFFile(ldif)
+        db = await inmemory.fromLDIFFile(ldif)
+        assert db.dn == distinguishedname.DistinguishedName("cn=foo,dc=example,dc=com")
+        assert await db.children() == []
 
-        def cb1(db):
-            self.assertEqual(
-                db.dn, distinguishedname.DistinguishedName("cn=foo,dc=example,dc=com")
-            )
-            return db.children()
-
-        d.addCallback(cb1)
-        d.addCallback(self.assertEqual, [])
-        return d
-
-    def test_two(self):
+    async def test_two(self):
         ldif = BytesIO(
             b"""\
 dn: dc=example,dc=com
@@ -581,29 +512,20 @@ cn: foo
 
 """
         )
-        d = inmemory.fromLDIFFile(ldif)
+        db = await inmemory.fromLDIFFile(ldif)
+        assert db.dn == distinguishedname.DistinguishedName("dc=example,dc=com")
 
-        def cb1(db):
-            self.assertEqual(
-                db.dn, distinguishedname.DistinguishedName("dc=example,dc=com")
-            )
-            return db.subtree()
-
-        d.addCallback(cb1)
-
-        def cb2(children):
-            self.assertEqual(len(children), 2)
-            want = [
+        children = await db.subtree()
+        assert len(children) == 2
+        util.assert_permutation(
+            [e.dn for e in children],
+            [
                 distinguishedname.DistinguishedName("dc=example,dc=com"),
                 distinguishedname.DistinguishedName("cn=foo,dc=example,dc=com"),
-            ]
-            got = [e.dn for e in children]
-            self.assertCountEqual(got, want)
+            ],
+        )
 
-        d.addCallback(cb2)
-        return d
-
-    def test_missingNode(self):
+    async def test_missingNode(self):
         ldif = BytesIO(
             b"""\
 dn: dc=example,dc=com
@@ -616,20 +538,15 @@ cn: foo
 
 """
         )
-        d = inmemory.fromLDIFFile(ldif)
-
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNoSuchObject)
-            self.assertEqual(
-                fail.value.toWire(), b"noSuchObject: ou=nonexisting,dc=example,dc=com"
-            )
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
 
 
-class TestDiff(unittest.TestCase):
-    def testNoChange(self):
+        with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
+            await inmemory.fromLDIFFile(ldif)
+        assert excinfo.value.toWire() == b"noSuchObject: ou=nonexisting,dc=example,dc=com"
+
+
+class TestDiff:
+    async def testNoChange(self):
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             "dc=example,dc=com",
             {
@@ -642,11 +559,10 @@ class TestDiff(unittest.TestCase):
                 "dc": ["example"],
             },
         )
-        d = a.diffTree(b)
-        d.addCallback(self.assertEqual, [])
-        return d
+        _result = await a.diffTree(b)
+        assert _result == []
 
-    def testRootChange_Add(self):
+    async def testRootChange_Add(self):
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             "dc=example,dc=com",
             {
@@ -660,21 +576,17 @@ class TestDiff(unittest.TestCase):
                 "foo": ["bar"],
             },
         )
-        d = a.diffTree(b)
-        d.addCallback(
-            self.assertEqual,
-            [
+        _result = await a.diffTree(b)
+        assert _result == [
                 delta.ModifyOp(
                     "dc=example,dc=com",
                     [
                         delta.Add("foo", ["bar"]),
                     ],
                 ),
-            ],
-        )
-        return d
+            ]
 
-    def testChildChange_Add(self):
+    async def testChildChange_Add(self):
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             "dc=example,dc=com",
             {
@@ -700,21 +612,17 @@ class TestDiff(unittest.TestCase):
                 "foo": ["bar"],
             },
         )
-        d = a.diffTree(b)
-        d.addCallback(
-            self.assertEqual,
-            [
+        _result = await a.diffTree(b)
+        assert _result == [
                 delta.ModifyOp(
                     "cn=foo,dc=example,dc=com",
                     [
                         delta.Add("foo", ["bar"]),
                     ],
                 ),
-            ],
-        )
-        return d
+            ]
 
-    def testAddChild(self):
+    async def testAddChild(self):
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -737,17 +645,13 @@ class TestDiff(unittest.TestCase):
             },
         )
 
-        d = a.diffTree(b)
-        d.addCallback(
-            self.assertEqual,
-            [
+        _result = await a.diffTree(b)
+        assert _result == [
                 delta.AddOp(bar),
                 delta.AddOp(foo),
-            ],
-        )
-        return d
+            ]
 
-    def testAddSubtree(self):
+    async def testAddSubtree(self):
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -777,18 +681,14 @@ class TestDiff(unittest.TestCase):
             },
         )
 
-        d = a.diffTree(b)
-        d.addCallback(
-            self.assertEqual,
-            [
+        _result = await a.diffTree(b)
+        assert _result == [
                 delta.AddOp(bar),
                 delta.AddOp(foo),
                 delta.AddOp(baz),
-            ],
-        )
-        return d
+            ]
 
-    def testDeleteChild(self):
+    async def testDeleteChild(self):
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -811,17 +711,13 @@ class TestDiff(unittest.TestCase):
             },
         )
 
-        d = a.diffTree(b)
-        d.addCallback(
-            self.assertEqual,
-            [
+        _result = await a.diffTree(b)
+        assert _result == [
                 delta.DeleteOp(bar),
                 delta.DeleteOp(foo),
-            ],
-        )
-        return d
+            ]
 
-    def testDeleteSubtree(self):
+    async def testDeleteSubtree(self):
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -851,13 +747,9 @@ class TestDiff(unittest.TestCase):
             },
         )
 
-        d = a.diffTree(b)
-        d.addCallback(
-            self.assertEqual,
-            [
+        _result = await a.diffTree(b)
+        assert _result == [
                 delta.DeleteOp(bar),
                 delta.DeleteOp(baz),
                 delta.DeleteOp(foo),
-            ],
-        )
-        return d
+            ]

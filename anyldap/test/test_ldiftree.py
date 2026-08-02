@@ -10,17 +10,28 @@ import subprocess
 import sys
 import unittest as stdlib_unittest
 
-from anyldap import delta, entry, ldiftree, testutil
+import pytest
+
+from anyldap import delta, entry, ldiftree
 from anyldap.entry import BaseLDAPEntry
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
-from anyldap.test import unittest, util
+from anyldap.test import util
 from anyldap.test._testing import capture_logs
+
+pytestmark = pytest.mark.anyio
 
 
 def writeFile(path, content):
     f = open(path, "wb")
     f.write(content)
     f.close()
+
+
+def _moved(dn):
+    """The entry a `ou=moved` rename is expected to produce."""
+    return BaseLDAPEntry(
+        dn=dn, attributes={b"objectClass": [b"a", b"b"], b"ou": [b"moved"]}
+    )
 
 
 skipIfWindowsOrRoot = stdlib_unittest.skipIf(
@@ -35,37 +46,36 @@ skipIfWindows = stdlib_unittest.skipIf(
 )
 
 
-class RandomizeListdirTestCase(unittest.TestCase):
+class RandomizedListdir:
     """
-    It patches the os.listdir to return the members in a random order.
+    Base class that makes os.listdir return its members in a random order, so
+    tests cannot quietly depend on directory ordering.
     """
 
-    def randomListdir(self, *args, **kwargs):
-        """
-        This is used to replace the os.listdir.
-        """
-        r = self.__os_listdir(*args, **kwargs)
-        random.shuffle(r)
-        return r
+    @pytest.fixture(autouse=True)
+    def _randomize_listdir(self, monkeypatch):
+        real_listdir = os.listdir
 
-    def setUp(self):
-        self.__os_listdir = os.listdir
-        os.listdir = self.randomListdir
+        def randomListdir(*args, **kwargs):
+            r = real_listdir(*args, **kwargs)
+            random.shuffle(r)
+            return r
 
-        def reverse_listdir():
-            os.listdir = self.__os_listdir
-
-        self.addCleanup(reverse_listdir)
+        monkeypatch.setattr(os, "listdir", randomListdir)
+        self._restore_modes = []
+        yield
+        for path, mode in reversed(self._restore_modes):
+            os.chmod(path, mode)
 
     def chmod(self, path, mode):
-        self.addCleanup(os.chmod, path, os.stat(path).st_mode)
+        self._restore_modes.append((path, os.stat(path).st_mode))
         os.chmod(path, mode)
 
 
-class Dir2LDIF(RandomizeListdirTestCase):
-    def setUp(self):
-        super().setUp()
-        self.tree = self.mktemp()
+class TestDir2LDIF(RandomizedListdir):
+    @pytest.fixture(autouse=True)
+    def _tree(self, tmp_path):
+        self.tree = str(tmp_path / "tree")
         os.mkdir(self.tree)
         com = os.path.join(self.tree, "dc=com.dir")
         os.mkdir(com)
@@ -115,7 +125,7 @@ objectClass: top
 """,
         )
 
-    def testSimpleRead(self):
+    async def testSimpleRead(self):
         want = BaseLDAPEntry(
             dn=b"cn=foo,dc=example,dc=com",
             attributes={
@@ -123,57 +133,45 @@ objectClass: top
                 b"cn": [b"foo"],
             },
         )
-        d = ldiftree.get(self.tree, want.dn)
-        d.addCallback(self.failUnlessEqual, want)
-        return d
+        assert await ldiftree.get(self.tree, want.dn) == want
 
     @skipIfWindowsOrRoot
-    def testNoAccess(self):
+    async def testNoAccess(self):
         self.chmod(
             os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif"), 0
         )
-        d = ldiftree.get(self.tree, "cn=foo,dc=example,dc=com")
+        with pytest.raises(OSError) as excinfo:
+            await ldiftree.get(self.tree, "cn=foo,dc=example,dc=com")
+        assert excinfo.value.errno == errno.EACCES
 
-        def eb(fail):
-            fail.trap(IOError)
-            self.assertEqual(fail.value.errno, errno.EACCES)
+    async def gettingDNRaises(self, dn, exceptionClass):
+        with pytest.raises(exceptionClass):
+            await ldiftree.get(self.tree, dn)
 
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
-
-    def gettingDNRaises(self, dn, exceptionClass):
-        d = ldiftree.get(self.tree, dn)
-
-        def eb(fail):
-            fail.trap(exceptionClass)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
-
-    def testMultipleError(self):
-        return self.gettingDNRaises(
+    async def testMultipleError(self):
+        await self.gettingDNRaises(
             "cn=bad-two-entries,dc=example,dc=com",
             ldiftree.LDIFTreeEntryContainsMultipleEntries,
         )
 
-    def testMissingEndError(self):
-        return self.gettingDNRaises(
+    async def testMissingEndError(self):
+        await self.gettingDNRaises(
             "cn=bad-missing-end,dc=example,dc=com",
             ldiftree.LDIFTreeEntryContainsNoEntries,
         )
 
-    def testEmptyError(self):
-        return self.gettingDNRaises(
+    async def testEmptyError(self):
+        await self.gettingDNRaises(
             "cn=bad-empty,dc=example,dc=com", ldiftree.LDIFTreeEntryContainsNoEntries
         )
 
-    def testOnlyNewlineError(self):
-        return self.gettingDNRaises(
+    async def testOnlyNewlineError(self):
+        await self.gettingDNRaises(
             "cn=bad-only-newline,dc=example,dc=com",
             ldifprotocol.LDIFLineWithoutSemicolonError,
         )
 
-    def testTreeBranches(self):
+    async def testTreeBranches(self):
         want = BaseLDAPEntry(
             dn=b"cn=sales-thingie,ou=Sales,dc=example,dc=com",
             attributes={
@@ -181,15 +179,13 @@ objectClass: top
                 b"cn": [b"sales-thingie"],
             },
         )
-        d = ldiftree.get(self.tree, want.dn)
-        d.addCallback(self.failUnlessEqual, want)
-        return d
+        assert await ldiftree.get(self.tree, want.dn) == want
 
 
-class LDIF2Dir(RandomizeListdirTestCase):
-    def setUp(self):
-        super().setUp()
-        self.tree = self.mktemp()
+class TestLDIF2Dir(RandomizedListdir):
+    @pytest.fixture(autouse=True)
+    def _tree(self, tmp_path):
+        self.tree = str(tmp_path / "tree")
         os.mkdir(self.tree)
         com = os.path.join(self.tree, "dc=com.dir")
         os.mkdir(com)
@@ -214,7 +210,7 @@ objectClass: organizationalUnit
 """,
         )
 
-    def testSimpleWrite(self):
+    async def testSimpleWrite(self):
         e = BaseLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -222,24 +218,20 @@ objectClass: organizationalUnit
                 "cn": ["foo"],
             },
         )
-        d = ldiftree.put(self.tree, e)
-        d.addCallback(self._cb_testSimpleWrite)
-        return d
+        await ldiftree.put(self.tree, e)
+        self._cb_testSimpleWrite()
 
-    def _cb_testSimpleWrite(self, entry):
+    def _cb_testSimpleWrite(self):
         path = os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif")
-        self.assertTrue(os.path.isfile(path))
-        self.assertEqual(
-            open(path, "rb").read(),
-            b"""\
+        assert os.path.isfile(path)
+        assert open(path, "rb").read() == (b"""\
 dn: cn=foo,dc=example,dc=com
 objectClass: top
 cn: foo
 
-""",
-        )
+""")
 
-    def testDirCreation(self):
+    async def testDirCreation(self):
         e = BaseLDAPEntry(
             dn="cn=create-me,ou=OrgUnit,dc=example,dc=com",
             attributes={
@@ -247,11 +239,10 @@ cn: foo
                 "cn": ["create-me"],
             },
         )
-        d = ldiftree.put(self.tree, e)
-        d.addCallback(self._cb_testDirCreation)
-        return d
+        await ldiftree.put(self.tree, e)
+        self._cb_testDirCreation()
 
-    def _cb_testDirCreation(self, entry):
+    def _cb_testDirCreation(self):
         path = os.path.join(
             self.tree,
             "dc=com.dir",
@@ -259,18 +250,15 @@ cn: foo
             "ou=OrgUnit.dir",
             "cn=create-me.ldif",
         )
-        self.assertTrue(os.path.isfile(path))
-        self.assertEqual(
-            open(path, "rb").read(),
-            b"""\
+        assert os.path.isfile(path)
+        assert open(path, "rb").read() == (b"""\
 dn: cn=create-me,ou=OrgUnit,dc=example,dc=com
 objectClass: top
 cn: create-me
 
-""",
-        )
+""")
 
-    def testDirExists(self):
+    async def testDirExists(self):
         e = BaseLDAPEntry(
             dn="cn=create-me,ou=OrgUnit,dc=example,dc=com",
             attributes={
@@ -282,24 +270,20 @@ cn: create-me
             self.tree, "dc=com.dir", "dc=example.dir", "ou=OrgUnit.dir"
         )
         os.mkdir(dirpath)
-        d = ldiftree.put(self.tree, e)
-        d.addCallback(self._cb_testDirExists, dirpath)
-        return d
+        await ldiftree.put(self.tree, e)
+        self._cb_testDirExists(dirpath)
 
-    def _cb_testDirExists(self, entry, dirpath):
+    def _cb_testDirExists(self, dirpath):
         path = os.path.join(dirpath, "cn=create-me.ldif")
-        self.assertTrue(os.path.isfile(path))
-        self.assertEqual(
-            open(path, "rb").read(),
-            b"""\
+        assert os.path.isfile(path)
+        assert open(path, "rb").read() == (b"""\
 dn: cn=create-me,ou=OrgUnit,dc=example,dc=com
 objectClass: top
 cn: create-me
 
-""",
-        )
+""")
 
-    def testMissingLinkError(self):
+    async def testMissingLinkError(self):
         e = BaseLDAPEntry(
             dn="cn=bad-create,ou=NoSuchOrgUnit,dc=example,dc=com",
             attributes={
@@ -308,12 +292,10 @@ cn: create-me
             },
         )
 
-        d = ldiftree.put(self.tree, e)
+        with pytest.raises(ldiftree.LDIFTreeNoSuchObject):
+            await ldiftree.put(self.tree, e)
 
-        failure = self.failureResultOf(d)
-        self.assertIsInstance(failure.value, ldiftree.LDIFTreeNoSuchObject)
-
-    def testAddTopLevel(self):
+    async def testAddTopLevel(self):
         e = BaseLDAPEntry(
             dn="dc=org",
             attributes={
@@ -321,34 +303,30 @@ cn: create-me
                 "dc": ["org"],
             },
         )
-        d = ldiftree.put(self.tree, e)
-        d.addCallback(self._cb_testAddTopLevel)
-        return d
+        await ldiftree.put(self.tree, e)
+        self._cb_testAddTopLevel()
 
-    def _cb_testAddTopLevel(self, entry):
+    def _cb_testAddTopLevel(self):
         path = os.path.join(self.tree, "dc=org.ldif")
-        self.assertTrue(os.path.isfile(path))
-        self.assertEqual(
-            open(path, "rb").read(),
-            b"""\
+        assert os.path.isfile(path)
+        assert open(path, "rb").read() == (b"""\
 dn: dc=org
 objectClass: dcObject
 dc: org
 
-""",
-        )
+""")
 
 
-class LDIFTreeEntryTests(RandomizeListdirTestCase):
+class TestLDIFTreeEntry(RandomizedListdir):
     """
     Tests for LDIFTreeEntry.
     """
 
     # TODO share the actual tests with inmemory and any other
     # implementations of the same interface
-    def setUp(self):
-        super().setUp()
-        self.tree = self.mktemp()
+    @pytest.fixture(autouse=True)
+    def _tree(self, tmp_path):
+        self.tree = str(tmp_path / "tree")
         os.mkdir(self.tree)
         com = os.path.join(self.tree, "dc=com.dir")
         os.mkdir(com)
@@ -442,53 +420,34 @@ cn: theChild
             theChild, "cn=theChild,ou=oneChild,dc=example,dc=com"
         )
 
-    def test_children_empty(self):
-        d = self.empty.children()
+    async def test_children_empty(self):
+        assert await self.empty.children() == []
 
-        def cb(children):
-            self.assertEqual(children, [])
-
-        d.addCallback(cb)
-        return d
-
-    def test_children_oneChild(self):
-        d = self.oneChild.children()
-        d.addCallback(self._cb_test_children_oneChild)
-        return d
+    async def test_children_oneChild(self):
+        self._cb_test_children_oneChild(await self.oneChild.children())
 
     def _cb_test_children_oneChild(self, children):
-        self.assertEqual(len(children), 1)
+        assert len(children) == 1
         got = [e.dn for e in children]
         want = ["cn=theChild,ou=oneChild,dc=example,dc=com"]
         got.sort()
         want.sort()
-        self.assertEqual(got, want)
+        assert got == want
 
-    def test_children_repeat(self):
+    async def test_children_repeat(self):
         """Test that .children() returns a copy of the data so that modifying it does not affect behaviour."""
-        d = self.oneChild.children()
-        d.addCallback(self._cb_test_children_repeat_1)
-        return d
-
-    def _cb_test_children_repeat_1(self, children1):
-        self.assertEqual(len(children1), 1)
+        children1 = await self.oneChild.children()
+        assert len(children1) == 1
 
         children1.pop()
 
-        d = self.oneChild.children()
-        d.addCallback(self._cb_test_children_repeat_2)
-        return d
+        assert len(await self.oneChild.children()) == 1
 
-    def _cb_test_children_repeat_2(self, children2):
-        self.assertEqual(len(children2), 1)
-
-    def test_children_twoChildren(self):
-        d = self.meta.children()
-        d.addCallback(self._cb_test_children_twoChildren)
-        return d
+    async def test_children_twoChildren(self):
+        self._cb_test_children_twoChildren(await self.meta.children())
 
     def _cb_test_children_twoChildren(self, children):
-        self.assertEqual(len(children), 2)
+        assert len(children) == 2
         want = [
             "cn=foo,ou=metasyntactic,dc=example,dc=com",
             "cn=bar,ou=metasyntactic,dc=example,dc=com",
@@ -496,17 +455,16 @@ cn: theChild
         got = [e.dn for e in children]
         got.sort()
         want.sort()
-        self.assertEqual(got, want)
+        assert got == want
 
-    def test_children_twoChildren_callback(self):
+    async def test_children_twoChildren_callback(self):
         children = []
-        d = self.meta.children(callback=children.append)
-        d.addCallback(self._cb_test_children_twoChildren_callback, children)
-        return d
+        r = await self.meta.children(callback=children.append)
+        self._cb_test_children_twoChildren_callback(r, children)
 
     def _cb_test_children_twoChildren_callback(self, r, children):
-        self.assertIdentical(r, None)
-        self.assertEqual(len(children), 2)
+        assert r is None
+        assert len(children) == 2
         want = [
             "cn=foo,ou=metasyntactic,dc=example,dc=com",
             "cn=bar,ou=metasyntactic,dc=example,dc=com",
@@ -514,47 +472,32 @@ cn: theChild
         got = [e.dn for e in children]
         got.sort()
         want.sort()
-        self.assertEqual(got, want)
+        assert got == want
 
     @skipIfWindowsOrRoot
-    def test_children_noAccess_dir_noRead(self):
+    async def test_children_noAccess_dir_noRead(self):
         self.chmod(self.meta.path, 0o300)
-        d = self.meta.children()
-
-        def eb(fail):
-            fail.trap(OSError)
-            self.assertEqual(fail.value.errno, errno.EACCES)
-            self.chmod(self.meta.path, 0o755)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+        with pytest.raises(OSError) as excinfo:
+            await self.meta.children()
+        assert excinfo.value.errno == errno.EACCES
+        self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
-    def test_children_noAccess_dir_noExec(self):
+    async def test_children_noAccess_dir_noExec(self):
         self.chmod(self.meta.path, 0o600)
-        d = self.meta.children()
-
-        def eb(fail):
-            fail.trap(IOError)
-            self.assertEqual(fail.value.errno, errno.EACCES)
-            self.chmod(self.meta.path, 0o755)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+        with pytest.raises(OSError) as excinfo:
+            await self.meta.children()
+        assert excinfo.value.errno == errno.EACCES
+        self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
-    def test_children_noAccess_file(self):
+    async def test_children_noAccess_file(self):
         self.chmod(os.path.join(self.meta.path, "cn=foo.ldif"), 0)
-        d = self.meta.children()
+        with pytest.raises(OSError) as excinfo:
+            await self.meta.children()
+        assert excinfo.value.errno == errno.EACCES
 
-        def eb(fail):
-            fail.trap(IOError)
-            self.assertEqual(fail.value.errno, errno.EACCES)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
-
-    def test_addChild(self):
+    async def test_addChild(self):
         self.empty.addChild(
             rdn="a=b",
             attributes={
@@ -562,70 +505,58 @@ cn: theChild
                 "a": "b",
             },
         )
-        d = self.empty.children()
-        d.addCallback(self._cb_test_addChild)
-        return d
+        self._cb_test_addChild(await self.empty.children())
 
     def _cb_test_addChild(self, children):
-        self.assertEqual(len(children), 1)
+        assert len(children) == 1
         got = [e.dn for e in children]
         want = [
             "a=b,ou=empty,dc=example,dc=com",
         ]
         got.sort()
         want.sort()
-        self.assertEqual(got, want)
+        assert got == want
 
     def test_addChild_Exists(self):
-        self.assertRaises(
-            ldaperrors.LDAPEntryAlreadyExists,
-            self.meta.addChild,
-            rdn="cn=foo",
-            attributes={
-                "objectClass": ["a"],
-                "cn": "foo",
-            },
-        )
+        with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
+            self.meta.addChild(
+                rdn="cn=foo",
+                attributes={
+                    "objectClass": ["a"],
+                    "cn": "foo",
+                },
+            )
 
     def test_addChild_to_existing_directory(self):
         child = self.meta.addChild(
             rdn="cn=baz",
             attributes={"objectClass": ["a"], "cn": ["baz"]},
         )
-        self.assertEqual(child.dn, "cn=baz,ou=metasyntactic,dc=example,dc=com")
+        assert child.dn == "cn=baz,ou=metasyntactic,dc=example,dc=com"
 
-    def test_deleteChild_accepts_relative_distinguished_name(self):
-        result = self.meta.deleteChild(
+    async def test_deleteChild_accepts_relative_distinguished_name(self):
+        result = await self.meta.deleteChild(
             distinguishedname.RelativeDistinguishedName("cn=bar")
         )
-        result.addCallback(self.assertEqual, self.bar)
-        return result
+        assert result == self.bar
 
-    @util.fromCoroutineFunction
     async def test_move_accepts_distinguished_name(self):
         result = await self.empty.move(
             distinguishedname.DistinguishedName("ou=moved,dc=example,dc=com")
         )
-        self.assertTrue(result)
-        self.assertEqual(self.empty.dn, "ou=moved,dc=example,dc=com")
+        assert result
+        assert self.empty.dn == "ou=moved,dc=example,dc=com"
 
     def test_parent(self):
-        self.assertEqual(self.foo.parent(), self.meta)
-        self.assertEqual(self.meta.parent(), self.example)
-        self.assertEqual(self.root.parent(), None)
+        assert self.foo.parent() == self.meta
+        assert self.meta.parent() == self.example
+        assert self.root.parent() is None
 
-    def test_subtree_empty(self):
-        d = self.empty.subtree()
-        d.addCallback(self._cb_test_subtree_empty)
-        return d
+    async def test_subtree_empty(self):
+        assert len(await self.empty.subtree()) == 1
 
-    def _cb_test_subtree_empty(self, entries):
-        self.assertEqual(len(entries), 1)
-
-    def test_subtree_oneChild(self):
-        d = self.oneChild.subtree()
-        d.addCallback(self._cb_test_subtree_oneChild)
-        return d
+    async def test_subtree_oneChild(self):
+        self._cb_test_subtree_oneChild(await self.oneChild.subtree())
 
     def _cb_test_subtree_oneChild(self, results):
         got = results
@@ -633,27 +564,24 @@ cn: theChild
             self.oneChild,
             self.theChild,
         ]
-        self.assertEqual(got, want)
+        assert got == want
 
-    def test_subtree_oneChild_cb(self):
+    async def test_subtree_oneChild_cb(self):
         got = []
-        d = self.oneChild.subtree(got.append)
-        d.addCallback(self._cb_test_subtree_oneChild_cb, got)
-        return d
+        r = await self.oneChild.subtree(got.append)
+        self._cb_test_subtree_oneChild_cb(r, got)
 
     def _cb_test_subtree_oneChild_cb(self, r, got):
-        self.assertEqual(r, None)
+        assert r is None
 
         want = [
             self.oneChild,
             self.theChild,
         ]
-        self.assertEqual(got, want)
+        assert got == want
 
-    def test_subtree_many(self):
-        deferred = self.example.subtree()
-
-        result = self.successResultOf(deferred)
+    async def test_subtree_many(self):
+        result = await self.example.subtree()
 
         expected = [
             self.example,
@@ -664,15 +592,13 @@ cn: theChild
             self.bar,
             self.foo,
         ]
-        self.assertCountEqual(expected, result)
+        util.assert_permutation(expected, result)
 
-    def test_subtree_many_cb(self):
+    async def test_subtree_many_cb(self):
         got = []
-        deferred = self.example.subtree(callback=got.append)
+        result = await self.example.subtree(callback=got.append)
 
-        result = self.successResultOf(deferred)
-
-        self.assertIsNone(result)
+        assert result is None
         expected = [
             self.example,
             self.oneChild,
@@ -682,41 +608,27 @@ cn: theChild
             self.bar,
             self.foo,
         ]
-        self.assertCountEqual(expected, got)
+        util.assert_permutation(expected, got)
 
-    def test_lookup_fail(self):
+    async def test_lookup_fail(self):
         dn = "cn=thud,ou=metasyntactic,dc=example,dc=com"
-        d = self.root.lookup(dn)
+        with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
+            await self.root.lookup(dn)
+        assert excinfo.value.message == dn
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNoSuchObject)
-            self.assertEqual(fail.value.message, dn)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
-
-    def test_lookup_fail_outOfTree(self):
+    async def test_lookup_fail_outOfTree(self):
         dn = "dc=invalid"
-        d = self.root.lookup(dn)
+        with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
+            await self.root.lookup(dn)
+        assert excinfo.value.message == dn
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNoSuchObject)
-            self.assertEqual(fail.value.message, dn)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
-
-    def test_lookup_fail_outOfTree_2(self):
+    async def test_lookup_fail_outOfTree_2(self):
         dn = "dc=invalid"
-        d = self.example.lookup(dn)
+        with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
+            await self.example.lookup(dn)
+        assert excinfo.value.message == dn
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNoSuchObject)
-            self.assertEqual(fail.value.message, dn)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-
-    def test_lookup_fail_multipleError(self):
+    async def test_lookup_fail_multipleError(self):
         writeFile(
             os.path.join(self.example.path, "cn=bad-two-entries.ldif"),
             b"""\
@@ -730,341 +642,158 @@ objectClass: top
 
 """,
         )
-        self.assertRaises(
-            ldiftree.LDIFTreeEntryContainsMultipleEntries,
-            self.example.lookup,
-            "cn=bad-two-entries,dc=example,dc=com",
-        )
+        with pytest.raises(ldiftree.LDIFTreeEntryContainsMultipleEntries):
+            await self.example.lookup("cn=bad-two-entries,dc=example,dc=com")
 
-    def test_lookup_fail_emptyError(self):
+    async def test_lookup_fail_emptyError(self):
         writeFile(os.path.join(self.example.path, "cn=bad-empty.ldif"), b"")
-        self.assertRaises(
-            ldiftree.LDIFTreeEntryContainsNoEntries,
-            self.example.lookup,
-            "cn=bad-empty,dc=example,dc=com",
-        )
+        with pytest.raises(ldiftree.LDIFTreeEntryContainsNoEntries):
+            await self.example.lookup("cn=bad-empty,dc=example,dc=com")
 
-    def test_lookup_deep(self):
+    async def test_lookup_deep(self):
         dn = "cn=bar,ou=metasyntactic,dc=example,dc=com"
-        d = self.root.lookup(dn)
-        d.addCallback(self._cb_test_lookup_deep)
-        return d
+        assert await self.root.lookup(dn) == self.bar
 
-    def _cb_test_lookup_deep(self, r):
-        self.assertEqual(r, self.bar)
+    async def test_delete_root(self):
+        with pytest.raises(ldiftree.LDAPCannotRemoveRootError):
+            await self.root.delete()
 
-    def test_delete_root(self):
-        d = self.root.delete()
+    async def test_delete_nonLeaf(self):
+        with pytest.raises(ldaperrors.LDAPNotAllowedOnNonLeaf):
+            await self.meta.delete()
 
-        def eb(fail):
-            fail.trap(ldiftree.LDAPCannotRemoveRootError)
+    async def test_delete(self):
+        assert await self.foo.delete() == self.foo
+        assert await self.meta.children() == [self.bar]
 
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+    async def test_deleteChild(self):
+        assert await self.meta.deleteChild("cn=bar") == self.bar
+        assert await self.meta.children() == [self.foo]
 
-    def test_delete_nonLeaf(self):
-        d = self.meta.delete()
-
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNotAllowedOnNonLeaf)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
-
-    def test_delete(self):
-        d = self.foo.delete()
-        d.addCallback(self._cb_test_delete_1)
-        return d
-
-    def _cb_test_delete_1(self, r):
-        self.assertEqual(r, self.foo)
-        d = self.meta.children()
-        d.addCallback(self._cb_test_delete_2)
-        return d
-
-    def _cb_test_delete_2(self, r):
-        self.assertEqual(r, [self.bar])
-
-    def test_deleteChild(self):
-        d = self.meta.deleteChild("cn=bar")
-        d.addCallback(self._cb_test_deleteChild_1)
-        return d
-
-    def _cb_test_deleteChild_1(self, r):
-        self.assertEqual(r, self.bar)
-        d = self.meta.children()
-        d.addCallback(self._cb_test_deleteChild_2)
-        return d
-
-    def _cb_test_deleteChild_2(self, r):
-        self.assertEqual(r, [self.foo])
-
-    def test_deleteChild_NonExisting(self):
-        d = self.root.deleteChild("cn=not-exist")
-
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPNoSuchObject)
-
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
+    async def test_deleteChild_NonExisting(self):
+        with pytest.raises(ldaperrors.LDAPNoSuchObject):
+            await self.root.deleteChild("cn=not-exist")
 
     def test_setPassword(self):
         self.foo.setPassword(b"s3krit", salt=b"\xf2\x4a")
-        self.assertTrue("userPassword" in self.foo)
-        self.assertEqual(
-            self.foo["userPassword"], [b"{SSHA}0n/Iw1NhUOKyaI9gm9v5YsO3ZInySg=="]
-        )
+        assert "userPassword" in self.foo
+        assert self.foo["userPassword"] == [b"{SSHA}0n/Iw1NhUOKyaI9gm9v5YsO3ZInySg=="]
 
-    def test_setPassword_noSalt(self):
+    async def test_setPassword_noSalt(self):
         self.foo.setPassword(b"s3krit")
-        self.assertTrue("userPassword" in self.foo)
-        d = self.foo.bind("s3krit")
-        d.addCallback(self.assertIdentical, self.foo)
-        d.addCallback(lambda _: self.foo.bind("s4krit"))
+        assert "userPassword" in self.foo
+        assert await self.foo.bind("s3krit") is self.foo
+        with pytest.raises(ldaperrors.LDAPInvalidCredentials):
+            await self.foo.bind("s4krit")
 
-        def eb(fail):
-            fail.trap(ldaperrors.LDAPInvalidCredentials)
+    async def test_diffTree_self(self):
+        assert await self.root.diffTree(self.root) == []
 
-        d.addCallbacks(testutil.mustRaise, eb)
-        return d
-
-    def test_diffTree_self(self):
-        d = self.root.diffTree(self.root)
-        d.addCallback(self.assertEqual, [])
-        return d
-
-    def test_diffTree_copy(self):
-        otherDir = self.mktemp()
+    async def test_diffTree_copy(self, tmp_path):
+        otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
         other = ldiftree.LDIFTreeEntry(otherDir)
-        d = self.root.diffTree(other)
-        d.addCallback(self.assertEqual, [])
-        return d
+        assert await self.root.diffTree(other) == []
 
-    def test_diffTree_addChild(self):
-        otherDir = self.mktemp()
+    async def test_diffTree_addChild(self, tmp_path):
+        otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
         other = ldiftree.LDIFTreeEntry(otherDir)
         e = entry.BaseLDAPEntry(dn="cn=foo,dc=example,dc=com")
-        d = ldiftree.put(otherDir, e)
+        await ldiftree.put(otherDir, e)
 
-        def cb1(dummy):
-            return other.lookup("cn=foo,dc=example,dc=com")
+        added = await other.lookup("cn=foo,dc=example,dc=com")
+        assert await self.root.diffTree(other) == [delta.AddOp(added)]
 
-        d.addCallback(cb1)
-
-        def cb2(r):
-            d = self.root.diffTree(other)
-            d.addCallback(self.assertEqual, [delta.AddOp(r)])
-            return d
-
-        d.addCallback(cb2)
-        return d
-
-    def test_diffTree_delChild(self):
-        otherDir = self.mktemp()
+    async def test_diffTree_delChild(self, tmp_path):
+        otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
         other = ldiftree.LDIFTreeEntry(otherDir)
 
-        d = other.lookup("ou=empty,dc=example,dc=com")
+        otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
+        await otherEmpty.delete()
 
-        def cb1(otherEmpty):
-            return otherEmpty.delete()
+        assert await self.root.diffTree(other) == [delta.DeleteOp(self.empty)]
 
-        d.addCallback(cb1)
-
-        def cb2(dummy):
-            return self.root.diffTree(other)
-
-        d.addCallback(cb2)
-
-        def cb3(got):
-            self.assertEqual(got, [delta.DeleteOp(self.empty)])
-
-        d.addCallback(cb3)
-        return d
-
-    @util.fromCoroutineFunction
-    async def test_diffTree_edit_failure(self):
-        otherDir = self.mktemp()
+    async def test_diffTree_edit_failure(self, tmp_path):
+        otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
         other = ldiftree.LDIFTreeEntry(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
         otherEmpty["foo"] = ["bar"]
         shutil.rmtree(otherDir)
-        messages = capture_logs(self, level=logging.ERROR)
-        self.assertFalse(await otherEmpty.commit())
-        self.assertEqual(
-            messages[0],
-            "[ERROR] Could not commit entry: ou=empty,dc=example,dc=com.",
-        )
+        cleanups = []
+        messages = capture_logs(cleanups, level=logging.ERROR)
+        try:
+            assert not (await otherEmpty.commit())
+        finally:
+            for cleanup in cleanups:
+                cleanup()
+        assert messages[0] == "[ERROR] Could not commit entry: ou=empty,dc=example,dc=com."
 
     @skipIfWindows
-    def test_diffTree_edit(self):
-        otherDir = self.mktemp()
+    async def test_diffTree_edit(self, tmp_path):
+        otherDir = str(tmp_path / "other")
         shutil.copytree(self.tree, otherDir)
         other = ldiftree.LDIFTreeEntry(otherDir)
 
-        d = other.lookup("ou=empty,dc=example,dc=com")
+        otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
+        otherEmpty["foo"] = ["bar"]
+        await otherEmpty.commit()
 
-        def cb1(otherEmpty):
-            otherEmpty["foo"] = ["bar"]
-            return otherEmpty.commit()
-
-        d.addCallback(cb1)
-
-        def cb2(dummy):
-            return self.root.diffTree(other)
-
-        d.addCallback(cb2)
-
-        def cb3(got):
-            self.assertEqual(
-                got,
-                [
-                    delta.ModifyOp(
-                        self.empty.dn,
-                        [delta.Add(b"foo", [b"bar"])],
-                    ),
-                ],
-            )
-
-        d.addCallback(cb3)
-        return d
+        assert await self.root.diffTree(other) == [
+            delta.ModifyOp(self.empty.dn, [delta.Add(b"foo", [b"bar"])]),
+        ]
 
     @skipIfWindows
-    def test_move_noChildren_sameSuperior(self):
-        d = self.empty.move("ou=moved,dc=example,dc=com")
+    async def test_move_noChildren_sameSuperior(self):
+        await self.empty.move("ou=moved,dc=example,dc=com")
 
-        def getChildren(dummy):
-            return self.example.children()
-
-        d.addCallback(getChildren)
-        d.addCallback(set)
-        d.addCallback(
-            self.assertEqual,
-            {
-                self.meta,
-                BaseLDAPEntry(
-                    dn="ou=moved,dc=example,dc=com",
-                    attributes={
-                        b"objectClass": [b"a", b"b"],
-                        b"ou": [b"moved"],
-                    },
-                ),
-                self.oneChild,
-            },
-        )
-        return d
+        assert set(await self.example.children()) == {
+            self.meta,
+            _moved("ou=moved,dc=example,dc=com"),
+            self.oneChild,
+        }
 
     @skipIfWindows
-    def test_move_children_sameSuperior(self):
-        d = self.meta.move("ou=moved,dc=example,dc=com")
+    async def test_move_children_sameSuperior(self):
+        await self.meta.move("ou=moved,dc=example,dc=com")
 
-        def getChildren(dummy):
-            return self.example.children()
-
-        d.addCallback(getChildren)
-        d.addCallback(set)
-        d.addCallback(
-            self.assertEqual,
-            {
-                BaseLDAPEntry(
-                    dn="ou=moved,dc=example,dc=com",
-                    attributes={
-                        b"objectClass": [b"a", b"b"],
-                        b"ou": [b"moved"],
-                    },
-                ),
-                self.empty,
-                self.oneChild,
-            },
-        )
-        return d
+        assert set(await self.example.children()) == {
+            _moved("ou=moved,dc=example,dc=com"),
+            self.empty,
+            self.oneChild,
+        }
 
     @skipIfWindows
-    def test_move_noChildren_newSuperior(self):
-        d = self.empty.move("ou=moved,ou=oneChild,dc=example,dc=com")
+    async def test_move_noChildren_newSuperior(self):
+        await self.empty.move("ou=moved,ou=oneChild,dc=example,dc=com")
 
-        def getChildren(dummy):
-            return self.example.children()
-
-        d.addCallback(getChildren)
-        d.addCallback(set)
-        d.addCallback(
-            self.assertEqual,
-            {
-                self.meta,
-                self.oneChild,
-            },
-        )
-
-        def getChildren2(dummy):
-            return self.oneChild.children()
-
-        d.addCallback(getChildren2)
-        d.addCallback(set)
-        d.addCallback(
-            self.assertEqual,
-            {
-                self.theChild,
-                BaseLDAPEntry(
-                    dn="ou=moved,ou=oneChild,dc=example,dc=com",
-                    attributes={
-                        b"objectClass": [b"a", b"b"],
-                        b"ou": [b"moved"],
-                    },
-                ),
-            },
-        )
-        return d
+        assert set(await self.example.children()) == {self.meta, self.oneChild}
+        assert set(await self.oneChild.children()) == {
+            self.theChild,
+            _moved("ou=moved,ou=oneChild,dc=example,dc=com"),
+        }
 
     @skipIfWindows
-    def test_move_children_newSuperior(self):
-        d = self.meta.move("ou=moved,ou=oneChild,dc=example,dc=com")
+    async def test_move_children_newSuperior(self):
+        await self.meta.move("ou=moved,ou=oneChild,dc=example,dc=com")
 
-        def getChildren(dummy):
-            return self.example.children()
-
-        d.addCallback(getChildren)
-        d.addCallback(set)
-        d.addCallback(
-            self.assertEqual,
-            {
-                self.empty,
-                self.oneChild,
-            },
-        )
-
-        def getChildren2(dummy):
-            return self.oneChild.children()
-
-        d.addCallback(getChildren2)
-        d.addCallback(set)
-        d.addCallback(
-            self.assertEqual,
-            {
-                self.theChild,
-                BaseLDAPEntry(
-                    dn="ou=moved,ou=oneChild,dc=example,dc=com",
-                    attributes={
-                        b"objectClass": [b"a", b"b"],
-                        b"ou": [b"moved"],
-                    },
-                ),
-            },
-        )
-        return d
+        assert set(await self.example.children()) == {self.empty, self.oneChild}
+        assert set(await self.oneChild.children()) == {
+            self.theChild,
+            _moved("ou=moved,ou=oneChild,dc=example,dc=com"),
+        }
 
     def testCompareOtherTypes(self):
         """
         It can't be compared with other types.
         """
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.example < object()
 
-        with self.assertRaises(TypeError):
+        with pytest.raises(TypeError):
             self.example > object()
 
     def testCompareGreater(self):
@@ -1072,19 +801,19 @@ objectClass: top
         It is compared with other entries based on DN, where child is
         greater than the parent.
         """
-        self.assertTrue(self.oneChild > self.example)
-        self.assertFalse(self.example > self.oneChild)
+        assert self.oneChild > self.example
+        assert not (self.example > self.oneChild)
 
     def testCompareLess(self):
         """
         It is compared with other entries based on DN, where parent is
         less than the child.
         """
-        self.assertTrue(self.example < self.oneChild)
-        self.assertFalse(self.oneChild < self.example)
+        assert self.example < self.oneChild
+        assert not (self.oneChild < self.example)
 
     def testRepresentation(self):
-        self.assertIn(self.example.dn.getText(), repr(self.example))
+        assert self.example.dn.getText() in repr(self.example)
 
 
 def test_module_entrypoint_explains_legacy_demo_removal():

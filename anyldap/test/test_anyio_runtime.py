@@ -3,36 +3,59 @@ import pytest
 from anyio.abc import SocketAttribute
 
 from anyldap import inmemory, testutil
-from anyldap._async import await_deferred, await_result
-from anyldap.deferred import succeed
+from anyldap._async import ResultSlot, await_result
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapserver, ldapsyntax
-from anyldap.runtime import Failure, Protocol
+from anyldap.runtime import Failure, Protocol, unwrap_failure
 
 pytestmark = pytest.mark.anyio
-
-
-async def test_await_deferred_accepts_native_deferred_and_awaitable():
-    assert await await_deferred(succeed("deferred")) == "deferred"
-
-    async def native():
-        return "awaitable"
-
-    assert await await_deferred(native()) == "awaitable"
-
-
-async def test_await_deferred_rejects_plain_value():
-    with pytest.raises(TypeError, match="Unsupported deferred object: 42"):
-        await await_deferred(42)
 
 
 async def test_await_result_accepts_all_result_shapes():
     async def native():
         return "awaitable"
 
-    assert await await_result(succeed("deferred")) == "deferred"
     assert await await_result(native()) == "awaitable"
     assert await await_result("plain") == "plain"
+
+
+async def test_result_slot_replays_a_value():
+    slot = ResultSlot()
+    assert not slot.is_set
+    slot.set_value("done")
+    assert slot.is_set
+    assert await slot.wait() == "done"
+
+
+async def test_result_slot_replays_an_exception():
+    slot = ResultSlot()
+    slot.set_exception(ValueError("boom"))
+    with pytest.raises(ValueError, match="boom"):
+        await slot.wait()
+
+
+async def test_result_slot_waits_for_a_late_producer():
+    slot = ResultSlot()
+
+    async def produce():
+        slot.set_value("late")
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(produce)
+        assert await slot.wait() == "late"
+
+
+async def test_result_slot_rejects_a_second_result():
+    slot = ResultSlot()
+    slot.set_value(1)
+    with pytest.raises(RuntimeError, match="result already set"):
+        slot.set_value(2)
+
+
+async def test_unwrap_failure_accepts_wrapped_and_bare_reasons():
+    error = ValueError("gone")
+    assert unwrap_failure(Failure(error)) is error
+    assert unwrap_failure(error) is error
 
 
 async def test_protocol_default_hooks():

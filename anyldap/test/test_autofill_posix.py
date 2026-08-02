@@ -2,47 +2,57 @@
 Test cases for anyldap.protocols.ldap.autofill.posixAccount module.
 """
 
+import outcome
 import pytest
 
-from anyldap.deferred import fail, succeed
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import autofill, ldapsyntax
 from anyldap.protocols.ldap.autofill import posixAccount
-from anyldap.runtime import Failure
-from anyldap.test import unittest
 from anyldap.testutil import LDAPClientTestDriver
 
+pytestmark = pytest.mark.anyio
 
-@pytest.mark.anyio
-async def test_gather_numbers_propagates_failure():
-    autofiller = posixAccount.Autofill_posix("dc=example,dc=com")
-    deferred = autofiller._gather_numbers(
-        fail(Failure(ValueError("allocation failed"))), succeed(1000)
+
+async def test_start_reports_the_first_failed_allocation():
+    attempted = []
+
+    async def allocate(baseObject, numberType, min):
+        attempted.append(numberType)
+        if numberType == "uidNumber":
+            raise ValueError("allocation failed")
+        return 1000
+
+    autofiller = posixAccount.Autofill_posix(
+        "dc=example,dc=com", freeNumberGetter=allocate
     )
+    entry = ldapsyntax.LDAPEntryWithAutoFill(
+        client=LDAPClientTestDriver(),
+        dn="cn=foo,dc=example,dc=com",
+        attributes={"objectClass": ["posixAccount"]},
+    )
+
     with pytest.raises(ValueError, match="allocation failed"):
-        await deferred
-
-    deferred = autofiller._gather_numbers(
-        fail(Failure(ValueError("uid failed"))),
-        fail(Failure(ValueError("gid failed"))),
-    )
-    with pytest.raises(ValueError, match="uid failed"):
-        await deferred
+        await autofiller.start(entry)
+    # The gid allocation is still attempted, so its outcome is available too.
+    assert attempted == ["uidNumber", "gidNumber"]
 
 
 def test_got_numbers_re_raises_failed_allocations_and_notify_is_noop():
     autofiller = posixAccount.Autofill_posix("dc=example,dc=com")
     entry = {}
-    failure = Failure(ValueError("allocation failed"))
+    # An Outcome may only be unwrapped once, so each case needs its own.
+    def error():
+        return outcome.Error(ValueError("allocation failed"))
+
     with pytest.raises(ValueError, match="allocation failed"):
-        autofiller._cb_gotNumbers(((False, failure), (True, 1000)), entry)
+        autofiller._cb_gotNumbers((error(), outcome.Value(1000)), entry)
     with pytest.raises(ValueError, match="allocation failed"):
-        autofiller._cb_gotNumbers(((True, 1000), (False, failure)), entry)
+        autofiller._cb_gotNumbers((outcome.Value(1000), error()), entry)
     assert autofiller.notify(entry, "uidNumber") is None
 
 
-class LDAPAutoFill_Posix(unittest.TestCase):
-    def testMustHaveObjectClass(self):
+class TestLDAPAutoFill_Posix:
+    async def testMustHaveObjectClass(self):
         """Test that Autofill_posix fails unless object is a posixAccount."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -54,13 +64,11 @@ class LDAPAutoFill_Posix(unittest.TestCase):
         )
         autoFiller = posixAccount.Autofill_posix(baseDN="dc=example,dc=com")
 
-        d = o.addAutofiller(autoFiller)
-
-        failure = self.failureResultOf(d)
-        self.assertIsInstance(failure.value, autofill.ObjectMissingObjectClassException)
+        with pytest.raises(autofill.ObjectMissingObjectClassException):
+            await o.addAutofiller(autoFiller)
         client.assertNothingSent()
 
-    def testDefaultSetting(self):
+    async def testDefaultSetting(self):
         """Test that fields get their default values."""
 
         client = LDAPClientTestDriver(
@@ -166,11 +174,8 @@ class LDAPAutoFill_Posix(unittest.TestCase):
             },
         )
 
-        d = o.addAutofiller(posixAccount.Autofill_posix(baseDN="dc=example,dc=com"))
-        d.addCallback(self._cb_testDefaultSetting, client, o)
-        return d
+        await o.addAutofiller(posixAccount.Autofill_posix(baseDN="dc=example,dc=com"))
 
-    def _cb_testDefaultSetting(self, val, client, o):
         client.assertSent(
             *[
                 pureldap.LDAPSearchRequest(
@@ -221,10 +226,10 @@ class LDAPAutoFill_Posix(unittest.TestCase):
             ]
         )
 
-        self.assertTrue("loginShell" in o)
-        self.assertEqual(o["loginShell"], ["/bin/sh"])
+        assert "loginShell" in o
+        assert o["loginShell"] == ["/bin/sh"]
 
-        self.assertTrue("uidNumber" in o)
-        self.assertEqual(o["uidNumber"], ["1000"])
-        self.assertTrue("gidNumber" in o)
-        self.assertEqual(o["gidNumber"], ["1042"])
+        assert "uidNumber" in o
+        assert o["uidNumber"] == ["1000"]
+        assert "gidNumber" in o
+        assert o["gidNumber"] == ["1042"]

@@ -3,9 +3,10 @@ Test cases for anyldap.protocols.ldap.ldifdelta
 """
 from io import BytesIO
 
+import pytest
+
 from anyldap import delta, entry
 from anyldap.protocols.ldap import ldifdelta
-from anyldap.test import unittest
 
 
 class LDIFDeltaDriver(ldifdelta.LDIFDelta):
@@ -69,7 +70,7 @@ deleteoldrdn: 0 #OR 1
 """
 
 
-class TestLDIFDeltaParsing(unittest.TestCase):
+class TestLDIFDeltaParsing:
     def testModification_empty(self):
         proto = LDIFDeltaDriver()
         proto.dataReceived(
@@ -81,12 +82,9 @@ changetype: modify
 """
         )
         proto.connectionLost()
-        self.assertEqual(
-            proto.listOfCompleted,
-            [
+        assert proto.listOfCompleted == ([
                 delta.ModifyOp(dn="cn=foo,dc=example,dc=com"),
-            ],
-        )
+            ])
 
     def testModification_oneAdd(self):
         proto = LDIFDeltaDriver()
@@ -102,17 +100,14 @@ foo: bar
 """
         )
         proto.connectionLost()
-        self.assertEqual(
-            proto.listOfCompleted,
-            [
+        assert proto.listOfCompleted == ([
                 delta.ModifyOp(
                     dn=b"cn=foo,dc=example,dc=com",
                     modifications=[
                         delta.Add(b"foo", [b"bar"]),
                     ],
                 ),
-            ],
-        )
+            ])
 
     def testModification_twoAdds(self):
         proto = LDIFDeltaDriver()
@@ -132,9 +127,7 @@ thud: baz
 """
         )
         proto.connectionLost()
-        self.assertEqual(
-            proto.listOfCompleted,
-            [
+        assert proto.listOfCompleted == ([
                 delta.ModifyOp(
                     dn=b"cn=foo,dc=example,dc=com",
                     modifications=[
@@ -142,8 +135,7 @@ thud: baz
                         delta.Add(b"thud", [b"quux", b"baz"]),
                     ],
                 ),
-            ],
-        )
+            ])
 
     def testModification_complex(self):
         proto = LDIFDeltaDriver()
@@ -175,9 +167,7 @@ add: silly
 """
         )
         proto.connectionLost()
-        self.assertEqual(
-            proto.listOfCompleted,
-            [
+        assert proto.listOfCompleted == ([
                 delta.ModifyOp(
                     dn=b"cn=foo,dc=example,dc=com",
                     modifications=[
@@ -190,44 +180,35 @@ add: silly
                         delta.Add(b"silly"),
                     ],
                 ),
-            ],
-        )
+            ])
 
     def testModification_fail_noDash_1(self):
         proto = LDIFDeltaDriver()
-        self.assertRaises(
-            ldifdelta.LDIFDeltaModificationMissingEndDashError,
-            proto.dataReceived,
-            b"""\
+        with pytest.raises(ldifdelta.LDIFDeltaModificationMissingEndDashError):
+            proto.dataReceived(b"""\
 version: 1
 dn: cn=foo,dc=example,dc=com
 changetype: modify
 add: foo
 foo: bar
 
-""",
-        )
+""")
 
     def testModification_fail_noDash_2(self):
         proto = LDIFDeltaDriver()
-        self.assertRaises(
-            ldifdelta.LDIFDeltaModificationMissingEndDashError,
-            proto.dataReceived,
-            b"""\
+        with pytest.raises(ldifdelta.LDIFDeltaModificationMissingEndDashError):
+            proto.dataReceived(b"""\
 version: 1
 dn: cn=foo,dc=example,dc=com
 changetype: modify
 add: foo
 
-""",
-        )
+""")
 
     def testModification_fail_differentKey(self):
         proto = LDIFDeltaDriver()
-        self.assertRaises(
-            ldifdelta.LDIFDeltaModificationDifferentAttributeTypeError,
-            proto.dataReceived,
-            b"""\
+        with pytest.raises(ldifdelta.LDIFDeltaModificationDifferentAttributeTypeError):
+            proto.dataReceived(b"""\
 version: 1
 dn: cn=foo,dc=example,dc=com
 changetype: modify
@@ -235,15 +216,12 @@ add: foo
 bar: quux
 -
 
-""",
-        )
+""")
 
     def testModification_fail_unknownModSpec(self):
         proto = LDIFDeltaDriver()
-        self.assertRaises(
-            ldifdelta.LDIFDeltaUnknownModificationError,
-            proto.dataReceived,
-            b"""\
+        with pytest.raises(ldifdelta.LDIFDeltaUnknownModificationError):
+            proto.dataReceived(b"""\
 version: 1
 dn: cn=foo,dc=example,dc=com
 changetype: modify
@@ -251,26 +229,24 @@ fiddle: foo
 foo: bar
 -
 
-""",
-        )
+""")
 
     def testNoChangeType(self):
         """
         Raises an error is the changetype is not present.
         """
         proto = LDIFDeltaDriver()
-        error = self.assertRaises(
-            ldifdelta.LDIFDeltaMissingChangeTypeError,
-            proto.dataReceived,
-            b"""version: 1
+        with pytest.raises(ldifdelta.LDIFDeltaMissingChangeTypeError) as excinfo:
+            proto.dataReceived(
+                b"""version: 1
 dn: cn=foo,dc=example,dc=com
 add: foo
 foo: bar
 -
 
-""",
-        )
-        self.assertEqual((b"cn=foo,dc=example,dc=com", b"add", b"foo"), error.args)
+"""
+            )
+        assert (b"cn=foo,dc=example,dc=com", b"add", b"foo") == excinfo.value.args
 
     def testNoChangetTypeEmpty(self):
         """
@@ -279,16 +255,15 @@ foo: bar
         """
         proto = LDIFDeltaDriver()
 
-        error = self.assertRaises(
-            ldifdelta.LDIFDeltaMissingChangeTypeError,
-            proto.dataReceived,
-            b"""version: 1
+        with pytest.raises(ldifdelta.LDIFDeltaMissingChangeTypeError) as excinfo:
+            proto.dataReceived(
+                b"""version: 1
 dn: cn=foo,dc=example,dc=com
 
-""",
-        )
+"""
+            )
 
-        self.assertEqual((b"cn=foo,dc=example,dc=com",), error.args)
+        assert (b"cn=foo,dc=example,dc=com",) == excinfo.value.args
 
     def testAdd(self):
         proto = LDIFDeltaDriver()
@@ -304,9 +279,7 @@ thud: baz
 """
         )
         proto.connectionLost()
-        self.assertEqual(
-            proto.listOfCompleted,
-            [
+        assert proto.listOfCompleted == ([
                 delta.AddOp(
                     entry.BaseLDAPEntry(
                         dn=b"cn=foo,dc=example,dc=com",
@@ -316,21 +289,17 @@ thud: baz
                         },
                     )
                 )
-            ],
-        )
+            ])
 
     def testAdd_fail_noAttrvals(self):
         proto = LDIFDeltaDriver()
-        self.assertRaises(
-            ldifdelta.LDIFDeltaAddMissingAttributesError,
-            proto.dataReceived,
-            b"""\
+        with pytest.raises(ldifdelta.LDIFDeltaAddMissingAttributesError):
+            proto.dataReceived(b"""\
 version: 1
 dn: cn=foo,dc=example,dc=com
 changetype: add
 
-""",
-        )
+""")
 
     def testDelete(self):
         """ "
@@ -346,9 +315,7 @@ changetype: delete
 """
         )
         proto.connectionLost()
-        self.assertEqual(
-            proto.listOfCompleted, [delta.DeleteOp(dn=b"cn=foo,dc=example,dc=com")]
-        )
+        assert proto.listOfCompleted == [delta.DeleteOp(dn=b"cn=foo,dc=example,dc=com")]
 
     def testDeleteMalformat(self):
         """ "
@@ -356,7 +323,7 @@ changetype: delete
         """
         proto = LDIFDeltaDriver()
 
-        with self.assertRaises(ldifdelta.LDIFDeltaDeleteHasJunkAfterChangeTypeError):
+        with pytest.raises(ldifdelta.LDIFDeltaDeleteHasJunkAfterChangeTypeError):
             proto.dataReceived(
                 b"""version: 1
 dn: cn=foo,dc=example,dc=com
@@ -372,7 +339,7 @@ foo: bar
         """
         proto = LDIFDeltaDriver()
 
-        with self.assertRaises(NotImplementedError):
+        with pytest.raises(NotImplementedError):
             proto.dataReceived(
                 b"""version: 1
 dn: cn=foo,dc=example,dc=com
@@ -387,7 +354,7 @@ changetype: modrdn
         """
         proto = LDIFDeltaDriver()
 
-        with self.assertRaises(NotImplementedError):
+        with pytest.raises(NotImplementedError):
             proto.dataReceived(
                 b"""version: 1
 dn: cn=foo,dc=example,dc=com
@@ -402,7 +369,7 @@ changetype: moddn
         """
         proto = LDIFDeltaDriver()
 
-        with self.assertRaises(ldifdelta.LDIFDeltaUnknownChangeTypeError):
+        with pytest.raises(ldifdelta.LDIFDeltaUnknownChangeTypeError):
             proto.dataReceived(
                 b"""version: 1
 dn: cn=foo,dc=example,dc=com

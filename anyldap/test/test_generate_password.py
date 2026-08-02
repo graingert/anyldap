@@ -6,8 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 from anyldap import generate_password
-from anyldap._async import await_result
-from anyldap.deferred import Deferred
 
 pytestmark = pytest.mark.anyio
 
@@ -43,14 +41,12 @@ async def test_generate_async_rejects_nonpositive_count():
         await generate_password.generate_async(0)
 
 
-async def test_generate_returns_deferred(monkeypatch):
+async def test_generate_delegates_to_generate_async(monkeypatch):
     async def fake_generate(n):
         return [str(n)]
 
     monkeypatch.setattr(generate_password, "generate_async", fake_generate)
-    deferred = generate_password.generate(n=3)
-    assert isinstance(deferred, Deferred)
-    assert await await_result(deferred) == ["3"]
+    assert await generate_password.generate(n=3) == ["3"]
 
 
 async def test_generate_password_module_entrypoint(tmp_path):

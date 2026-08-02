@@ -43,29 +43,36 @@ async def test_stub_client_close_uses_async_interface():
 def _legacy_server(client=None):
     server = proxy.Proxy(config.LDAPConfig(serviceLocationOverrides={}))
     server.client = client
-    server.waitingConnect = []
     return server
 
 
-async def test_legacy_waits_for_connection_and_forwards_result():
-    server = _legacy_server()
-    deferred = server._whenConnected(lambda value: value + 1, 4)
-
-    assert not deferred.called
+async def _connect_after_checkpoint(server):
+    """Let the waiter block first, then complete the connection."""
+    await anyio.lowlevel.checkpoint()
     server._cbConnectionMade(StubClient())
-    assert await deferred == 5
 
 
-async def test_legacy_waits_for_connection_and_forwards_failure():
+async def test_waits_for_connection_and_forwards_result():
+    server = _legacy_server()
+    results = []
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(_connect_after_checkpoint, server)
+        results.append(await server._whenConnected(lambda value: value + 1, 4))
+
+    assert results == [5]
+
+
+async def test_waits_for_connection_and_forwards_failure():
     server = _legacy_server()
 
     def broken():
         raise ValueError("broken")
 
-    deferred = server._whenConnected(broken)
-    server._cbConnectionMade(StubClient())
-    with pytest.raises(ValueError, match="broken"):
-        await deferred
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(_connect_after_checkpoint, server)
+        with pytest.raises(ValueError, match="broken"):
+            await server._whenConnected(broken)
 
 
 async def test_async_queue_uses_client_async_interface():
@@ -122,7 +129,6 @@ async def test_async_connection_made_uses_configured_override():
     client = StubClient()
     configured = config.LDAPConfig(serviceLocationOverrides={"": lambda factory: client})
     server = proxy.Proxy(configured)
-    server.waitingConnect = []
     await server.connectionMade_async()
     assert server.client is client
     assert server.connected == 1
@@ -134,7 +140,6 @@ async def test_async_connection_made_handles_override_failure():
 
     configured = config.LDAPConfig(serviceLocationOverrides={"": fail_to_connect})
     server = proxy.Proxy(configured)
-    server.waitingConnect = []
     await server.connectionMade_async()
     assert server.client is None
     assert server.connected == 1

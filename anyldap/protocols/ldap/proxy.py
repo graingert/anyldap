@@ -1,7 +1,8 @@
 """LDAP protocol proxy server"""
 
+import anyio
+
 from anyldap._async import await_result
-from anyldap.deferred import DeferredSource, maybeDeferred
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapserver
 
@@ -10,7 +11,6 @@ class Proxy(ldapserver.BaseLDAPServer):
     protocol = ldapclient.LDAPClient
 
     client = None
-    waitingConnect = []
     unbound = False
 
     def __init__(self, config):
@@ -22,21 +22,17 @@ class Proxy(ldapserver.BaseLDAPServer):
         """
         ldapserver.BaseLDAPServer.__init__(self)
         self.config = config
+        self._connected = anyio.Event()
 
-    def _whenConnected(self, fn, *a, **kw):
+    async def _whenConnected(self, fn, *a, **kw):
+        """Run `fn`, waiting first if the proxied connection is not up yet."""
         if self.client is None:
-            d = DeferredSource()
-            self.waitingConnect.append((d, fn, a, kw))
-            return d.deferred
-        else:
-            return maybeDeferred(fn, *a, **kw)
+            await self._connected.wait()
+        return await await_result(fn(*a, **kw))
 
     def _cbConnectionMade(self, proto):
         self.client = proto
-        while self.waitingConnect:
-            d, fn, a, kw = self.waitingConnect.pop(0)
-            d2 = maybeDeferred(fn, *a, **kw)
-            d2.addCallbacks(d.callback, d.errback)
+        self._connected.set()
 
     async def _clientQueue_async(self, request, controls, reply):
         if request.needs_answer:
@@ -73,7 +69,7 @@ class Proxy(ldapserver.BaseLDAPServer):
         return self._handleUnknown_async(request, controls, reply)
 
     async def _handleUnknown_async(self, request, controls, reply):
-        await await_result(self._whenConnected(self._clientQueue_async, request, controls, reply))
+        await self._whenConnected(self._clientQueue_async, request, controls, reply)
 
     def handle_LDAPUnbindRequest(self, request, controls, reply):
         self.unbound = True

@@ -2,9 +2,10 @@
 Test cases for anyldap.schema module.
 """
 
+import pytest
+
 from anyldap import schema
 from anyldap._encoder import to_bytes
-from anyldap.test import unittest
 
 
 def test_schema_description_representations():
@@ -73,7 +74,7 @@ OBJECTCLASSES = {
 }
 
 
-class AttributeType_KnownValues(unittest.TestCase):
+class TestAttributeType_KnownValues:
     knownValues = [
         (
             b"""( 2.5.4.4 NAME ( 'sn' 'surname' )
@@ -282,15 +283,15 @@ class AttributeType_KnownValues(unittest.TestCase):
         }
         for text, expected in self.knownValues:
             a = schema.AttributeTypeDescription(text)
-            self.assertNotEqual(a.oid, None)
+            assert a.oid is not None
             for key, want in expected.items():
                 defaults.pop(key, None)
                 got = getattr(a, key)
-                self.assertEqual(got, want)
+                assert got == want
 
             for key, want in defaults.items():
                 got = getattr(a, key)
-                self.assertEqual(got, want)
+                assert got == want
 
     def testStringification(self):
         for want, values in self.knownValues:
@@ -300,10 +301,10 @@ class AttributeType_KnownValues(unittest.TestCase):
 
             want = b" ".join(want.split(None))
             got = b" ".join(to_bytes(a).split(None))
-            self.assertEqual(got, want)
+            assert got == want
 
 
-class ObjectClass_KnownValues(unittest.TestCase):
+class TestObjectClass_KnownValues:
     knownValues = [
         (
             OBJECTCLASSES["top"],
@@ -465,15 +466,15 @@ class ObjectClass_KnownValues(unittest.TestCase):
         }
         for text, expected in self.knownValues:
             a = schema.ObjectClassDescription(text)
-            self.assertNotEqual(a.oid, None)
+            assert a.oid is not None
             for key, want in expected.items():
                 defaults.pop(key, None)
                 got = getattr(a, key)
-                self.assertEqual(got, want)
+                assert got == want
 
             for key, want in defaults.items():
                 got = getattr(a, key)
-                self.assertEqual(got, want)
+                assert got == want
 
     def testStringification(self):
         for want, values in self.knownValues:
@@ -483,10 +484,10 @@ class ObjectClass_KnownValues(unittest.TestCase):
 
             want = b" ".join(want.split(None))
             got = b" ".join(to_bytes(a).split(None))
-            self.assertEqual(got, want)
+            assert got == want
 
 
-class SyntaxDescription_KnownValues(unittest.TestCase):
+class TestSyntaxDescription_KnownValues:
     knownValues = [
         (
             b"( 1.3.6.1.4.1.1466.115.121.1.3 DESC 'Attribute Type Description' )",
@@ -530,10 +531,10 @@ class SyntaxDescription_KnownValues(unittest.TestCase):
     def testParse(self):
         for text, expected in self.knownValues:
             a = schema.SyntaxDescription(text)
-            self.assertNotEqual(a.oid, None)
+            assert a.oid is not None
             for key, want in expected.items():
                 got = getattr(a, key)
-                self.assertEqual(got, want)
+                assert got == want
 
     def testStringification(self):
         for want, values in self.knownValues:
@@ -543,10 +544,10 @@ class SyntaxDescription_KnownValues(unittest.TestCase):
 
             want = b" ".join(want.split())
             got = b" ".join(to_bytes(a).split())
-            self.assertEqual(got, want)
+            assert got == want
 
 
-class MatchingRuleDescription_KnownValues(unittest.TestCase):
+class TestMatchingRuleDescription_KnownValues:
     knownValues = [
         (
             b"( 2.5.13.16 NAME 'bitStringMatch' SYNTAX 1.3.6.1.4.1.1466.115.121.1.6 )",
@@ -604,10 +605,10 @@ class MatchingRuleDescription_KnownValues(unittest.TestCase):
     def testParse(self):
         for text, expected in self.knownValues:
             a = schema.MatchingRuleDescription(text)
-            self.assertNotEqual(a.oid, None)
+            assert a.oid is not None
             for key, want in expected.items():
                 got = getattr(a, key)
-                self.assertEqual(got, want)
+                assert got == want
 
     def testStringification(self):
         for want, values in self.knownValues:
@@ -617,10 +618,10 @@ class MatchingRuleDescription_KnownValues(unittest.TestCase):
 
             want = b" ".join(want.split())
             got = b" ".join(to_bytes(a).split())
-            self.assertEqual(got, want)
+            assert got == want
 
 
-class TestComparison(unittest.TestCase):
+class TestComparison:
     ORDER = [
         "no_name",
         "country",
@@ -628,7 +629,7 @@ class TestComparison(unittest.TestCase):
         "organizationalUnit",
     ]
 
-    def setUp(self):
+    def setup_method(self):
         data = {}
         for oc, text in OBJECTCLASSES.items():
             data[oc] = schema.ObjectClassDescription(text)
@@ -638,43 +639,44 @@ class TestComparison(unittest.TestCase):
         for k1 in self.data:
             for k2 in self.data:
                 if k1 == k2:
-                    self.assertTrue(self.data[k1] == self.data[k2])
+                    assert self.data[k1] == self.data[k2]
                 else:
-                    self.assertFalse(self.data[k1] == self.data[k2])
+                    assert not (self.data[k1] == self.data[k2])
 
     def test_invalid_eq(self):
         """Object class object can be compared only to the same class object"""
         obj = schema.ObjectClassDescription(OBJECTCLASSES["top"])
         for method in (obj.__eq__, obj.__lt__, obj.__gt__):
-            self.assertRaises(NotImplementedError, method, b"")
+            with pytest.raises(NotImplementedError):
+                method(b"")
 
     def test_ne(self):
         for k1 in self.data:
             for k2 in self.data:
                 if k1 == k2:
-                    self.assertFalse(self.data[k1] != self.data[k2])
+                    assert not (self.data[k1] != self.data[k2])
                 else:
-                    self.assertTrue(self.data[k1] != self.data[k2])
+                    assert self.data[k1] != self.data[k2]
 
     def test_order(self):
         for i, base in enumerate(self.ORDER):
-            self.assertTrue(self.data[base] <= self.data[base])
-            self.assertTrue(self.data[base] >= self.data[base])
-            self.assertFalse(self.data[base] < self.data[base])
-            self.assertFalse(self.data[base] > self.data[base])
+            assert self.data[base] <= self.data[base]
+            assert self.data[base] >= self.data[base]
+            assert not (self.data[base] < self.data[base])
+            assert not (self.data[base] > self.data[base])
             for lower in self.ORDER[:i]:
-                self.assertTrue(self.data[lower] < self.data[base])
-                self.assertTrue(self.data[lower] <= self.data[base])
-                self.assertFalse(self.data[base] < self.data[lower])
-                self.assertFalse(self.data[base] <= self.data[lower])
+                assert self.data[lower] < self.data[base]
+                assert self.data[lower] <= self.data[base]
+                assert not (self.data[base] < self.data[lower])
+                assert not (self.data[base] <= self.data[lower])
             for higher in self.ORDER[i + 1 :]:
-                self.assertTrue(self.data[higher] > self.data[base])
-                self.assertTrue(self.data[higher] >= self.data[base])
-                self.assertFalse(self.data[base] > self.data[higher])
-                self.assertFalse(self.data[base] >= self.data[higher])
+                assert self.data[higher] > self.data[base]
+                assert self.data[higher] >= self.data[base]
+                assert not (self.data[base] > self.data[higher])
+                assert not (self.data[base] >= self.data[higher])
 
 
-class TestDefaultObjectClass(unittest.TestCase):
+class TestDefaultObjectClass:
     """Structural object class type is the default one"""
 
     a = b"""( 1.3.6.1.4.1.003.1.1 NAME 'no_type'
@@ -686,51 +688,59 @@ class TestDefaultObjectClass(unittest.TestCase):
     def test_default(self):
         a = schema.ObjectClassDescription(self.a)
         b = schema.ObjectClassDescription(self.b)
-        self.assertEqual(a, b)
+        assert a == b
 
 
-class TestInvalidObjectClass(unittest.TestCase):
+class TestInvalidObjectClass:
     """Invalid object class definitions"""
 
     def test_invalid_name(self):
         text = b"( 1.1.1 NAME invalid )"
-        self.assertRaises(AssertionError, schema.ObjectClassDescription, text)
+        with pytest.raises(AssertionError):
+            schema.ObjectClassDescription(text)
 
     def test_invalid_multiple_name(self):
         text = b"( 1.1.1 NAME () )"
-        self.assertRaises(AssertionError, schema.ObjectClassDescription, text)
+        with pytest.raises(AssertionError):
+            schema.ObjectClassDescription(text)
 
     def test_empty(self):
         text = b"()"
-        self.assertRaises(AssertionError, schema.ObjectClassDescription, text)
+        with pytest.raises(AssertionError):
+            schema.ObjectClassDescription(text)
 
 
-class TestInvalidAttributeType(unittest.TestCase):
+class TestInvalidAttributeType:
     """Invalid attribute type definitions"""
 
     def test_invalid_name(self):
         text = b"( 1.1.1 NAME invalid )"
-        self.assertRaises(AssertionError, schema.AttributeTypeDescription, text)
+        with pytest.raises(AssertionError):
+            schema.AttributeTypeDescription(text)
 
     def test_invalid_x_attribute(self):
         text = b"( 1.1.1 X-INVALID invalid )"
-        self.assertRaises(AssertionError, schema.AttributeTypeDescription, text)
+        with pytest.raises(AssertionError):
+            schema.AttributeTypeDescription(text)
 
     def test_unknown_attribute(self):
         text = b"( 1.1.1 UNKNOWN 'unknown' )"
-        self.assertRaises(AssertionError, schema.AttributeTypeDescription, text)
+        with pytest.raises(AssertionError):
+            schema.AttributeTypeDescription(text)
 
 
-class TestInvalidMatchingRuleDescription(unittest.TestCase):
+class TestInvalidMatchingRuleDescription:
     """Invalid matching rule description definition"""
 
     def test_invalid_name(self):
         text = b"( 1.1.1 NAME invalid )"
-        self.assertRaises(AssertionError, schema.MatchingRuleDescription, text)
+        with pytest.raises(AssertionError):
+            schema.MatchingRuleDescription(text)
 
     def test_no_syntax(self):
         text = b"( 1.1.1 NAME 'no_syntax' )"
-        self.assertRaises(AssertionError, schema.MatchingRuleDescription, text)
+        with pytest.raises(AssertionError):
+            schema.MatchingRuleDescription(text)
 
 
 """

@@ -2,8 +2,9 @@
 Test cases for anyldap.protocols.ldap.distinguishedname module.
 """
 
+import pytest
+
 from anyldap.protocols.ldap import distinguishedname as dn
-from anyldap.test import unittest
 
 
 def test_attribute_value_and_rdn_comparison_edges():
@@ -42,7 +43,7 @@ def test_distinguished_name_comparison_and_domain_edges():
     assert value.contains("cn=user,dc=example,dc=com")
 
 
-class TestCaseWithKnownValues(unittest.TestCase):
+class KnownValuesBase:
     knownValues = ()
 
     def testKnownValues(self):
@@ -59,7 +60,7 @@ class TestCaseWithKnownValues(unittest.TestCase):
                 listOfRDNs.append(r)
             fromList = dn.DistinguishedName(listOfRDNs)
 
-            self.assertEqual(fromString, fromList)
+            assert fromString == fromList
 
             fromStringToText = fromString.getText()
             fromListToText = fromList.getText()
@@ -70,20 +71,20 @@ class TestCaseWithKnownValues(unittest.TestCase):
             # DNs equal their byte string representation. Note this does
             # not mean they equal all the possible string
             # representations -- just the canonical one.
-            self.assertEqual(fromString, canon)
-            self.assertEqual(fromList, canon)
-            self.assertEqual(canon, fromString)
-            self.assertEqual(canon, fromList)
+            assert fromString == canon
+            assert fromList == canon
+            assert canon == fromString
+            assert canon == fromList
 
             # DNs can be used interchangeably with their canonical
             # string representation as hash keys.
-            self.assertEqual(hash(fromString), hash(canon))
-            self.assertEqual(hash(fromList), hash(canon))
-            self.assertEqual(hash(canon), hash(fromString))
-            self.assertEqual(hash(canon), hash(fromList))
+            assert hash(fromString) == hash(canon)
+            assert hash(fromList) == hash(canon)
+            assert hash(canon) == hash(fromString)
+            assert hash(canon) == hash(fromList)
 
 
-class LDAPDistinguishedName_Escaping(TestCaseWithKnownValues):
+class TestLDAPDistinguishedName_Escaping(KnownValuesBase):
     knownValues = (
         ("", []),
         ("cn=foo", [[("cn", "foo")]]),
@@ -156,15 +157,12 @@ class LDAPDistinguishedName_Escaping(TestCaseWithKnownValues):
             ]
         )
         got = got.getText()
-        self.assertEqual(
-            got,
-            r"cn=test+owner=uid\=foo\,ou\=depar"
+        assert got == (r"cn=test+owner=uid\=foo\,ou\=depar"
             + r"tment\,dc\=example\,dc\=com,dc=ex"
-            + "ample,dc=com",
-        )
+            + "ample,dc=com")
 
 
-class LDAPDistinguishedName_RFC2253_ExamplesBytes(TestCaseWithKnownValues):
+class TestLDAPDistinguishedName_RFC2253_ExamplesBytes(KnownValuesBase):
     """
     It can be initialized from text/Unicode input as long as they contain
     ASCII only characters.
@@ -198,7 +196,7 @@ class LDAPDistinguishedName_RFC2253_ExamplesBytes(TestCaseWithKnownValues):
     )
 
 
-class LDAPDistinguishedName_UTF8_Init(TestCaseWithKnownValues):
+class TestLDAPDistinguishedName_UTF8_Init(KnownValuesBase):
     """
     It can be initialized from an UTF-8 encoded data and it will
     keep the representation as UTF-8.
@@ -209,7 +207,7 @@ class LDAPDistinguishedName_UTF8_Init(TestCaseWithKnownValues):
     )
 
 
-class LDAPDistinguishedName_InitialSpaces(TestCaseWithKnownValues):
+class TestLDAPDistinguishedName_InitialSpaces(KnownValuesBase):
     """
     The spaces which are not escapes are stripped.
     """
@@ -227,7 +225,7 @@ class LDAPDistinguishedName_InitialSpaces(TestCaseWithKnownValues):
     )
 
 
-class LDAPDistinguishedName_DomainName(unittest.TestCase):
+class TestLDAPDistinguishedName_DomainName:
     def testNonDc(self):
         d = dn.DistinguishedName("cn=foo,o=bar,c=us")
         assert d.getDomainName() is None
@@ -253,7 +251,7 @@ class LDAPDistinguishedName_DomainName(unittest.TestCase):
         assert d.getDomainName() == "sub.example.com"
 
 
-class LDAPDistinguishedName_contains(unittest.TestCase):
+class TestLDAPDistinguishedName_contains:
     shsec = dn.DistinguishedName("dc=sub2,cn=host,dc=sub,dc=example,dc=com")
     hsec = dn.DistinguishedName("cn=host,dc=sub,dc=example,dc=com")
     sec = dn.DistinguishedName("dc=sub,dc=example,dc=com")
@@ -356,68 +354,62 @@ class LDAPDistinguishedName_contains(unittest.TestCase):
         assert not self.other.contains(self.c)
 
 
-class LDAPDistinguishedName_Malformed(unittest.TestCase):
+class TestLDAPDistinguishedName_Malformed:
     def testMalformed(self):
-        self.assertRaises(
-            dn.InvalidRelativeDistinguishedName, dn.DistinguishedName, "foo"
-        )
-        self.assertRaises(
-            dn.InvalidRelativeDistinguishedName, dn.DistinguishedName, "foo,dc=com"
-        )
-        self.assertRaises(
-            dn.InvalidRelativeDistinguishedName,
-            dn.DistinguishedName,
-            "ou=something,foo",
-        )
-        self.assertRaises(
-            dn.InvalidRelativeDistinguishedName, dn.DistinguishedName, "foo,foo"
-        )
+        with pytest.raises(dn.InvalidRelativeDistinguishedName):
+            dn.DistinguishedName("foo")
+        with pytest.raises(dn.InvalidRelativeDistinguishedName):
+            dn.DistinguishedName("foo,dc=com")
+        with pytest.raises(dn.InvalidRelativeDistinguishedName):
+            dn.DistinguishedName("ou=something,foo")
+        with pytest.raises(dn.InvalidRelativeDistinguishedName):
+            dn.DistinguishedName("foo,foo")
 
 
-class LDAPDistinguishedName_Prettify(unittest.TestCase):
+class TestLDAPDistinguishedName_Prettify:
     def testPrettifySpaces(self):
         """DistinguishedName(...).getText() prettifies the DN by removing extra whitespace."""
         d = dn.DistinguishedName("cn=foo, o=bar,  c=us")
         assert d.getText() == "cn=foo,o=bar,c=us"
 
 
-class DistinguishedName_Init(unittest.TestCase):
+class TestDistinguishedName_Init:
     def testGetText(self):
         d = dn.DistinguishedName("dc=example,dc=com")
-        self.assertEqual(d.getText(), "dc=example,dc=com")
+        assert d.getText() == "dc=example,dc=com"
 
     def testDN(self):
         proto = dn.DistinguishedName("dc=example,dc=com")
         d = dn.DistinguishedName(proto)
-        self.assertEqual(d.getText(), "dc=example,dc=com")
+        assert d.getText() == "dc=example,dc=com"
 
     def testEqualToByteString(self):
         """
         DistinguishedName is equal to its bytes representation
         """
         d = dn.DistinguishedName("dc=example,dc=com")
-        self.assertEqual(d, b"dc=example,dc=com")
+        assert d == b"dc=example,dc=com"
 
     def testEqualToString(self):
         """
         DistinguishedName is equal to its unicode representation
         """
         d = dn.DistinguishedName("dc=example,dc=com")
-        self.assertEqual(d, "dc=example,dc=com")
+        assert d == "dc=example,dc=com"
 
 
-class RelativeDistinguishedName_Init(unittest.TestCase):
+class TestRelativeDistinguishedName_Init:
     def testGetText(self):
         rdn = dn.RelativeDistinguishedName("dc=example")
-        self.assertEqual(rdn.getText(), "dc=example")
+        assert rdn.getText() == "dc=example"
 
     def testRDN(self):
         proto = dn.RelativeDistinguishedName("dc=example")
         rdn = dn.RelativeDistinguishedName(proto)
-        self.assertEqual(rdn.getText(), "dc=example")
+        assert rdn.getText() == "dc=example"
 
 
-class DistinguishedName_Comparison(unittest.TestCase):
+class TestDistinguishedName_Comparison:
     """
     Tests for comparing DistinguishedName.
     """
@@ -429,5 +421,5 @@ class DistinguishedName_Comparison(unittest.TestCase):
         dn1 = dn.DistinguishedName("dc=example,dc=com")
         dn2 = dn.DistinguishedName("dc=and,dc=example,dc=com")
 
-        self.assertLess(dn2, dn1)
-        self.assertGreater(dn1, dn2)
+        assert dn2 < dn1
+        assert dn1 > dn2

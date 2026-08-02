@@ -1,6 +1,5 @@
 import anyio
 
-from anyldap.deferred import DeferredSource
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
 
@@ -53,34 +52,30 @@ class AsyncLDAPClientDriver:
         assert self.responses, "Ran out of responses"
         return self.responses.pop(0)
 
-    def send(self, op):
+    async def send(self, op):
         self.sent.append(op)
         responses = self._response()
         assert len(responses) == 1, f"got {len(responses)} responses for .send()"
-        deferred = DeferredSource()
         response = responses[0]
         if isinstance(response, BaseException):
-            deferred.errback(response)
-        else:
-            deferred.callback(response)
-        return deferred.deferred
+            raise response
+        return response
 
-    async def send_multiResponse_async(self, op, handler, *args, **kwargs):
+    send_async = send
+
+    async def send_multiResponse(self, op, handler, *args, **kwargs):
         self.sent.append(op)
         for response in self._response():
             handler(response, *args, **kwargs)
 
-    def send_multiResponse_ex(self, op, controls, handler, *args, **kwargs):
+    send_multiResponse_async = send_multiResponse
+
+    async def send_multiResponse_ex(self, op, controls, handler, *args, **kwargs):
         self.sent.append(op)
-        deferred = DeferredSource()
-        try:
-            for response in self._response():
-                handler(response, None, *args, **kwargs)
-        except Exception as exc:
-            deferred.errback(exc)
-        else:
-            deferred.callback(None)
-        return deferred.deferred
+        for response in self._response():
+            handler(response, None, *args, **kwargs)
+
+    send_multiResponse_ex_async = send_multiResponse_ex
 
     async def send_noResponse_async(self, op):
         self.sent.append(op)

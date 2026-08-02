@@ -2,8 +2,9 @@
 Test cases for anyldap.protocols.ldap.ldif module.
 """
 
+import pytest
+
 from anyldap.protocols.ldap import distinguishedname, ldifprotocol
-from anyldap.test import unittest
 
 
 def test_base_parser_accepts_entry_hook():
@@ -20,7 +21,7 @@ class FixStringRepresentation:
         return "Here I am!"
 
 
-class TestLDIFParseError(unittest.TestCase):
+class TestLDIFParseError:
     """
     Unit tests for LDIFParseError which is hte base for all the other
     LDIF errors.
@@ -35,7 +36,7 @@ class TestLDIFParseError(unittest.TestCase):
 
         result = str(sut)
 
-        self.assertEqual("Error parsing LDIF.", result)
+        assert "Error parsing LDIF." == result
 
     def testInitWithArgs(self):
         """
@@ -46,7 +47,7 @@ class TestLDIFParseError(unittest.TestCase):
 
         result = str(sut)
 
-        self.assertEqual("Error parsing LDIF: 1: test: True: Here I am!.", result)
+        assert "Error parsing LDIF: 1: test: True: Here I am!." == result
 
 
 class LDIFDriver(ldifprotocol.LDIF):
@@ -58,7 +59,7 @@ class LDIFDriver(ldifprotocol.LDIF):
         self.listOfCompleted.append(obj)
 
 
-class TestLDIFParsing(unittest.TestCase):
+class TestLDIFParsing:
     def testFromLDIF(self):
         proto = LDIFDriver()
         for line in (
@@ -78,21 +79,21 @@ class TestLDIFParsing(unittest.TestCase):
         ):
             proto.lineReceived(line.encode("ascii"))
 
-        self.assertEqual(len(proto.listOfCompleted), 2)
+        assert len(proto.listOfCompleted) == 2
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=foo,dc=example,dc=com")
-        self.assertEqual(o[b"objectClass"], [b"a", b"b"])
-        self.assertEqual(o[b"aValue"], [b"a", b"b"])
-        self.assertEqual(o[b"bValue"], [b"c"])
+        assert o.dn.getText() == "cn=foo,dc=example,dc=com"
+        assert o[b"objectClass"] == [b"a", b"b"]
+        assert o[b"aValue"] == [b"a", b"b"]
+        assert o[b"bValue"] == [b"c"]
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=bar,dc=example,dc=com")
-        self.assertEqual(o[b"objectClass"], [b"c"])
-        self.assertEqual(o[b"aValue"], [b" FOO!", b"b"])
-        self.assertEqual(o[b"bValue"], [b"C"])
+        assert o.dn.getText() == "cn=bar,dc=example,dc=com"
+        assert o[b"objectClass"] == [b"c"]
+        assert o[b"aValue"] == [b" FOO!", b"b"]
+        assert o[b"bValue"] == [b"C"]
 
-        self.assertEqual(proto.listOfCompleted, [])
+        assert proto.listOfCompleted == []
 
     def testSplitLines(self):
         """
@@ -110,12 +111,12 @@ class TestLDIFParsing(unittest.TestCase):
         ):
             proto.lineReceived(line.encode("ascii"))
 
-        self.assertEqual(len(proto.listOfCompleted), 1)
+        assert len(proto.listOfCompleted) == 1
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=foo,dc=example,dc=com")
-        self.assertEqual(o[b"objectClass"], [b"a", b"b"])
-        self.assertEqual(proto.listOfCompleted, [])
+        assert o.dn.getText() == "cn=foo,dc=example,dc=com"
+        assert o[b"objectClass"] == [b"a", b"b"]
+        assert proto.listOfCompleted == []
 
     def testCaseInsensitiveDN(self):
         """
@@ -133,17 +134,17 @@ cn: bar
 """
         )
 
-        self.assertEqual(len(proto.listOfCompleted), 2)
+        assert len(proto.listOfCompleted) == 2
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=foo,dc=example,dc=com")
-        self.assertEqual(o[b"CN"], [b"foo"])
+        assert o.dn.getText() == "cn=foo,dc=example,dc=com"
+        assert o[b"CN"] == [b"foo"]
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=bar,dc=example,dc=com")
-        self.assertEqual(o[b"CN"], [b"bar"])
+        assert o.dn.getText() == "cn=bar,dc=example,dc=com"
+        assert o[b"CN"] == [b"bar"]
 
-        self.assertEqual(proto.listOfCompleted, [])
+        assert proto.listOfCompleted == []
 
     def testCaseInsensitiveAttributeTypes(self):
         """
@@ -163,15 +164,15 @@ aValUe: B
 """
         )
 
-        self.assertEqual(len(proto.listOfCompleted), 1)
+        assert len(proto.listOfCompleted) == 1
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=foo,dc=example,dc=com")
-        self.assertEqual(o[b"objectClass"], [b"a", b"b"])
-        self.assertEqual(o[b"CN"], [b"foo"])
-        self.assertEqual(o[b"aValue"], [b"a", b"B"])
+        assert o.dn.getText() == "cn=foo,dc=example,dc=com"
+        assert o[b"objectClass"] == [b"a", b"b"]
+        assert o[b"CN"] == [b"foo"]
+        assert o[b"aValue"] == [b"a", b"B"]
 
-        self.assertEqual(proto.listOfCompleted, [])
+        assert proto.listOfCompleted == []
 
     def testVersion1(self):
         proto = LDIFDriver()
@@ -188,20 +189,18 @@ bValue: c
 """
         )
 
-        self.assertEqual(len(proto.listOfCompleted), 1)
+        assert len(proto.listOfCompleted) == 1
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=foo,dc=example,dc=com")
-        self.assertEqual(o[b"objectClass"], [b"a", b"b"])
-        self.assertEqual(o[b"aValue"], [b"a", b"b"])
-        self.assertEqual(o[b"bValue"], [b"c"])
+        assert o.dn.getText() == "cn=foo,dc=example,dc=com"
+        assert o[b"objectClass"] == [b"a", b"b"]
+        assert o[b"aValue"] == [b"a", b"b"]
+        assert o[b"bValue"] == [b"c"]
 
     def testVersionInvalid(self):
         proto = LDIFDriver()
-        self.assertRaises(
-            ldifprotocol.LDIFVersionNotANumberError,
-            proto.dataReceived,
-            b"""\
+        with pytest.raises(ldifprotocol.LDIFVersionNotANumberError):
+            proto.dataReceived(b"""\
 version: junk
 dn: cn=foo,dc=example,dc=com
 objectClass: a
@@ -210,15 +209,12 @@ aValue: a
 aValue: b
 bValue: c
 
-""",
-        )
+""")
 
     def testVersion2(self):
         proto = LDIFDriver()
-        self.assertRaises(
-            ldifprotocol.LDIFUnsupportedVersionError,
-            proto.dataReceived,
-            b"""\
+        with pytest.raises(ldifprotocol.LDIFUnsupportedVersionError):
+            proto.dataReceived(b"""\
 version: 2
 dn: cn=foo,dc=example,dc=com
 objectClass: a
@@ -227,8 +223,7 @@ aValue: a
 aValue: b
 bValue: c
 
-""",
-        )
+""")
 
     def testNoSpaces(self):
         proto = LDIFDriver()
@@ -244,15 +239,15 @@ aValUe:b
 """
         )
 
-        self.assertEqual(len(proto.listOfCompleted), 1)
+        assert len(proto.listOfCompleted) == 1
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=foo,dc=example,dc=com")
-        self.assertEqual(o[b"objectClass"], [b"a", b"b"])
-        self.assertEqual(o[b"CN"], [b"foo"])
-        self.assertEqual(o[b"aValue"], [b"a", b"b"])
+        assert o.dn.getText() == "cn=foo,dc=example,dc=com"
+        assert o[b"objectClass"] == [b"a", b"b"]
+        assert o[b"CN"] == [b"foo"]
+        assert o[b"aValue"] == [b"a", b"b"]
 
-        self.assertEqual(proto.listOfCompleted, [])
+        assert proto.listOfCompleted == []
 
     def testTruncatedFailure(self):
         proto = LDIFDriver()
@@ -268,9 +263,10 @@ bValue: c
 """
         )
 
-        self.assertEqual(len(proto.listOfCompleted), 0)
+        assert len(proto.listOfCompleted) == 0
 
-        self.assertRaises(ldifprotocol.LDIFTruncatedError, proto.connectionLost)
+        with pytest.raises(ldifprotocol.LDIFTruncatedError):
+            proto.connectionLost()
 
     def testComments(self):
         """
@@ -292,17 +288,17 @@ cn: bar
 """
         )
 
-        self.assertEqual(len(proto.listOfCompleted), 2)
+        assert len(proto.listOfCompleted) == 2
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=foo,dc=example,dc=com")
-        self.assertEqual(o[b"CN"], [b"foo"])
+        assert o.dn.getText() == "cn=foo,dc=example,dc=com"
+        assert o[b"CN"] == [b"foo"]
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=bar,dc=example,dc=com")
-        self.assertEqual(o[b"CN"], [b"bar"])
+        assert o.dn.getText() == "cn=bar,dc=example,dc=com"
+        assert o[b"CN"] == [b"bar"]
 
-        self.assertEqual(proto.listOfCompleted, [])
+        assert proto.listOfCompleted == []
 
     def testMoreEmptyLinesBetweenEntries(self):
         """
@@ -322,17 +318,17 @@ cn: bar
 """
         )
 
-        self.assertEqual(len(proto.listOfCompleted), 2)
+        assert len(proto.listOfCompleted) == 2
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=foo,dc=example,dc=com")
-        self.assertEqual(o[b"CN"], [b"foo"])
+        assert o.dn.getText() == "cn=foo,dc=example,dc=com"
+        assert o[b"CN"] == [b"foo"]
 
         o = proto.listOfCompleted.pop(0)
-        self.assertEqual(o.dn.getText(), "cn=bar,dc=example,dc=com")
-        self.assertEqual(o[b"CN"], [b"bar"])
+        assert o.dn.getText() == "cn=bar,dc=example,dc=com"
+        assert o[b"CN"] == [b"bar"]
 
-        self.assertEqual(proto.listOfCompleted, [])
+        assert proto.listOfCompleted == []
 
     def testStartWithSpace(self):
         """
@@ -340,7 +336,7 @@ cn: bar
         continuation of a previous line.
         """
         proto = LDIFDriver()
-        with self.assertRaises(ldifprotocol.LDIFEntryStartsWithSpaceError):
+        with pytest.raises(ldifprotocol.LDIFEntryStartsWithSpaceError):
             proto.dataReceived(
                 b"""version: 1
 dn: cn=foo, dc=example, dc=com
@@ -357,7 +353,7 @@ cn: bar
         It fails to parse the entry does not start with DN.
         """
         proto = LDIFDriver()
-        with self.assertRaises(ldifprotocol.LDIFEntryStartsWithNonDNError):
+        with pytest.raises(ldifprotocol.LDIFEntryStartsWithNonDNError):
             proto.dataReceived(
                 b"""version: 1
 cn: cn=foo, dc=example, dc=com
@@ -371,7 +367,7 @@ other: foo
         Getting attribute values from URL is not supported.
         """
         proto = LDIFDriver()
-        with self.assertRaises(NotImplementedError):
+        with pytest.raises(NotImplementedError):
             proto.dataReceived(
                 b"""version: 1
 dn: cn=foo, dc=example, dc=com
@@ -381,7 +377,7 @@ cn:< file:///path/to/data
             )
 
 
-class RFC2849_Examples(unittest.TestCase):
+class TestRFC2849_Examples:
     examples = [
         (
             b"""Example 1: An simple LDAP file with two entries""",
@@ -506,20 +502,20 @@ description:: V2hhdCBhIGNhcmVmdWwgcmVhZGVyIHlvdSBhcmUhICBUaGlzIHZhbHVlIGlzIGJhc2
             proto = LDIFDriver()
             proto.dataReceived(data)
 
-            self.assertEqual(len(proto.listOfCompleted), len(expected))
+            assert len(proto.listOfCompleted) == len(expected)
 
             for dn, attr in expected:
                 o = proto.listOfCompleted.pop(0)
-                self.assertEqual(o.dn, distinguishedname.DistinguishedName(dn))
+                assert o.dn == distinguishedname.DistinguishedName(dn)
 
                 got = {x.lower() for x in o.keys()}
                 want = {x.lower() for x in attr.keys()}
-                self.assertEqual(got, want)
+                assert got == want
 
                 for k, v in attr.items():
-                    self.assertEqual(o[k], v)
+                    assert o[k] == v
 
-            self.assertEqual(proto.listOfCompleted, [])
+            assert proto.listOfCompleted == []
 
 
 """

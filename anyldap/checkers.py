@@ -1,5 +1,4 @@
 from anyldap import config, ldapfilter
-from anyldap.deferred import ensureDeferred
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldaperrors, ldapsyntax
 
 
@@ -74,5 +73,4 @@ class LDAPBindingChecker:
             raise UnauthorizedLogin() from exc
         return entry
 
-    def requestAvatarId(self, credentials):
-        return ensureDeferred(self.requestAvatarId_async(credentials))
+    requestAvatarId = requestAvatarId_async

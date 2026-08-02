@@ -3,11 +3,12 @@ Test cases for anyldap.attributeset
 """
 from functools import total_ordering
 
+import pytest
+
 from anyldap import attributeset
-from anyldap.test import unittest
 
 
-class TestLDAPAttributeSet(unittest.TestCase):
+class TestLDAPAttributeSet:
     """
     Unit tests for LDAPAttributeSet.
     """
@@ -18,7 +19,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
         """
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
-        self.assertEqual(a, b)
+        assert a == b
 
     def testEquality_True_Set_Ordering(self):
         """
@@ -27,7 +28,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
         """
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "d", "c"])
-        self.assertEqual(a, b)
+        assert a == b
 
     def testEquality_True_List(self):
         """
@@ -36,7 +37,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
         """
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = ["b", "c", "d"]
-        self.assertEqual(a, b)
+        assert a == b
 
     def testEquality_True_List_Ordering(self):
         """
@@ -44,7 +45,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
         """
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = ["b", "d", "c"]
-        self.assertEqual(a, b)
+        assert a == b
 
     def testEquality_False_Value(self):
         """
@@ -53,7 +54,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
         """
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "e"])
-        self.assertNotEqual(a, b)
+        assert a != b
 
     def testEquality_False_Key(self):
         """
@@ -61,7 +62,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
         """
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("l", ["b", "c", "d"])
-        self.assertNotEqual(a, b)
+        assert a != b
 
     def testDifference(self):
         """
@@ -73,7 +74,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
 
         result = a - b
 
-        self.assertEqual({"d"}, result)
+        assert {"d"} == result
 
     def testAddNewValue(self):
         """
@@ -82,7 +83,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         a.add("e")
 
-        self.assertEqual(a, {"b", "c", "d", "e"})
+        assert a == {"b", "c", "d", "e"}
 
     def testAddExistingValue(self):
         """
@@ -91,10 +92,10 @@ class TestLDAPAttributeSet(unittest.TestCase):
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
 
         a.add(b"b")
-        self.assertEqual(a, {"b", "c", "d"})
+        assert a == {"b", "c", "d"}
 
         a.add("b")
-        self.assertEqual(a, {"b", "c", "d"})
+        assert a == {"b", "c", "d"}
 
     def testRemoveExistingValue(self):
         """
@@ -104,7 +105,7 @@ class TestLDAPAttributeSet(unittest.TestCase):
         a.remove(b"b")
         a.remove("c")
 
-        self.assertEqual(a, {"d"})
+        assert a == {"d"}
 
     def testRemoveNonexistingValue(self):
         """
@@ -112,22 +113,23 @@ class TestLDAPAttributeSet(unittest.TestCase):
         """
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
 
-        self.assertRaises(KeyError, a.remove, "e")
+        with pytest.raises(KeyError):
+            a.remove("e")
 
     def testUnion(self):
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "e"])
-        self.assertEqual(a | b, {"b", "c", "d", "e"})
+        assert a | b == {"b", "c", "d", "e"}
 
     def testIntersection(self):
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "e"])
-        self.assertEqual(a & b, {"b", "c"})
+        assert a & b == {"b", "c"}
 
     def testSymmetricDifference(self):
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "e"])
-        self.assertEqual(a ^ b, {"d", "e"})
+        assert a ^ b == {"d", "e"}
 
     def testCopy(self):
         class Magic:
@@ -138,21 +140,21 @@ class TestLDAPAttributeSet(unittest.TestCase):
                 return True
 
         m1 = Magic()
-        self.assertFalse(m1 < object())
-        self.assertTrue(m1 > object())
+        assert not (m1 < object())
+        assert m1 > object()
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d", m1])
         b = a.__copy__()
-        self.assertEqual(a, b)
-        self.assertNotIdentical(a, b)
+        assert a == b
+        assert a is not b
 
         magicFromA = [val for val in a if isinstance(val, Magic)][0]
         magicFromB = [val for val in b if isinstance(val, Magic)][0]
-        self.assertEqual(magicFromA, magicFromB)
-        self.assertIdentical(magicFromA, magicFromB)
+        assert magicFromA == magicFromB
+        assert magicFromA is magicFromB
 
         a.update("x")
-        self.assertEqual(a, {"b", "c", "d", m1, "x"})
-        self.assertEqual(b, {"b", "c", "d", m1})
+        assert a == {"b", "c", "d", m1, "x"}
+        assert b == {"b", "c", "d", m1}
 
     def testDeepCopy(self):
         @total_ordering
@@ -169,14 +171,14 @@ class TestLDAPAttributeSet(unittest.TestCase):
         m1 = Magic()
         a = attributeset.LDAPAttributeSet("k", ["a", m1])
         b = a.__deepcopy__({})
-        self.assertEqual(a, b)
-        self.assertNotIdentical(a, b)
+        assert a == b
+        assert a is not b
 
         magicFromA = [val for val in a if isinstance(val, Magic)][0]
         magicFromB = [val for val in b if isinstance(val, Magic)][0]
-        self.assertEqual(magicFromA, magicFromB)
-        self.assertNotIdentical(magicFromA, magicFromB)
+        assert magicFromA == magicFromB
+        assert magicFromA is not magicFromB
 
         a.update("x")
-        self.assertEqual(a, {"a", m1, "x"})
-        self.assertEqual(b, {"a", m1})
+        assert a == {"a", m1, "x"}
+        assert b == {"a", m1}

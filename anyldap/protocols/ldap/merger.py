@@ -9,7 +9,6 @@ from functools import partial
 import anyio
 
 from anyldap._async import await_result
-from anyldap.deferred import DeferredSource, maybeDeferred
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldaperrors, ldapserver
 
@@ -23,16 +22,14 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         self.configs = configs
         self.use_tls = use_tls
         self.all_connected = False
-        self.waitingConnect = []
         self.unbound = False
+        self._connected = anyio.Event()
 
-    def _whenConnected(self, fn, *a, **kw):
+    async def _whenConnected(self, fn, *a, **kw):
+        """Run `fn`, waiting first until every configured server is connected."""
         if not self.all_connected:
-            d = DeferredSource()
-            self.waitingConnect.append((d, fn, a, kw))
-            return d.deferred
-        else:
-            return maybeDeferred(fn, *a, **kw)
+            await self._connected.wait()
+        return await await_result(fn(*a, **kw))
 
     def _failConnection(self, reason):
         self._start_anyio_close()
@@ -43,13 +40,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
 
         if len(self.clients) == len(self.configs):
             self.all_connected = True
-
-        # Only call once when all clients are connected.
-        if self.all_connected:
-            while self.waitingConnect:
-                d, fn, a, kw = self.waitingConnect.pop(0)
-                d2 = maybeDeferred(fn, *a, **kw)
-                d2.addCallbacks(d.callback, d.errback)
+            self._connected.set()
 
     async def connectionMade_async(self):
         ldapserver.BaseLDAPServer.connectionMade(self)
@@ -63,7 +54,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
                     tls=tls,
                 )
                 proto = await connector()
-                await await_result(self._cbConnectionMade(proto))
+                self._cbConnectionMade(proto)
         except Exception as exc:
             self._failConnection(exc)
 
@@ -113,7 +104,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         return self._handleUnknown_async(request, controls, reply)
 
     async def _handleUnknown_async(self, request, controls, reply):
-        await await_result(self._whenConnected(self._clientQueue_async, request, controls, reply))
+        await self._whenConnected(self._clientQueue_async, request, controls, reply)
 
     def handle_LDAPBindRequest(self, request, controls, reply):
         return self.handleUnknown(request, controls, reply)

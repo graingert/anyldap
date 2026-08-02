@@ -5,7 +5,6 @@
 import base64
 
 from anyldap.protocols.ldap.ldif import asLDIF, attributeAsLDIF, manyAsLDIF
-from anyldap.test import unittest
 
 
 def encode(value):
@@ -21,7 +20,7 @@ class WireableObject:
         return b"wire"
 
 
-class AttributeAsLDIFTests(unittest.TestCase):
+class TestAttributeAsLDIFTests:
     """
     Converting pairs of attribute keys and values to LDIF.
     The result is a byte string with key and value
@@ -33,17 +32,17 @@ class AttributeAsLDIFTests(unittest.TestCase):
     def test_byte_string(self):
         """Key and value are byte strings"""
         result = attributeAsLDIF(b"some key", b"some value")
-        self.assertEqual(result, b"some key: some value\n")
+        assert result == b"some key: some value\n"
 
     def test_unicode_string(self):
         """Key and value are unicode strings"""
         result = attributeAsLDIF("another key", "another value")
-        self.assertEqual(result, b"another key: another value\n")
+        assert result == b"another key: another value\n"
 
     def test_wireable_object(self):
         """Value is an object with toWire method returning its bytes representation"""
         result = attributeAsLDIF("dn", WireableObject())
-        self.assertEqual(result, b"dn: wire\n")
+        assert result == b"dn: wire\n"
 
     def test_startswith_special_character(self):
         """
@@ -54,7 +53,7 @@ class AttributeAsLDIFTests(unittest.TestCase):
 
             value = c + b"value"
             result = attributeAsLDIF(b"key", value)
-            self.assertEqual(result, b"key:: %s\n" % encode(value))
+            assert result == b"key:: %s\n" % encode(value)
 
     def test_endswith_special_character(self):
         """
@@ -65,7 +64,7 @@ class AttributeAsLDIFTests(unittest.TestCase):
 
             value = b"value" + c
             result = attributeAsLDIF(b"key", value)
-            self.assertEqual(result, b"key:: %s\n" % encode(value))
+            assert result == b"key:: %s\n" % encode(value)
 
     def test_contains_special_characters(self):
         """
@@ -77,7 +76,7 @@ class AttributeAsLDIFTests(unittest.TestCase):
 
             value = b"foo" + c + b"bar"
             result = attributeAsLDIF(b"key", value)
-            self.assertEqual(result, b"key:: %s\n" % encode(value))
+            assert result == b"key:: %s\n" % encode(value)
 
     def test_contains_nonprintable_characters(self):
         """
@@ -85,10 +84,10 @@ class AttributeAsLDIFTests(unittest.TestCase):
         Returned value is base64 encoded.
         """
         result = attributeAsLDIF(b"key", b"val\xFFue")
-        self.assertEqual(result, b"key:: %s\n" % encode(b"val\xFFue"))
+        assert result == b"key:: %s\n" % encode(b"val\xFFue")
 
 
-class AsLDIFTests(unittest.TestCase):
+class TestAsLDIFTests:
     """
     Converting LDAP objects to LDIF.
     Object consists of DN and pairs of attribute keys and lists of values.
@@ -103,17 +102,14 @@ class AsLDIFTests(unittest.TestCase):
             (b"key2", [b"value21", b"value22"]),
         ]
         result = asLDIF(b"entry", attributes)
-        self.assertEqual(
-            result,
-            b"""\
+        assert result == (b"""\
 dn: entry
 key1: value11
 key1: value12
 key2: value21
 key2: value22
 
-""",
-        )
+""")
 
     def test_unicode_string(self):
         """DN and attribute keys and values are unicode string"""
@@ -122,17 +118,14 @@ key2: value22
             ("key2", ["value21", "value22"]),
         ]
         result = asLDIF("entry", attributes)
-        self.assertEqual(
-            result,
-            b"""\
+        assert result == (b"""\
 dn: entry
 key1: value11
 key1: value12
 key2: value21
 key2: value22
 
-""",
-        )
+""")
 
     def test_wireable_object(self):
         """
@@ -143,10 +136,10 @@ key2: value22
             (b"key", [WireableObject()]),
         ]
         result = asLDIF(WireableObject(), attributes)
-        self.assertEqual(result, b"dn: wire\nkey: wire\n\n")
+        assert result == b"dn: wire\nkey: wire\n\n"
 
 
-class ManyAsLDIFTests(unittest.TestCase):
+class TestManyAsLDIFTests:
     """
     Converting multiple LDAP objects to LDIF.
     Every object consists of pair of DN and pairs of attribute keys and lists of values.
@@ -174,9 +167,7 @@ class ManyAsLDIFTests(unittest.TestCase):
             ),
         ]
         result = manyAsLDIF(objects)
-        self.assertEqual(
-            result,
-            b"""\
+        assert result == (b"""\
 version: 1
 
 dn: object1
@@ -191,5 +182,4 @@ bar1: value32
 bar2: value41
 bar2: value42
 
-""",
-        )
+""")

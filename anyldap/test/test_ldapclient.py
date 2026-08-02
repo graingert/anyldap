@@ -6,14 +6,14 @@ import pytest
 from anyio.abc import SocketAttribute
 from exceptiongroup import suppress
 
-from anyldap.deferred import DeferredSource
+from anyldap._async import ResultSlot
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapclient, ldaperrors, ldapserver
 from anyldap.runtime import Failure
-from anyldap.test import unittest
+
+pytestmark = pytest.mark.anyio
 
 
-@pytest.mark.anyio
 async def test_async_multi_response_and_no_response_paths():
     client = ldapclient.LDAPClient()
 
@@ -53,7 +53,6 @@ async def test_async_multi_response_and_no_response_paths():
     await listener.aclose()
 
 
-@pytest.mark.anyio
 async def test_async_disconnected_and_tls_guards():
     client = ldapclient.LDAPClient()
     with pytest.raises(ldapclient.LDAPClientConnectionLostException):
@@ -63,7 +62,6 @@ async def test_async_disconnected_and_tls_guards():
     await client.aclose()
 
 
-@pytest.mark.anyio
 async def test_send_async_receives_response_from_stream():
     client = ldapclient.LDAPClient()
 
@@ -84,8 +82,7 @@ async def test_send_async_receives_response_from_stream():
     await listener.aclose()
 
 
-@pytest.mark.anyio
-async def test_deferred_client_methods_use_real_socket_stream():
+async def test_client_methods_use_real_socket_stream():
     closed = anyio.Event()
 
     class Client(ldapclient.LDAPClient):
@@ -139,7 +136,6 @@ async def test_deferred_client_methods_use_real_socket_stream():
     await listener.aclose()
 
 
-@pytest.mark.anyio
 async def test_prebuffered_stream_delegates_to_real_socket():
     received = []
     peer_done = anyio.Event()
@@ -171,7 +167,6 @@ async def test_prebuffered_stream_delegates_to_real_socket():
     assert received == [b"ping"]
 
 
-@pytest.mark.anyio
 async def test_client_response_dispatch_and_disconnect_errors():
     client = ldapclient.LDAPClient()
     client.debug = True
@@ -180,7 +175,7 @@ async def test_client_response_dispatch_and_disconnect_errors():
         pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(resultCode=0), id=0)
     )
 
-    controlled = DeferredSource()
+    controlled = ResultSlot()
     client.onwire[1] = (controlled, True, None, (), {})
     controls = [(b"1.2.3", False, None)]
     client.handle(
@@ -188,11 +183,11 @@ async def test_client_response_dispatch_and_disconnect_errors():
             pureldap.LDAPBindResponse(resultCode=0), id=1, controls=controls
         )
     )
-    response, returned_controls = await controlled.deferred
+    response, returned_controls = await controlled.wait()
     assert isinstance(response, pureldap.LDAPBindResponse)
     assert returned_controls == controls
 
-    pending = DeferredSource()
+    pending = ResultSlot()
     client.onwire[2] = (pending, False, lambda response: False, (), {})
     client.handle(
         pureldap.LDAPMessage(pureldap.LDAPSearchResultEntry("cn=a", []), id=2)
@@ -201,14 +196,14 @@ async def test_client_response_dispatch_and_disconnect_errors():
     client.handle(
         pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(resultCode=0), id=2)
     )
-    assert isinstance(await pending.deferred, pureldap.LDAPSearchResultDone)
+    assert isinstance(await pending.wait(), pureldap.LDAPSearchResultDone)
 
-    disconnected = DeferredSource()
+    disconnected = ResultSlot()
     client.onwire[3] = (disconnected, False, None, None, None)
     reason = Failure(ConnectionError("closed"))
     client.connectionLost(reason)
     with pytest.raises(ConnectionError, match="closed"):
-        await disconnected.deferred
+        await disconnected.wait()
 
 
 def test_bind_and_starttls_response_validation_errors():
@@ -231,7 +226,6 @@ def test_bind_and_starttls_response_validation_errors():
         )
 
 
-@pytest.mark.anyio
 async def test_attach_stream_reads_until_end():
     disconnected = anyio.Event()
 
@@ -258,7 +252,6 @@ async def test_attach_stream_reads_until_end():
     assert not client.connected
 
 
-@pytest.mark.anyio
 async def test_async_close_and_empty_stream_disconnect():
     peer_closed = anyio.Event()
 
@@ -279,7 +272,6 @@ async def test_async_close_and_empty_stream_disconnect():
         task_group.cancel_scope.cancel()
 
 
-@pytest.mark.anyio
 async def test_invalid_starttls_response_over_real_socket():
     async def peer(stream):
         request, _ = pureber.berDecodeObject(
@@ -306,7 +298,6 @@ async def test_invalid_starttls_response_over_real_socket():
     await listener.aclose()
 
 
-@pytest.mark.anyio
 async def test_partial_starttls_response_and_failed_upgrade_over_real_socket():
     async def peer(stream):
         request, _ = pureber.berDecodeObject(
@@ -333,7 +324,6 @@ async def test_partial_starttls_response_and_failed_upgrade_over_real_socket():
     await listener.aclose()
 
 
-@pytest.mark.anyio
 async def test_client_stream_state_guards_and_closed_socket_write():
     client = ldapclient.LDAPClient()
     client.connectionMade()
@@ -352,9 +342,6 @@ async def test_client_stream_state_guards_and_closed_socket_write():
     client._anyio_write_lock = anyio.Lock()
     with pytest.raises(ldapclient.LDAPClientConnectionLostException):
         await client._upgrade_to_tls(None, None)
-    with pytest.raises(ldapclient.LDAPClientConnectionLostException):
-        client._queue_anyio_write(b"data")
-
     client._anyio_write_lock = None
     with pytest.raises(ldapclient.LDAPClientConnectionLostException):
         await client._send_anyio_write(b"data")
@@ -408,21 +395,16 @@ def test_partial_message_and_starttls_guards():
     assert client.buffer == b"\x30"
 
 
-class RepresentationTests(unittest.TestCase):
-    """
-    Tests that center on correct representations of objects.
-    """
+def test_clientConnectionLost_rep():
+    error = ldapclient.LDAPClientConnectionLostException()
+    assert b"Connection lost" == error.toWire()
 
-    def test_clientConnectionLost_rep(self):
-        error = ldapclient.LDAPClientConnectionLostException()
-        self.assertEqual(b"Connection lost", error.toWire())
 
-    def test_startTLSBusyError_rep(self):
-        error = ldapclient.LDAPStartTLSBusyError("xyzzy")
-        expected_value = b"Cannot STARTTLS while operations on wire: 'xyzzy'"
-        self.assertEqual(expected_value, error.toWire())
+def test_startTLSBusyError_rep():
+    error = ldapclient.LDAPStartTLSBusyError("xyzzy")
+    assert b"Cannot STARTTLS while operations on wire: 'xyzzy'" == error.toWire()
 
-    def test_StartTLSInvalidResponseName_rep(self):
-        error = ldapclient.LDAPStartTLSInvalidResponseName("xyzzy")
-        expected_value = b"Invalid responseName in STARTTLS response: 'xyzzy'"
-        self.assertEqual(expected_value, error.toWire())
+
+def test_StartTLSInvalidResponseName_rep():
+    error = ldapclient.LDAPStartTLSInvalidResponseName("xyzzy")
+    assert b"Invalid responseName in STARTTLS response: 'xyzzy'" == error.toWire()

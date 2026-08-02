@@ -3,7 +3,6 @@ import sys
 import anyio
 
 from anyldap import config, numberalloc, usage
-from anyldap._async import await_result
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapsyntax
 
 
@@ -20,7 +19,7 @@ async def main(cfg):
         overrides=cfg.getServiceLocationOverrides(),
     )
     entry = ldapsyntax.LDAPEntry(client=client, dn=base_dn)
-    number = await await_result(numberalloc.getFreeNumber(entry, "uidNumber", min=1000))
+    number = await numberalloc.getFreeNumber(entry, "uidNumber", min=1000)
     sys.stdout.write(f"{number!r}\n")
 
 

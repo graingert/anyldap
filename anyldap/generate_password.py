@@ -2,8 +2,6 @@ import subprocess
 
 import anyio
 
-from anyldap.deferred import ensureDeferred
-
 
 class PwgenException(Exception):
     pass
@@ -29,8 +27,8 @@ async def generate_async(n=1):
     return lines
 
 
-def generate(_unused_runtime=None, n=1):
-    return ensureDeferred(generate_async(n))
+async def generate(_unused_runtime=None, n=1):
+    return await generate_async(n)
 
 
 if __name__ == "__main__":
