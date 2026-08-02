@@ -208,7 +208,3 @@ commands =
     codecov --required
 depends = py{310,311,312,313,314,py3}-test
 """
-
-[tool.zest-releaser]
-history-file = "docs/source/NEWS.rst"
-tag-format = "v{version}"
