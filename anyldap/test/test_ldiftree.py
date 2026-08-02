@@ -1,6 +1,7 @@
 """
 Test cases for LDIF directory tree writing/reading.
 """
+import contextlib
 import errno
 import logging
 import os
@@ -9,7 +10,9 @@ import shutil
 import subprocess
 import sys
 import unittest as stdlib_unittest
+from unittest import mock
 
+import anyio
 import pytest
 
 from anyldap import delta, entry, ldiftree
@@ -21,14 +24,12 @@ from anyldap.test._testing import capture_logs
 pytestmark = pytest.mark.anyio
 
 
-def writeFile(path, content):
-    with open(path, "wb") as f:
-        f.write(content)
+async def writeFile(path, content):
+    await anyio.Path(path).write_bytes(content)
 
 
-def _readFile(path):
-    with open(path, "rb") as f:
-        return f.read()
+async def _readFile(path):
+    return await anyio.Path(path).read_bytes()
 
 
 def _moved(dn):
@@ -50,42 +51,54 @@ skipIfWindows = stdlib_unittest.skipIf(
 )
 
 
-class RandomizedListdir:
+@contextlib.contextmanager
+def randomizedListdir():
+    """Make directory listings come back in a random order.
+
+    Patches anyio.Path.iterdir, which is what the tree walks; patching
+    os.listdir instead would only bite on the CPython versions whose pathlib
+    happens to be implemented in terms of it. Yields the mock, so a caller can
+    assert the listing really went through it.
     """
-    Base class that makes os.listdir return its members in a random order, so
-    tests cannot quietly depend on directory ordering.
-    """
+    real_iterdir = anyio.Path.iterdir
+
+    async def randomIterdir(path):
+        entries = [item async for item in real_iterdir(path)]
+        random.shuffle(entries)
+        for item in entries:
+            yield item
+
+    with mock.patch(
+        "anyio.Path.iterdir", autospec=True, side_effect=randomIterdir
+    ) as iterdir:
+        yield iterdir
+
+
+class RestoresModes:
+    """Base class that puts back any file modes a test changed."""
 
     @pytest.fixture(autouse=True)
-    def _randomize_listdir(self, monkeypatch):
-        real_listdir = os.listdir
-
-        def randomListdir(*args, **kwargs):
-            r = real_listdir(*args, **kwargs)
-            random.shuffle(r)
-            return r
-
-        monkeypatch.setattr(os, "listdir", randomListdir)
+    def _restore_modes_after_chmod(self):
         self._restore_modes = []
         yield
         for path, mode in reversed(self._restore_modes):
             os.chmod(path, mode)
 
-    def chmod(self, path, mode):
-        self._restore_modes.append((path, os.stat(path).st_mode))
-        os.chmod(path, mode)
+    async def chmod(self, path, mode):
+        self._restore_modes.append((path, (await anyio.Path(path).stat()).st_mode))
+        await anyio.Path(path).chmod(mode)
 
 
-class TestDir2LDIF(RandomizedListdir):
+class TestDir2LDIF(RestoresModes):
     @pytest.fixture(autouse=True)
-    def _tree(self, tmp_path):
+    async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
-        os.mkdir(self.tree)
+        await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
-        os.mkdir(com)
+        await anyio.Path(com).mkdir()
         example = os.path.join(com, "dc=example.dir")
-        os.mkdir(example)
-        writeFile(
+        await anyio.Path(example).mkdir()
+        await writeFile(
             os.path.join(example, "cn=foo.ldif"),
             b"""\
 dn: cn=foo,dc=example,dc=com
@@ -94,7 +107,7 @@ objectClass: top
 
 """,
         )
-        writeFile(
+        await writeFile(
             os.path.join(example, "cn=bad-two-entries.ldif"),
             b"""\
 dn: cn=bad-two-entries,dc=example,dc=com
@@ -107,7 +120,7 @@ objectClass: top
 
 """,
         )
-        writeFile(
+        await writeFile(
             os.path.join(example, "cn=bad-missing-end.ldif"),
             b"""\
 dn: cn=bad-missing-end,dc=example,dc=com
@@ -115,11 +128,11 @@ cn: bad-missing-end
 objectClass: top
 """,
         )
-        writeFile(os.path.join(example, "cn=bad-empty.ldif"), b"")
-        writeFile(os.path.join(example, "cn=bad-only-newline.ldif"), b"\n")
+        await writeFile(os.path.join(example, "cn=bad-empty.ldif"), b"")
+        await writeFile(os.path.join(example, "cn=bad-only-newline.ldif"), b"\n")
         sales = os.path.join(example, "ou=Sales.dir")
-        os.mkdir(sales)
-        writeFile(
+        await anyio.Path(sales).mkdir()
+        await writeFile(
             os.path.join(sales, "cn=sales-thingie.ldif"),
             b"""\
 dn: cn=sales-thingie,ou=Sales,dc=example,dc=com
@@ -141,7 +154,7 @@ objectClass: top
 
     @skipIfWindowsOrRoot
     async def testNoAccess(self):
-        self.chmod(
+        await self.chmod(
             os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif"), 0
         )
         with pytest.raises(OSError) as excinfo:
@@ -186,16 +199,16 @@ objectClass: top
         assert await ldiftree.get(self.tree, want.dn) == want
 
 
-class TestLDIF2Dir(RandomizedListdir):
+class TestLDIF2Dir(RestoresModes):
     @pytest.fixture(autouse=True)
-    def _tree(self, tmp_path):
+    async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
-        os.mkdir(self.tree)
+        await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
-        os.mkdir(com)
+        await anyio.Path(com).mkdir()
         example = os.path.join(com, "dc=example.dir")
-        os.mkdir(example)
-        writeFile(
+        await anyio.Path(example).mkdir()
+        await writeFile(
             os.path.join(example, "cn=pre-existing.ldif"),
             b"""\
 dn: cn=pre-existing,dc=example,dc=com
@@ -204,7 +217,7 @@ objectClass: top
 
 """,
         )
-        writeFile(
+        await writeFile(
             os.path.join(example, "ou=OrgUnit.ldif"),
             b"""\
 dn: ou=OrgUnit,dc=example,dc=com
@@ -223,12 +236,12 @@ objectClass: organizationalUnit
             },
         )
         await ldiftree.put(self.tree, e)
-        self._cb_testSimpleWrite()
+        await self._cb_testSimpleWrite()
 
-    def _cb_testSimpleWrite(self):
+    async def _cb_testSimpleWrite(self):
         path = os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif")
         assert os.path.isfile(path)
-        assert _readFile(path) == (b"""\
+        assert await _readFile(path) == (b"""\
 dn: cn=foo,dc=example,dc=com
 objectClass: top
 cn: foo
@@ -244,9 +257,9 @@ cn: foo
             },
         )
         await ldiftree.put(self.tree, e)
-        self._cb_testDirCreation()
+        await self._cb_testDirCreation()
 
-    def _cb_testDirCreation(self):
+    async def _cb_testDirCreation(self):
         path = os.path.join(
             self.tree,
             "dc=com.dir",
@@ -255,7 +268,7 @@ cn: foo
             "cn=create-me.ldif",
         )
         assert os.path.isfile(path)
-        assert _readFile(path) == (b"""\
+        assert await _readFile(path) == (b"""\
 dn: cn=create-me,ou=OrgUnit,dc=example,dc=com
 objectClass: top
 cn: create-me
@@ -273,14 +286,14 @@ cn: create-me
         dirpath = os.path.join(
             self.tree, "dc=com.dir", "dc=example.dir", "ou=OrgUnit.dir"
         )
-        os.mkdir(dirpath)
+        await anyio.Path(dirpath).mkdir()
         await ldiftree.put(self.tree, e)
-        self._cb_testDirExists(dirpath)
+        await self._cb_testDirExists(dirpath)
 
-    def _cb_testDirExists(self, dirpath):
+    async def _cb_testDirExists(self, dirpath):
         path = os.path.join(dirpath, "cn=create-me.ldif")
         assert os.path.isfile(path)
-        assert _readFile(path) == (b"""\
+        assert await _readFile(path) == (b"""\
 dn: cn=create-me,ou=OrgUnit,dc=example,dc=com
 objectClass: top
 cn: create-me
@@ -308,12 +321,12 @@ cn: create-me
             },
         )
         await ldiftree.put(self.tree, e)
-        self._cb_testAddTopLevel()
+        await self._cb_testAddTopLevel()
 
-    def _cb_testAddTopLevel(self):
+    async def _cb_testAddTopLevel(self):
         path = os.path.join(self.tree, "dc=org.ldif")
         assert os.path.isfile(path)
-        assert _readFile(path) == (b"""\
+        assert await _readFile(path) == (b"""\
 dn: dc=org
 objectClass: dcObject
 dc: org
@@ -321,7 +334,7 @@ dc: org
 """)
 
 
-class TestLDIFTreeEntry(RandomizedListdir):
+class TestLDIFTreeEntry(RestoresModes):
     """
     Tests for LDIFTreeEntry.
     """
@@ -329,16 +342,16 @@ class TestLDIFTreeEntry(RandomizedListdir):
     # TODO share the actual tests with inmemory and any other
     # implementations of the same interface
     @pytest.fixture(autouse=True)
-    def _tree(self, tmp_path):
+    async def _tree(self, tmp_path):
         self.tree = str(tmp_path / "tree")
-        os.mkdir(self.tree)
+        await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
-        os.mkdir(com)
+        await anyio.Path(com).mkdir()
         example = os.path.join(com, "dc=example.dir")
-        os.mkdir(example)
+        await anyio.Path(example).mkdir()
         meta = os.path.join(example, "ou=metasyntactic.dir")
-        os.mkdir(meta)
-        writeFile(
+        await anyio.Path(meta).mkdir()
+        await writeFile(
             os.path.join(example, "ou=metasyntactic.ldif"),
             b"""\
 dn: ou=metasyntactic,dc=example,dc=com
@@ -349,7 +362,7 @@ ou: metasyntactic
 """,
         )
         foo = os.path.join(meta, "cn=foo.dir")
-        writeFile(
+        await writeFile(
             os.path.join(meta, "cn=foo.ldif"),
             b"""\
 dn: cn=foo,ou=metasyntactic,dc=example,dc=com
@@ -360,7 +373,7 @@ cn: foo
 """,
         )
         bar = os.path.join(meta, "cn=bar.dir")
-        writeFile(
+        await writeFile(
             os.path.join(meta, "cn=bar.ldif"),
             b"""\
 dn: cn=bar,ou=metasyntactic,dc=example,dc=com
@@ -371,7 +384,7 @@ cn: bar
 """,
         )
         empty = os.path.join(example, "ou=empty.dir")
-        writeFile(
+        await writeFile(
             os.path.join(example, "ou=empty.ldif"),
             b"""\
 dn: ou=empty,dc=example,dc=com
@@ -382,8 +395,8 @@ ou: empty
 """,
         )
         oneChild = os.path.join(example, "ou=oneChild.dir")
-        os.mkdir(oneChild)
-        writeFile(
+        await anyio.Path(oneChild).mkdir()
+        await writeFile(
             os.path.join(example, "ou=oneChild.ldif"),
             b"""\
 dn: ou=oneChild,dc=example,dc=com
@@ -394,7 +407,7 @@ ou: oneChild
 """,
         )
         theChild = os.path.join(oneChild, "cn=theChild.dir")
-        writeFile(
+        await writeFile(
             os.path.join(oneChild, "cn=theChild.ldif"),
             b"""\
 dn: cn=theChild,ou=oneChild,dc=example,dc=com
@@ -405,30 +418,41 @@ cn: theChild
 """,
         )
         # Invalid file
-        writeFile(os.path.join(oneChild, "cn=invalidChild.lddd"), b"invalid data")
+        await writeFile(os.path.join(oneChild, "cn=invalidChild.lddd"), b"invalid data")
 
-        self.root = ldiftree.LDIFTreeEntry(self.tree)
-        self.example = ldiftree.LDIFTreeEntry(example, "dc=example,dc=com")
-        self.empty = ldiftree.LDIFTreeEntry(empty, "ou=empty,dc=example,dc=com")
-        self.meta = ldiftree.LDIFTreeEntry(meta, "ou=metasyntactic,dc=example,dc=com")
-        self.foo = ldiftree.LDIFTreeEntry(
+        self.root = await ldiftree.LDIFTreeEntry.open(self.tree)
+        self.example = await ldiftree.LDIFTreeEntry.open(example, "dc=example,dc=com")
+        self.empty = await ldiftree.LDIFTreeEntry.open(
+            empty, "ou=empty,dc=example,dc=com"
+        )
+        self.meta = await ldiftree.LDIFTreeEntry.open(
+            meta, "ou=metasyntactic,dc=example,dc=com"
+        )
+        self.foo = await ldiftree.LDIFTreeEntry.open(
             foo, "cn=foo,ou=metasyntactic,dc=example,dc=com"
         )
-        self.bar = ldiftree.LDIFTreeEntry(
+        self.bar = await ldiftree.LDIFTreeEntry.open(
             bar, "cn=bar,ou=metasyntactic,dc=example,dc=com"
         )
-        self.oneChild = ldiftree.LDIFTreeEntry(
+        self.oneChild = await ldiftree.LDIFTreeEntry.open(
             oneChild, "ou=oneChild,dc=example,dc=com"
         )
-        self.theChild = ldiftree.LDIFTreeEntry(
+        self.theChild = await ldiftree.LDIFTreeEntry.open(
             theChild, "cn=theChild,ou=oneChild,dc=example,dc=com"
         )
 
     async def test_children_empty(self):
-        assert await self.empty.children() == []
+        with randomizedListdir() as iterdir:
+            assert await self.empty.children() == []
+
+        assert iterdir.mock_calls == [mock.call(self.empty.path)]
 
     async def test_children_oneChild(self):
-        self._cb_test_children_oneChild(await self.oneChild.children())
+        with randomizedListdir() as iterdir:
+            children = await self.oneChild.children()
+
+        assert iterdir.mock_calls == [mock.call(self.oneChild.path)]
+        self._cb_test_children_oneChild(children)
 
     def _cb_test_children_oneChild(self, children):
         assert len(children) == 1
@@ -440,15 +464,25 @@ cn: theChild
 
     async def test_children_repeat(self):
         """Test that .children() returns a copy of the data so that modifying it does not affect behaviour."""
-        children1 = await self.oneChild.children()
-        assert len(children1) == 1
+        with randomizedListdir() as iterdir:
+            children1 = await self.oneChild.children()
+            assert len(children1) == 1
 
-        children1.pop()
+            children1.pop()
 
-        assert len(await self.oneChild.children()) == 1
+            assert len(await self.oneChild.children()) == 1
+
+        assert iterdir.mock_calls == [
+            mock.call(self.oneChild.path),
+            mock.call(self.oneChild.path),
+        ]
 
     async def test_children_twoChildren(self):
-        self._cb_test_children_twoChildren(await self.meta.children())
+        with randomizedListdir() as iterdir:
+            children = await self.meta.children()
+
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
+        self._cb_test_children_twoChildren(children)
 
     def _cb_test_children_twoChildren(self, children):
         assert len(children) == 2
@@ -463,7 +497,10 @@ cn: theChild
 
     async def test_children_twoChildren_callback(self):
         children = []
-        r = await self.meta.children(callback=children.append)
+        with randomizedListdir() as iterdir:
+            r = await self.meta.children(callback=children.append)
+
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
         self._cb_test_children_twoChildren_callback(r, children)
 
     def _cb_test_children_twoChildren_callback(self, r, children):
@@ -480,29 +517,32 @@ cn: theChild
 
     @skipIfWindowsOrRoot
     async def test_children_noAccess_dir_noRead(self):
-        self.chmod(self.meta.path, 0o300)
-        with pytest.raises(OSError) as excinfo:
+        await self.chmod(self.meta.path, 0o300)
+        with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
-        self.chmod(self.meta.path, 0o755)
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
+        await self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
     async def test_children_noAccess_dir_noExec(self):
-        self.chmod(self.meta.path, 0o600)
-        with pytest.raises(OSError) as excinfo:
+        await self.chmod(self.meta.path, 0o600)
+        with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
-        self.chmod(self.meta.path, 0o755)
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
+        await self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
     async def test_children_noAccess_file(self):
-        self.chmod(os.path.join(self.meta.path, "cn=foo.ldif"), 0)
-        with pytest.raises(OSError) as excinfo:
+        await self.chmod(os.path.join(self.meta.path, "cn=foo.ldif"), 0)
+        with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
 
     async def test_addChild(self):
-        self.empty.addChild(
+        await self.empty.addChild(
             rdn="a=b",
             attributes={
                 "objectClass": ["a", "b"],
@@ -521,9 +561,9 @@ cn: theChild
         want.sort()
         assert got == want
 
-    def test_addChild_Exists(self):
+    async def test_addChild_Exists(self):
         with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
-            self.meta.addChild(
+            await self.meta.addChild(
                 rdn="cn=foo",
                 attributes={
                     "objectClass": ["a"],
@@ -531,8 +571,8 @@ cn: theChild
                 },
             )
 
-    def test_addChild_to_existing_directory(self):
-        child = self.meta.addChild(
+    async def test_addChild_to_existing_directory(self):
+        child = await self.meta.addChild(
             rdn="cn=baz",
             attributes={"objectClass": ["a"], "cn": ["baz"]},
         )
@@ -551,16 +591,26 @@ cn: theChild
         assert result
         assert self.empty.dn == "ou=moved,dc=example,dc=com"
 
-    def test_parent(self):
-        assert self.foo.parent() == self.meta
-        assert self.meta.parent() == self.example
-        assert self.root.parent() is None
+    async def test_parent(self):
+        assert await self.foo.parent() == self.meta
+        assert await self.meta.parent() == self.example
+        assert await self.root.parent() is None
 
     async def test_subtree_empty(self):
-        assert len(await self.empty.subtree()) == 1
+        with randomizedListdir() as iterdir:
+            assert len(await self.empty.subtree()) == 1
+
+        assert iterdir.mock_calls == [mock.call(self.empty.path)]
 
     async def test_subtree_oneChild(self):
-        self._cb_test_subtree_oneChild(await self.oneChild.subtree())
+        with randomizedListdir() as iterdir:
+            results = await self.oneChild.subtree()
+
+        assert iterdir.mock_calls == [
+            mock.call(self.oneChild.path),
+            mock.call(self.theChild.path),
+        ]
+        self._cb_test_subtree_oneChild(results)
 
     def _cb_test_subtree_oneChild(self, results):
         got = results
@@ -572,7 +622,13 @@ cn: theChild
 
     async def test_subtree_oneChild_cb(self):
         got = []
-        r = await self.oneChild.subtree(got.append)
+        with randomizedListdir() as iterdir:
+            r = await self.oneChild.subtree(got.append)
+
+        assert iterdir.mock_calls == [
+            mock.call(self.oneChild.path),
+            mock.call(self.theChild.path),
+        ]
         self._cb_test_subtree_oneChild_cb(r, got)
 
     def _cb_test_subtree_oneChild_cb(self, r, got):
@@ -585,8 +641,24 @@ cn: theChild
         assert got == want
 
     async def test_subtree_many(self):
-        result = await self.example.subtree()
+        with randomizedListdir() as iterdir:
+            result = await self.example.subtree()
 
+        util.assert_permutation(
+            iterdir.mock_calls,
+            [
+                mock.call(e.path)
+                for e in (
+                    self.example,
+                    self.oneChild,
+                    self.theChild,
+                    self.empty,
+                    self.meta,
+                    self.bar,
+                    self.foo,
+                )
+            ],
+        )
         expected = [
             self.example,
             self.oneChild,
@@ -600,8 +672,24 @@ cn: theChild
 
     async def test_subtree_many_cb(self):
         got = []
-        result = await self.example.subtree(callback=got.append)
+        with randomizedListdir() as iterdir:
+            result = await self.example.subtree(callback=got.append)
 
+        util.assert_permutation(
+            iterdir.mock_calls,
+            [
+                mock.call(e.path)
+                for e in (
+                    self.example,
+                    self.oneChild,
+                    self.theChild,
+                    self.empty,
+                    self.meta,
+                    self.bar,
+                    self.foo,
+                )
+            ],
+        )
         assert result is None
         expected = [
             self.example,
@@ -633,7 +721,7 @@ cn: theChild
         assert excinfo.value.message == dn
 
     async def test_lookup_fail_multipleError(self):
-        writeFile(
+        await writeFile(
             os.path.join(self.example.path, "cn=bad-two-entries.ldif"),
             b"""\
 dn: cn=bad-two-entries,dc=example,dc=com
@@ -650,7 +738,7 @@ objectClass: top
             await self.example.lookup("cn=bad-two-entries,dc=example,dc=com")
 
     async def test_lookup_fail_emptyError(self):
-        writeFile(os.path.join(self.example.path, "cn=bad-empty.ldif"), b"")
+        await writeFile(os.path.join(self.example.path, "cn=bad-empty.ldif"), b"")
         with pytest.raises(ldiftree.LDIFTreeEntryContainsNoEntries):
             await self.example.lookup("cn=bad-empty,dc=example,dc=com")
 
@@ -678,7 +766,7 @@ objectClass: top
         with pytest.raises(ldaperrors.LDAPNoSuchObject):
             await self.root.deleteChild("cn=not-exist")
 
-    def test_setPassword(self):
+    async def test_setPassword(self):
         self.foo.setPassword(b"s3krit", salt=b"\xf2\x4a")
         assert "userPassword" in self.foo
         assert self.foo["userPassword"] == [b"{SSHA}0n/Iw1NhUOKyaI9gm9v5YsO3ZInySg=="]
@@ -695,14 +783,14 @@ objectClass: top
 
     async def test_diffTree_copy(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
         assert await self.root.diffTree(other) == []
 
     async def test_diffTree_addChild(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
         e = entry.BaseLDAPEntry(dn="cn=foo,dc=example,dc=com")
         await ldiftree.put(otherDir, e)
 
@@ -711,8 +799,8 @@ objectClass: top
 
     async def test_diffTree_delChild(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
         await otherEmpty.delete()
@@ -721,12 +809,12 @@ objectClass: top
 
     async def test_diffTree_edit_failure(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
         otherEmpty["foo"] = ["bar"]
-        shutil.rmtree(otherDir)
+        await anyio.to_thread.run_sync(shutil.rmtree, otherDir)
         cleanups = []
         messages = capture_logs(cleanups, level=logging.ERROR)
         try:
@@ -739,8 +827,8 @@ objectClass: top
     @skipIfWindows
     async def test_diffTree_edit(self, tmp_path):
         otherDir = str(tmp_path / "other")
-        shutil.copytree(self.tree, otherDir)
-        other = ldiftree.LDIFTreeEntry(otherDir)
+        await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
+        other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
         otherEmpty["foo"] = ["bar"]
@@ -790,7 +878,7 @@ objectClass: top
             _moved("ou=moved,ou=oneChild,dc=example,dc=com"),
         }
 
-    def testCompareOtherTypes(self):
+    async def testCompareOtherTypes(self):
         """
         It can't be compared with other types.
         """
@@ -800,7 +888,7 @@ objectClass: top
         with pytest.raises(TypeError):
             self.example > object()
 
-    def testCompareGreater(self):
+    async def testCompareGreater(self):
         """
         It is compared with other entries based on DN, where child is
         greater than the parent.
@@ -808,7 +896,7 @@ objectClass: top
         assert self.oneChild > self.example
         assert not (self.example > self.oneChild)
 
-    def testCompareLess(self):
+    async def testCompareLess(self):
         """
         It is compared with other entries based on DN, where parent is
         less than the child.
@@ -816,7 +904,7 @@ objectClass: top
         assert self.example < self.oneChild
         assert not (self.oneChild < self.example)
 
-    def testRepresentation(self):
+    async def testRepresentation(self):
         assert self.example.dn.getText() in repr(self.example)
 
 

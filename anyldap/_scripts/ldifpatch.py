@@ -15,8 +15,9 @@ async def output(tree, outputFile):
     await tree.subtree(callback=_write)
 
 
-async def main(dataFile, patchFile, outputFile):
-    db = await inmemory.fromLDIFFile(dataFile)
+async def main(dataPath, patchFile, outputFile):
+    async with await anyio.Path(dataPath).open("rb") as dataFile:
+        db = await inmemory.fromLDIFFile(dataFile)
     patches = ldifdelta.fromLDIFFile(patchFile)
     for patch in patches:
         await patch.patch(db)
@@ -38,8 +39,7 @@ def console_script():
         sys.stderr.write(f"{sys.argv[0]}: {exc}\n")
         raise SystemExit(1) from exc
 
-    with open(options["data"], "rb") as data:
-        anyio.run(main, data, sys.stdin.buffer, sys.stdout.buffer)
+    anyio.run(main, options["data"], sys.stdin.buffer, sys.stdout.buffer)
 
 
 if __name__ == "__main__":
