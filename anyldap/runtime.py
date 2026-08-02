@@ -12,12 +12,7 @@ class ConnectionLost(Exception):
 
 
 class Protocol:
-    transport = None
     connectionDone = ConnectionDone()
-
-    def makeConnection(self, transport):
-        self.transport = transport
-        self.connectionMade()
 
     def connectionMade(self):
         pass

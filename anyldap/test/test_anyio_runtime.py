@@ -1,12 +1,12 @@
 import anyio
-import anyio.lowlevel
 import pytest
+from anyio.abc import SocketAttribute
 
 from anyldap import inmemory, testutil
 from anyldap._async import await_deferred, await_result
 from anyldap.deferred import succeed
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldapclient, ldapsyntax
+from anyldap.protocols.ldap import ldapclient, ldapserver, ldapsyntax
 from anyldap.runtime import Failure, Protocol
 
 pytestmark = pytest.mark.anyio
@@ -35,11 +35,8 @@ async def test_await_result_accepts_all_result_shapes():
     assert await await_result("plain") == "plain"
 
 
-async def test_protocol_default_hooks_and_connection():
+async def test_protocol_default_hooks():
     protocol = Protocol()
-    transport = object()
-    protocol.makeConnection(transport)
-    assert protocol.transport is transport
     assert protocol.connectionMade() is None
     assert protocol.connectionLost() is None
     assert protocol.dataReceived(b"ignored") is None
@@ -64,25 +61,28 @@ async def test_failure_handles_broken_string_and_type_matching():
 
 async def test_ldap_client_bind_async():
     client = ldapclient.LDAPClient()
-    client.makeConnection(testutil.StringTransport())
     creds = (b"cn=foo,dc=example,dc=com", b"secret")
-    result = {}
 
-    async with anyio.create_task_group() as task_group:
-        async def run_bind():
-            result["value"] = await client.bind_async(*creds)
+    class BindServer(ldapserver.BaseLDAPServer):
+        def handle_LDAPBindRequest(self, request, controls, reply):
+            return pureldap.LDAPBindResponse(resultCode=0, matchedDN=request.dn)
 
-        task_group.start_soon(run_bind)
-        while not client.onwire:
-            await anyio.lowlevel.checkpoint()
-        message_id = next(iter(client.onwire))
-        response = pureldap.LDAPMessage(
-            pureldap.LDAPBindResponse(resultCode=0, matchedDN=creds[0])
-        )
-        response.id = message_id
-        client.dataReceived(response.toWire())
+    server_stopped = anyio.Event()
 
-    assert result["value"] == (creds[0], None)
+    async def serve(server_stream):
+        await ldapserver.serve_stream(server_stream, BindServer)
+        server_stopped.set()
+
+    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
+    host, port = listener.extra(SocketAttribute.local_address)
+    async with listener, anyio.create_task_group() as task_group:
+        task_group.start_soon(listener.serve, serve)
+        client_stream = await anyio.connect_tcp(host, port)
+        await client.attach_stream(client_stream, task_group)
+        assert await client.bind_async(*creds) == (creds[0], None)
+        await client.aclose()
+        await server_stopped.wait()
+        task_group.cancel_scope.cancel()
 
 
 async def test_ldapsyntax_commit_async():

@@ -39,47 +39,11 @@ async def test_waiting_request_runs_when_real_client_connects():
 
 def test_connection_failure_closes_transport_and_reports_ldap_error():
     server = MergedLDAPServer([], [])
-    server.transport = testutil.StringTransport()
+    server.output = testutil.MemoryStreamOutput()
+    server.output.connect(server)
     with pytest.raises(ldaperrors.LDAPOther, match="Cannot connect"):
         server._failConnection(Failure(OSError("refused")))
     assert server.transport.disconnecting
-
-
-@pytest.mark.anyio
-async def test_legacy_connection_starts_tls_before_becoming_ready():
-    client = ldapclient.LDAPClient()
-
-    class StartTLSLoopbackTransport(testutil.StringTransport):
-        def write(self, data):
-            super().write(data)
-            request, _ = pureber.berDecodeObject(client.berdecoder, data)
-            client.dataReceived(
-                LDAPMessage(
-                    ldapclient.pureldap.LDAPStartTLSResponse(resultCode=0),
-                    id=request.id,
-                ).toWire()
-            )
-
-        def startTLS(self, context):
-            self.tls_context = context
-
-    transport = StartTLSLoopbackTransport()
-    client.transport = transport
-    client.connectionMade()
-    def location(protocol_factory):
-        return client
-
-    server = MergedLDAPServer(
-        [config.LDAPConfig(serviceLocationOverrides={"": location})],
-        [True],
-    )
-    server.transport = testutil.StringTransport()
-
-    server.connectionMade()
-    assert await server._whenConnected(lambda: server) is server
-    request, _ = pureber.berDecodeObject(client.berdecoder, transport.value())
-    assert request.value.requestName == ldapclient.pureldap.LDAPStartTLSRequest.oid
-    assert transport.tls_context is None
 
 
 @pytest.mark.anyio
@@ -99,7 +63,8 @@ def test_connection_lost_skips_an_already_disconnected_client():
     client = ldapclient.LDAPClient()
     server = MergedLDAPServer([], [])
     server.clients = [client]
-    server.transport = testutil.StringTransport()
+    server.output = testutil.MemoryStreamOutput()
+    server.output.connect(server)
     server.connectionMade()
 
     server.connectionLost(ConnectionDone())
@@ -130,7 +95,8 @@ class MergedLDAPServerTest(unittest.TestCase):
         server = MergedLDAPServer([conf for _ in clients], [False for _ in clients])
         self.clients = clients * 1
         server.protocol = lambda: clients.pop()
-        server.transport = testutil.StringTransport()
+        server.output = testutil.MemoryStreamOutput()
+        server.output.connect(server)
         server.connectionMade()
 
         d = server._whenConnected(lambda: server)
@@ -145,7 +111,7 @@ class MergedLDAPServerTest(unittest.TestCase):
             server.dataReceived(LDAPMessage(LDAPBindRequest(), id=4).toWire())
 
             self.assertEqual(
-                server.transport.value(),
+                server.output.value(),
                 LDAPMessage(LDAPBindResponse(resultCode=0), id=4).toWire(),
             )
 
@@ -168,7 +134,7 @@ class MergedLDAPServerTest(unittest.TestCase):
         def test_f(server):
             server.dataReceived(LDAPMessage(LDAPBindRequest(), id=4).toWire())
             self.assertEqual(
-                server.transport.value(),
+                server.output.value(),
                 LDAPMessage(LDAPBindResponse(resultCode=0), id=4).toWire(),
             )
 
@@ -196,7 +162,7 @@ class MergedLDAPServerTest(unittest.TestCase):
         def test_f(server):
             server.dataReceived(LDAPMessage(LDAPBindRequest(), id=4).toWire())
             self.assertEqual(
-                server.transport.value(),
+                server.output.value(),
                 LDAPMessage(
                     LDAPBindResponse(
                         resultCode=ldaperrors.LDAPInvalidCredentials.resultCode
@@ -229,7 +195,7 @@ class MergedLDAPServerTest(unittest.TestCase):
         def test_f(server):
             server.dataReceived(LDAPMessage(LDAPSearchRequest(), id=3).toWire())
             self.assertEqual(
-                server.transport.value(),
+                server.output.value(),
                 LDAPMessage(
                     LDAPSearchResultEntry("cn=foo,dc=example,dc=com", [("a", ["b"])]),
                     id=3,
@@ -276,7 +242,7 @@ class MergedLDAPServerTest(unittest.TestCase):
         def test_f(server):
             server.dataReceived(LDAPMessage(LDAPSearchRequest(), id=3).toWire())
             self.assertEqual(
-                server.transport.value(),
+                server.output.value(),
                 LDAPMessage(
                     LDAPSearchResultEntry("cn=foo,dc=example,dc=com", [("a", ["b"])]),
                     id=3,
@@ -302,7 +268,7 @@ class MergedLDAPServerTest(unittest.TestCase):
             server.connectionLost(ConnectionDone())
             for c in self.clients:
                 c.assertSent(LDAPUnbindRequest())
-            self.assertEqual(server.transport.value(), b"")
+            self.assertEqual(server.output.value(), b"")
 
         d.addCallback(test_f)
 
@@ -318,7 +284,7 @@ class MergedLDAPServerTest(unittest.TestCase):
             server.connectionLost(ConnectionDone())
 
             self.assertEqual([], server.clients, "A connection should not be done.")
-            self.assertEqual(server.transport.value(), b"")
+            self.assertEqual(server.output.value(), b"")
 
         d.addCallback(test_f)
 
@@ -349,7 +315,7 @@ class MergedLDAPServerTest(unittest.TestCase):
                 c.assertNothingSent()
 
             self.assertEqual(
-                server.transport.value(),
+                server.output.value(),
                 LDAPMessage(
                     LDAPAddResponse(
                         resultCode=ldaperrors.LDAPUnwillingToPerform.resultCode

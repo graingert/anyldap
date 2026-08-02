@@ -52,7 +52,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             elif not self.unbound:
                 self.client.unbind()
             else:
-                self.client.transport.loseConnection()
+                self._anyio_task_group.start_soon(self.client.aclose)
             self.unbound = True
         self.client = None
         ldapserver.BaseLDAPServer.connectionLost(self, reason)
@@ -69,7 +69,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             self.client = proto
             if not self.connected:
                 # Client no longer connected, proxy shouldn't be either
-                self.client.transport.loseConnection()
+                self._anyio_task_group.start_soon(self.client.aclose)
                 self.client = None
                 self.queuedRequests = []
             else:
@@ -104,7 +104,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             else:
                 continue
             reply(msg)
-        self.transport.loseConnection()
+        self._start_anyio_close()
 
     def _processBacklog(self):
         """
@@ -279,12 +279,10 @@ class ProxyBase(ldapserver.BaseLDAPServer):
                 msg = pureldap.LDAPStartTLSResponse(
                     resultCode=ldaperrors.Success.resultCode
                 )
+                self.start_tls(self.factory.options)
                 if debug_flag:
                     logger.info("Replying with successful LDAPStartTLSResponse ...")
                 reply(msg)
-                if debug_flag:
-                    logger.info("Initiating startTLS on transport ...")
-                self.transport.startTLS(self.factory.options)
                 self.startTLS_initiated = True
                 msg = None
         else:

@@ -36,7 +36,8 @@ class LDAPServerWithUPNBind(unittest.TestCase):
 
         server = anyldap_with_upn_bind.LDAPServerWithUPNBind()
         server.factory = self.root
-        server.transport = testutil.StringTransport()
+        server.output = testutil.MemoryStreamOutput()
+        server.output.connect(server)
         server.connectionMade()
         self.server = server
 
@@ -50,7 +51,7 @@ class LDAPServerWithUPNBind(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=0, matchedDN="cn=bob,dc=example,dc=com"
@@ -82,7 +83,7 @@ class LDAPServerWithUPNBind(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPInvalidCredentials.resultCode

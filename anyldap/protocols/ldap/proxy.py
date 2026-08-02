@@ -95,11 +95,8 @@ class Proxy(ldapserver.BaseLDAPServer):
                 elif hasattr(self.client, "aclose") and self._anyio_task_group is not None:
                     self._anyio_task_group.start_soon(self.client.aclose)
                 self.unbound = True
-            else:
-                if hasattr(self.client, "transport"):
-                    self.client.transport.loseConnection()
-                elif hasattr(self.client, "aclose") and self._anyio_task_group is not None:
-                    self._anyio_task_group.start_soon(self.client.aclose)
+            elif hasattr(self.client, "aclose") and self._anyio_task_group is not None:
+                self._anyio_task_group.start_soon(self.client.aclose)
         self.client = None
         ldapserver.BaseLDAPServer.connectionLost(self, reason)
 

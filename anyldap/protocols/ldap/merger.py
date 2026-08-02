@@ -35,7 +35,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
             return maybeDeferred(fn, *a, **kw)
 
     def _failConnection(self, reason):
-        self.transport.loseConnection()
+        self._start_anyio_close()
         raise ldaperrors.LDAPOther(f"Cannot connect to server.{reason}")
 
     def _cbConnectionMade(self, proto):
@@ -112,10 +112,8 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
             if c.connected:
                 if hasattr(c, "aclose") and self._anyio_task_group is not None:
                     self._anyio_task_group.start_soon(c.aclose)
-                elif not self.unbound:
-                    c.unbind()
                 else:
-                    c.transport.loseConnection()
+                    c.unbind()
 
         self.clients = []
         self.unbound = True

@@ -1,5 +1,8 @@
 """Utilities for writing unit tests and debugging."""
 
+import anyio
+from anyio.abc import SocketAttribute
+
 from anyldap import config
 from anyldap._encoder import to_bytes
 from anyldap.deferred import DeferredSource, fail, succeed
@@ -7,24 +10,34 @@ from anyldap.runtime import Failure
 from anyldap.test import unittest
 
 
-class StringTransport:
-    disconnecting = False
+async def exchange_async(protocol, wire_data):
+    chunks = []
+    server_stopped = anyio.Event()
 
-    def __init__(self):
-        self._data = bytearray()
+    async def serve(server_stream):
+        async with anyio.create_task_group() as protocol_tasks:
+            await protocol.attach_stream(server_stream, protocol_tasks)
+            await protocol.wait_closed()
+            protocol_tasks.cancel_scope.cancel()
+        server_stopped.set()
 
-    def write(self, data):
-        self._data.extend(data)
+    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
+    host, port = listener.extra(SocketAttribute.local_address)
+    async with listener, anyio.create_task_group() as task_group:
+        task_group.start_soon(listener.serve, serve)
+        client_stream = await anyio.connect_tcp(host, port)
+        await client_stream.send(wire_data)
+        with anyio.move_on_after(0.1):
+            while True:
+                chunks.append(await client_stream.receive())
+        await client_stream.aclose()
+        await server_stopped.wait()
+        task_group.cancel_scope.cancel()
+    return b"".join(chunks)
 
-    def value(self):
-        return bytes(self._data)
 
-    def clear(self):
-        self._data.clear()
-
-    def loseConnection(self):
-        self.disconnecting = True
-
+def exchange(protocol, wire_data):
+    return anyio.run(exchange_async, protocol, wire_data)
 
 def mustRaise(dummy):
     raise unittest.FailTest("Should have raised an exception.")
@@ -50,14 +63,6 @@ def calltrace():
     sys.setprofile(_print_func_name)
 
 
-class FakeTransport:
-    def __init__(self, proto):
-        self.proto = proto
-
-    def loseConnection(self):
-        self.proto.connectionLost()
-
-
 class LDAPClientTestDriver:
     """
 
@@ -80,7 +85,6 @@ class LDAPClientTestDriver:
         self.sent = []
         self.responses = list(responses)
         self.connected = None
-        self.transport = FakeTransport(self)
 
     def send(self, op):
         self.sent.append(op)
@@ -173,7 +177,7 @@ class LDAPClientTestDriver:
         assert self.connected
         r = self.fakeUnbindResponse
         self.send_noResponse(r)
-        self.transport.loseConnection()
+        self.connectionLost()
 
 
 def createServer(proto, *responses, **kw):
@@ -201,6 +205,4 @@ def createServer(proto, *responses, **kw):
     clientTestDriver = LDAPClientTestDriver(*responses)
     server.protocol = lambda: clientTestDriver
     server.clientTestDriver = clientTestDriver
-    server.transport = StringTransport()
-    server.connectionMade()
     return server

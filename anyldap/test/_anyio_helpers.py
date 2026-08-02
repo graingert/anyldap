@@ -7,8 +7,8 @@ from anyldap.protocols.ldap import ldapserver
 
 class MemoryByteStream:
     def __init__(self):
-        self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream(10)
-        self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream(10)
+        self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream(0)
+        self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream(0)
         self.closed = False
 
     async def send(self, data):

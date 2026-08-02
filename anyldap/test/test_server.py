@@ -90,7 +90,8 @@ class LDAPServerTest(unittest.TestCase):
 
         server = ldapserver.LDAPServer()
         server.factory = self.root
-        server.transport = testutil.StringTransport()
+        server.output = testutil.MemoryStreamOutput()
+        server.output.connect(server)
         server.connectionMade()
         self.server = server
 
@@ -170,7 +171,7 @@ class LDAPServerTest(unittest.TestCase):
             )
         )
         self.assertCountEqual(
-            self._makeResultList(self.server.transport.value()),
+            self._makeResultList(self.server.output.value()),
             [msg.toWire() for msg in messages],
         )
 
@@ -179,7 +180,7 @@ class LDAPServerTest(unittest.TestCase):
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=4).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(resultCode=0), id=4
             ).toWire(),
@@ -198,7 +199,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=0, matchedDN="cn=thingie,ou=stuff,dc=example,dc=com"
@@ -217,7 +218,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPInvalidCredentials.resultCode
@@ -236,7 +237,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPInvalidCredentials.resultCode
@@ -250,7 +251,7 @@ class LDAPServerTest(unittest.TestCase):
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(version=1), id=32).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPProtocolError.resultCode,
@@ -265,7 +266,7 @@ class LDAPServerTest(unittest.TestCase):
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(version=2), id=32).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPProtocolError.resultCode,
@@ -280,7 +281,7 @@ class LDAPServerTest(unittest.TestCase):
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(version=4), id=32).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPProtocolError.resultCode,
@@ -302,7 +303,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPProtocolError.resultCode,
@@ -316,7 +317,7 @@ class LDAPServerTest(unittest.TestCase):
         self.server.dataReceived(
             pureldap.LDAPMessage(pureldap.LDAPUnbindRequest(), id=7).toWire()
         )
-        self.assertEqual(self.server.transport.value(), b"")
+        self.assertEqual(self.server.output.value(), b"")
 
     def test_compare_outOfTree(self):
         dn = "dc=invalid"
@@ -331,7 +332,7 @@ class LDAPServerTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPCompareResponse(
                     resultCode=ldaperrors.LDAPNoSuchObject.resultCode
@@ -355,7 +356,7 @@ class LDAPServerTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPCompareResponse(
                     resultCode=ldaperrors.LDAPCompareTrue.resultCode
@@ -377,7 +378,7 @@ class LDAPServerTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPCompareResponse(
                     resultCode=ldaperrors.LDAPCompareFalse.resultCode
@@ -401,7 +402,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         message, _ = pureber.berDecodeObject(
-            self.server.berdecoder, self.server.transport.value()
+            self.server.berdecoder, self.server.output.value()
         )
         self.assertEqual(message.value.resultCode, ldaperrors.other)
         self.assertIn(b"has no attribute", message.value.errorMessage)
@@ -419,7 +420,7 @@ class LDAPServerTest(unittest.TestCase):
             ),
         )
         message, _ = pureber.berDecodeObject(
-            self.server.berdecoder, self.server.transport.value()
+            self.server.berdecoder, self.server.output.value()
         )
         self.assertEqual(message.value.resultCode, ldaperrors.other)
         self.assertIn(b"Match type not implemented", message.value.errorMessage)
@@ -629,7 +630,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(pureldap.LDAPDelResponse(resultCode=0), id=2).toWire(),
         )
         d = self.stuff.children()
@@ -655,7 +656,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPAddResponse(resultCode=ldaperrors.Success.resultCode), id=2
             ).toWire(),
@@ -697,7 +698,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPAddResponse(
                     resultCode=ldaperrors.LDAPEntryAlreadyExists.resultCode,
@@ -724,7 +725,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPModifyDNResponse(resultCode=ldaperrors.Success.resultCode),
                 id=2,
@@ -758,7 +759,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPModifyDNResponse(
                     resultCode=ldaperrors.LDAPUnwillingToPerform.resultCode,
@@ -781,7 +782,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPModifyDNResponse(resultCode=ldaperrors.Success.resultCode),
                 id=2,
@@ -808,7 +809,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPModifyResponse(resultCode=ldaperrors.Success.resultCode),
                 id=2,
@@ -833,7 +834,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
                     resultCode=ldaperrors.LDAPProtocolError.resultCode,
@@ -854,7 +855,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
                     resultCode=ldaperrors.LDAPStrongAuthRequired.resultCode,
@@ -873,9 +874,9 @@ class LDAPServerTest(unittest.TestCase):
 
     def _assert_password_modify_protocol_error(self):
         message, used = pureber.berDecodeObject(
-            self.server.berdecoder, self.server.transport.value()
+            self.server.berdecoder, self.server.output.value()
         )
-        self.assertEqual(used, len(self.server.transport.value()))
+        self.assertEqual(used, len(self.server.output.value()))
         self.assertEqual(message.value.resultCode, ldaperrors.LDAPProtocolError.resultCode)
         self.assertEqual(message.value.responseName, pureldap.LDAPPasswordModifyRequest.oid)
 
@@ -918,7 +919,7 @@ class LDAPServerTest(unittest.TestCase):
                 id=1,
             ).toWire()
         )
-        self.server.transport.clear()
+        self.server.output.clear()
 
     def test_passwordModify_rejects_old_password_mode(self):
         self._bind_thingie_for_password_change()
@@ -927,7 +928,7 @@ class LDAPServerTest(unittest.TestCase):
             pureldap.LDAPPasswordModifyRequest_newPasswd("new"),
         )
         message, _ = pureber.berDecodeObject(
-            self.server.berdecoder, self.server.transport.value()
+            self.server.berdecoder, self.server.output.value()
         )
         self.assertEqual(
             message.value.resultCode, ldaperrors.LDAPOperationsError.resultCode
@@ -939,7 +940,7 @@ class LDAPServerTest(unittest.TestCase):
             pureldap.LDAPPasswordModifyRequest_userIdentity(self.thingie.dn.getText())
         )
         message, _ = pureber.berDecodeObject(
-            self.server.berdecoder, self.server.transport.value()
+            self.server.berdecoder, self.server.output.value()
         )
         self.assertEqual(
             message.value.resultCode, ldaperrors.LDAPOperationsError.resultCode
@@ -960,7 +961,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=0, matchedDN="cn=thingie,ou=stuff,dc=example,dc=com"
@@ -968,7 +969,7 @@ class LDAPServerTest(unittest.TestCase):
                 id=4,
             ).toWire(),
         )
-        self.server.transport.clear()
+        self.server.output.clear()
         self.server.dataReceived(
             pureldap.LDAPMessage(
                 pureldap.LDAPPasswordModifyRequest(
@@ -980,7 +981,7 @@ class LDAPServerTest(unittest.TestCase):
         )
         self.assertListEqual(commits, [True], "Server never committed data.")
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
                     resultCode=ldaperrors.Success.resultCode,
@@ -1012,7 +1013,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=0, matchedDN="cn=thingie,ou=stuff,dc=example,dc=com"
@@ -1020,7 +1021,7 @@ class LDAPServerTest(unittest.TestCase):
                 id=4,
             ).toWire(),
         )
-        self.server.transport.clear()
+        self.server.output.clear()
         messages = capture_logs(self, level=logging.INFO)
         self.server.dataReceived(
             pureldap.LDAPMessage(
@@ -1039,7 +1040,7 @@ class LDAPServerTest(unittest.TestCase):
         )
         self.assertListEqual(commits, [], "Server committed data.")
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
                     resultCode=ldaperrors.LDAPInsufficientAccessRights.resultCode,
@@ -1064,7 +1065,7 @@ class LDAPServerTest(unittest.TestCase):
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=2).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
                     resultCode=ldaperrors.LDAPProtocolError.resultCode,
@@ -1086,7 +1087,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPUnavailableCriticalExtension.resultCode,
@@ -1110,7 +1111,7 @@ class LDAPServerTest(unittest.TestCase):
             ).toWire()
         )
         self.assertEqual(
-            self.server.transport.value(),
+            self.server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=0, matchedDN="cn=thingie,ou=stuff,dc=example,dc=com"

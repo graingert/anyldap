@@ -94,7 +94,8 @@ class ProxyBase(unittest.TestCase):
         clientConnector = kwds.get("clientConnector", simulateConnectToServer)
         server.clientConnector = clientConnector
         server.clientTestDriver = clientTestDriver
-        server.transport = testutil.StringTransport()
+        server.output = testutil.MemoryStreamOutput()
+        server.output.connect(server)
         server.reactor = clock
         server.connectionMade()
         return server
@@ -110,7 +111,7 @@ class ProxyBase(unittest.TestCase):
         )
         server.reactor.advance(1)
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(resultCode=0), id=4
             ).toWire(),
@@ -141,7 +142,7 @@ class ProxyBase(unittest.TestCase):
         )
         server.reactor.advance(1)
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(pureldap.LDAPBindResponse(resultCode=0), id=2).toWire()
             + pureldap.LDAPMessage(
                 pureldap.LDAPSearchResultEntry(
@@ -176,7 +177,7 @@ class ProxyBase(unittest.TestCase):
         client = server.client
         client.assertSent(pureldap.LDAPBindRequest())
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(resultCode=0), id=2
             ).toWire(),
@@ -188,7 +189,7 @@ class ProxyBase(unittest.TestCase):
         server.reactor.advance(1)
         client.assertSent(pureldap.LDAPBindRequest(), pureldap.LDAPUnbindRequest())
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(resultCode=0), id=2
             ).toWire(),
@@ -207,7 +208,7 @@ class ProxyBase(unittest.TestCase):
         client = server.client
         client.assertSent(pureldap.LDAPBindRequest())
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(resultCode=0), id=2
             ).toWire(),
@@ -218,7 +219,7 @@ class ProxyBase(unittest.TestCase):
             pureldap.LDAPBindRequest(), "fake-unbind-by-LDAPClientTestDriver"
         )
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(resultCode=0), id=2
             ).toWire(),
@@ -254,7 +255,7 @@ class ProxyBase(unittest.TestCase):
         server.reactor.advance(1)
         self.assertEqual(len(server.clientTestDriver.sent), 0)
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPSearchResultEntry(
                     "cn=xyzzy,dc=example,dc=com", [("frobnitz", ["zork"])]
@@ -293,7 +294,7 @@ class ProxyBase(unittest.TestCase):
         server.reactor.advance(1)
         server.reactor.advance(5)
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(pureldap.LDAPBindResponse(resultCode=0), id=2).toWire()
             + pureldap.LDAPMessage(
                 pureldap.LDAPSearchResultEntry(
@@ -322,7 +323,7 @@ class ProxyBase(unittest.TestCase):
         server = self.createServer([], clientConnector=connector, clock=clock)
         self.assertEqual(connector, server.clientConnector)
         server.reactor.advance(1)
-        self.assertEqual(server.transport.value(), b"")
+        self.assertEqual(server.output.value(), b"")
 
     def test_cannot_connect_to_proxied_server_pending_requests(self):
         """
@@ -339,7 +340,7 @@ class ProxyBase(unittest.TestCase):
         )
         server.reactor.advance(2)
         self.assertEqual(
-            server.transport.value(),
+            server.output.value(),
             pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(resultCode=52), id=4
             ).toWire(),
@@ -347,7 +348,8 @@ class ProxyBase(unittest.TestCase):
 
     def test_failed_connection_answers_start_tls_and_discards_unbind(self):
         server = proxybase.ProxyBase()
-        server.transport = testutil.StringTransport()
+        server.output = testutil.MemoryStreamOutput()
+        server.output.connect(server)
         replies = []
         server.queuedRequests = [
             (pureldap.LDAPStartTLSRequest(), None, replies.append),
@@ -392,16 +394,9 @@ class ProxyBase(unittest.TestCase):
         class Factory:
             options = object()
 
-        class TLSTransport(testutil.StringTransport):
-            started_with = None
-
-            def startTLS(self, options):
-                self.started_with = options
-
         server = proxybase.ProxyBase()
         server.debug = True
         server.factory = Factory()
-        server.transport = TLSTransport()
         replies = []
         first = await (
             server.handle_LDAPExtendedRequest(
@@ -410,7 +405,7 @@ class ProxyBase(unittest.TestCase):
         )
         self.assertIsNone(first)
         self.assertEqual(replies[0].resultCode, ldaperrors.Success.resultCode)
-        self.assertIs(server.transport.started_with, server.factory.options)
+        self.assertIs(server._tls_upgrade[0], server.factory.options)
 
         second = await (
             server.handleStartTLSRequest(
@@ -421,7 +416,6 @@ class ProxyBase(unittest.TestCase):
 
         quiet = proxybase.ProxyBase()
         quiet.factory = Factory()
-        quiet.transport = TLSTransport()
         assert await quiet.handleStartTLSRequest(
             pureldap.LDAPStartTLSRequest(), None, lambda response: None
         ) is None
