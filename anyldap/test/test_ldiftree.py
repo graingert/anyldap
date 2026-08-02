@@ -441,28 +441,18 @@ cn: theChild
             theChild, "cn=theChild,ou=oneChild,dc=example,dc=com"
         )
 
-    async def test_children_do_not_depend_on_directory_order(self):
-        """Listing children must go through anyio.Path.iterdir, and must not
-        care what order it hands entries back.
-
-        randomizedListdir patches that method, so if the tree stopped calling
-        it the shuffling would silently do nothing -- which is exactly what
-        happened when this backend moved off os.listdir.
-        """
-        with randomizedListdir() as iterdir:
-            children = await self.meta.children()
-
-        assert iterdir.mock_calls == [mock.call(self.meta.path)]
-        util.assert_permutation(
-            [c.dn for c in children],
-            [self.foo.dn, self.bar.dn],
-        )
-
     async def test_children_empty(self):
-        assert await self.empty.children() == []
+        with randomizedListdir() as iterdir:
+            assert await self.empty.children() == []
+
+        assert iterdir.mock_calls == [mock.call(self.empty.path)]
 
     async def test_children_oneChild(self):
-        self._cb_test_children_oneChild(await self.oneChild.children())
+        with randomizedListdir() as iterdir:
+            children = await self.oneChild.children()
+
+        assert iterdir.mock_calls == [mock.call(self.oneChild.path)]
+        self._cb_test_children_oneChild(children)
 
     def _cb_test_children_oneChild(self, children):
         assert len(children) == 1
@@ -474,15 +464,25 @@ cn: theChild
 
     async def test_children_repeat(self):
         """Test that .children() returns a copy of the data so that modifying it does not affect behaviour."""
-        children1 = await self.oneChild.children()
-        assert len(children1) == 1
+        with randomizedListdir() as iterdir:
+            children1 = await self.oneChild.children()
+            assert len(children1) == 1
 
-        children1.pop()
+            children1.pop()
 
-        assert len(await self.oneChild.children()) == 1
+            assert len(await self.oneChild.children()) == 1
+
+        assert iterdir.mock_calls == [
+            mock.call(self.oneChild.path),
+            mock.call(self.oneChild.path),
+        ]
 
     async def test_children_twoChildren(self):
-        self._cb_test_children_twoChildren(await self.meta.children())
+        with randomizedListdir() as iterdir:
+            children = await self.meta.children()
+
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
+        self._cb_test_children_twoChildren(children)
 
     def _cb_test_children_twoChildren(self, children):
         assert len(children) == 2
@@ -497,7 +497,10 @@ cn: theChild
 
     async def test_children_twoChildren_callback(self):
         children = []
-        r = await self.meta.children(callback=children.append)
+        with randomizedListdir() as iterdir:
+            r = await self.meta.children(callback=children.append)
+
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
         self._cb_test_children_twoChildren_callback(r, children)
 
     def _cb_test_children_twoChildren_callback(self, r, children):
@@ -515,25 +518,28 @@ cn: theChild
     @skipIfWindowsOrRoot
     async def test_children_noAccess_dir_noRead(self):
         await self.chmod(self.meta.path, 0o300)
-        with pytest.raises(OSError) as excinfo:
+        with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
         await self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
     async def test_children_noAccess_dir_noExec(self):
         await self.chmod(self.meta.path, 0o600)
-        with pytest.raises(OSError) as excinfo:
+        with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
         await self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
     async def test_children_noAccess_file(self):
         await self.chmod(os.path.join(self.meta.path, "cn=foo.ldif"), 0)
-        with pytest.raises(OSError) as excinfo:
+        with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
+        assert iterdir.mock_calls == [mock.call(self.meta.path)]
 
     async def test_addChild(self):
         await self.empty.addChild(
@@ -591,10 +597,20 @@ cn: theChild
         assert await self.root.parent() is None
 
     async def test_subtree_empty(self):
-        assert len(await self.empty.subtree()) == 1
+        with randomizedListdir() as iterdir:
+            assert len(await self.empty.subtree()) == 1
+
+        assert iterdir.mock_calls == [mock.call(self.empty.path)]
 
     async def test_subtree_oneChild(self):
-        self._cb_test_subtree_oneChild(await self.oneChild.subtree())
+        with randomizedListdir() as iterdir:
+            results = await self.oneChild.subtree()
+
+        assert iterdir.mock_calls == [
+            mock.call(self.oneChild.path),
+            mock.call(self.theChild.path),
+        ]
+        self._cb_test_subtree_oneChild(results)
 
     def _cb_test_subtree_oneChild(self, results):
         got = results
@@ -606,7 +622,13 @@ cn: theChild
 
     async def test_subtree_oneChild_cb(self):
         got = []
-        r = await self.oneChild.subtree(got.append)
+        with randomizedListdir() as iterdir:
+            r = await self.oneChild.subtree(got.append)
+
+        assert iterdir.mock_calls == [
+            mock.call(self.oneChild.path),
+            mock.call(self.theChild.path),
+        ]
         self._cb_test_subtree_oneChild_cb(r, got)
 
     def _cb_test_subtree_oneChild_cb(self, r, got):
@@ -619,8 +641,24 @@ cn: theChild
         assert got == want
 
     async def test_subtree_many(self):
-        result = await self.example.subtree()
+        with randomizedListdir() as iterdir:
+            result = await self.example.subtree()
 
+        util.assert_permutation(
+            iterdir.mock_calls,
+            [
+                mock.call(e.path)
+                for e in (
+                    self.example,
+                    self.oneChild,
+                    self.theChild,
+                    self.empty,
+                    self.meta,
+                    self.bar,
+                    self.foo,
+                )
+            ],
+        )
         expected = [
             self.example,
             self.oneChild,
@@ -634,8 +672,24 @@ cn: theChild
 
     async def test_subtree_many_cb(self):
         got = []
-        result = await self.example.subtree(callback=got.append)
+        with randomizedListdir() as iterdir:
+            result = await self.example.subtree(callback=got.append)
 
+        util.assert_permutation(
+            iterdir.mock_calls,
+            [
+                mock.call(e.path)
+                for e in (
+                    self.example,
+                    self.oneChild,
+                    self.theChild,
+                    self.empty,
+                    self.meta,
+                    self.bar,
+                    self.foo,
+                )
+            ],
+        )
         assert result is None
         expected = [
             self.example,
