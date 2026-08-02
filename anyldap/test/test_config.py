@@ -10,9 +10,8 @@ from anyldap import config
 
 
 def writeFile(path, content):
-    f = open(path, "wb")
-    f.write(content)
-    f.close()
+    with open(path, "wb") as f:
+        f.write(content)
 
 
 def reloadFromContent(base_path, content):

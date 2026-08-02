@@ -1,12 +1,16 @@
-from passlib.hash import lmhash as passlib_lmhash
-from passlib.hash import nthash as passlib_nthash
-
 from anyldap import config
+from anyldap.samba._passlib._md4 import md4
+from anyldap.samba._passlib.des import des_encrypt_block
+
+# The fixed plaintext the LM hash encrypts under each half of the password.
+_LM_CONSTANT = b"KGS!@#$%"
 
 
 def nthash(password=b""):
     """Generates nt md4 password hash for a given password."""
-    return passlib_nthash.hash(password[:128]).encode("ascii").upper()
+    if isinstance(password, bytes):
+        password = password.decode("utf-8")
+    return md4(password[:128].encode("utf-16-le")).hexdigest().upper().encode("ascii")
 
 
 def lmhash_locked(password=b""):
@@ -30,4 +34,11 @@ def lmhash(password=b""):
     if not config.useLMhash():
         return lmhash_locked()
 
-    return passlib_lmhash.hash(password).encode("ascii").upper()
+    if isinstance(password, str):
+        password = password.encode("utf-8")
+    secret = password.upper()[:14].ljust(14, b"\0")
+    digest = b"".join(
+        des_encrypt_block(secret[offset : offset + 7], _LM_CONSTANT)
+        for offset in (0, 7)
+    )
+    return digest.hex().upper().encode("ascii")

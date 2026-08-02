@@ -24,6 +24,10 @@ class TestNTHash:
         """nthash(...) gives known results"""
         assert self.knownValues == [(p, smbpassword.nthash(p)) for p, _ in self.knownValues]
 
+    def testAcceptsTextAsWellAsBytes(self):
+        """A text password hashes the same as its bytes equivalent."""
+        assert smbpassword.nthash("foo") == smbpassword.nthash(b"foo")
+
 
 class TestLMHash:
     """
@@ -50,6 +54,13 @@ class TestLMHash:
         cfg = config.loadConfig()
         cfg.set("samba", "use-lmhash", "yes")
         assert self.knownValues == [(p, smbpassword.lmhash(p)) for p, _ in self.knownValues]
+
+    def testAcceptsTextAsWellAsBytes(self):
+        """A text password hashes the same as its bytes equivalent."""
+        cfg = config.loadConfig()
+        cfg.set("samba", "use-lmhash", "yes")
+
+        assert smbpassword.lmhash("foo") == smbpassword.lmhash(b"foo")
 
     def testLMHashConfiguationDisabled(self):
         """
