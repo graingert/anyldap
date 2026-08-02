@@ -1,0 +1,17 @@
+version: 2
+
+updates:
+  # The workflow actions were four majors behind before anyone noticed, which
+  # only surfaced as a Node.js deprecation warning. Let Dependabot track them.
+  #
+  # pre-commit hooks are deliberately not listed here: pre-commit.ci already
+  # opens autoupdate pull requests for those.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # One pull request for all of them, rather than one per action.
+      actions:
+        patterns:
+          - "*"
