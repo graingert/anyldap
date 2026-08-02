@@ -1,14 +1,14 @@
 """Pythonic API for LDAP operations."""
 import functools
 
+import outcome
 from zope.interface import implementer
 
 from anyldap import attributeset, delta, entry, interfaces, ldapfilter
-from anyldap._async import await_result
+from anyldap._async import ResultSlot, await_result
 from anyldap._encoder import to_bytes
-from anyldap.deferred import DeferredSource, maybeDeferred, succeed
 from anyldap.protocols import pureber, pureldap
-from anyldap.protocols.ldap import distinguishedname, ldapclient, ldaperrors, ldif
+from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldif
 from anyldap.runtime import Failure
 from anyldap.samba import smbpassword
 
@@ -283,14 +283,11 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
     def __hash__(self):
         return hash(self.toWire())
 
-    def bind(self, password):
+    async def bind(self, password):
         r = pureldap.LDAPBindRequest(dn=self.dn.getText(), auth=password)
-        d = self.client.send(r)
-        d.addCallback(self._handle_bind_msg)
-        return d
+        return self._handle_bind_msg(await self.client.send(r))
 
-    async def bind_async(self, password):
-        return await await_result(self.bind(password))
+    bind_async = bind
 
     def _handle_bind_msg(self, msg):
         assert isinstance(msg, pureldap.LDAPBindResponse)
@@ -339,20 +336,17 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         self._journal = []
         return self
 
-    def commit(self):
+    async def commit(self):
         self._checkState()
         if not self._journal:
-            return succeed(self)
+            return self
 
         op = pureldap.LDAPModifyRequest(
             object=self.dn.getText(), modification=[x.asLDAP() for x in self._journal]
         )
-        d = maybeDeferred(self.client.send, op)
-        d.addCallback(self._commit_success)
-        return d
+        return self._commit_success(await self.client.send(op))
 
-    async def commit_async(self):
-        return await await_result(self.commit())
+    commit_async = commit
 
     def _cbMoveDone(self, msg, newDN):
         assert isinstance(msg, pureldap.LDAPModifyDNResponse)
@@ -364,7 +358,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         self.dn = newDN
         return self
 
-    def move(self, newDN):
+    async def move(self, newDN):
         self._checkState()
         newDN = distinguishedname.DistinguishedName(newDN)
 
@@ -377,12 +371,9 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
             deleteoldrdn=1,
             newSuperior=newSuperior.getText(),
         )
-        d = self.client.send(op)
-        d.addCallback(self._cbMoveDone, newDN)
-        return d
+        return self._cbMoveDone(await self.client.send(op), newDN)
 
-    async def move_async(self, newDN):
-        return await await_result(self.move(newDN))
+    move_async = move
 
     def _cbDeleteDone(self, msg):
         assert isinstance(msg, pureldap.LDAPResult)
@@ -395,17 +386,14 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         self._assertMatchedDN(msg.matchedDN)
         return self
 
-    def delete(self):
+    async def delete(self):
         self._checkState()
 
         op = pureldap.LDAPDelRequest(entry=self.dn.getText())
-        d = self.client.send(op)
-        d.addCallback(self._cbDeleteDone)
         self._state = "deleted"
-        return d
+        return self._cbDeleteDone(await self.client.send(op))
 
-    async def delete_async(self):
-        return await await_result(self.delete())
+    delete_async = delete
 
     def _cbAddDone(self, msg, dn):
         assert isinstance(msg, pureldap.LDAPAddResponse), (
@@ -419,7 +407,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         e = self.__class__(dn=dn, client=self.client)
         return e
 
-    def addChild(self, rdn, attributes):
+    async def addChild(self, rdn, attributes):
         self._checkState()
 
         a = []
@@ -442,12 +430,9 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
             ldapValues = pureber.BERSet(lst)
             ldapAttrs.append((ldapAttrType, ldapValues))
         op = pureldap.LDAPAddRequest(entry=dn.getText(), attributes=ldapAttrs)
-        d = self.client.send(op)
-        d.addCallback(self._cbAddDone, dn)
-        return d
+        return self._cbAddDone(await self.client.send(op), dn)
 
-    async def addChild_async(self, rdn, attributes):
-        return await await_result(self.addChild(rdn, attributes))
+    addChild_async = addChild
 
     def _cbSetPassword_ExtendedOperation(self, msg):
         assert isinstance(msg, pureldap.LDAPExtendedResponse)
@@ -458,15 +443,14 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         self._assertMatchedDN(msg.matchedDN)
         return self
 
-    def setPassword_ExtendedOperation(self, newPasswd):
+    async def setPassword_ExtendedOperation(self, newPasswd):
         """
 
         Set the password on this object.
 
         @param newPasswd: A string containing the new password.
 
-        @return: A Deferred that will complete when the operation is
-        done.
+        @return: self, once the operation is done.
 
         """
 
@@ -475,17 +459,14 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         op = pureldap.LDAPPasswordModifyRequest(
             userIdentity=self.dn.getText(), newPasswd=newPasswd
         )
-        d = self.client.send(op)
-        d.addCallback(self._cbSetPassword_ExtendedOperation)
-        return d
+        return self._cbSetPassword_ExtendedOperation(await self.client.send(op))
 
-    async def setPassword_ExtendedOperation_async(self, newPasswd):
-        return await await_result(self.setPassword_ExtendedOperation(newPasswd))
+    setPassword_ExtendedOperation_async = setPassword_ExtendedOperation
 
     _setPasswordPriority_ExtendedOperation = 0
     setPasswordMaybe_ExtendedOperation = setPassword_ExtendedOperation
 
-    def setPassword_Samba(self, newPasswd, style=None):
+    async def setPassword_Samba(self, newPasswd, style=None):
         """
 
         Set the Samba password on this object.
@@ -496,8 +477,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         None. Specifies the style of samba accounts used. None is
         default and is the same as 'sambaSamAccount'.
 
-        @return: A Deferred that will complete when the operation is
-        done.
+        @return: self, once the operation is done.
 
         """
 
@@ -516,14 +496,13 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
             self["lmPassword"] = [lmhash]
         else:
             raise RuntimeError("Unknown samba password style %r" % style)
-        return self.commit()
+        return await self.commit()
 
-    async def setPassword_Samba_async(self, newPasswd, style=None):
-        return await await_result(self.setPassword_Samba(newPasswd, style=style))
+    setPassword_Samba_async = setPassword_Samba
 
     _setPasswordPriority_Samba = 20
 
-    def setPasswordMaybe_Samba(self, newPasswd):
+    async def setPasswordMaybe_Samba(self, newPasswd):
         """
 
         Set the Samba password on this object if it is a
@@ -531,29 +510,21 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
 
         @param newPasswd: A string containing the new password.
 
-        @return: A Deferred that will complete when the operation is
-        done.
+        @return: self, once the operation is done.
 
         """
         if not self.complete and not self.has_key("objectClass"):
-            d = self.fetch("objectClass")
-            d.addCallback(
-                lambda dummy, self=self, newPasswd=newPasswd: self.setPasswordMaybe_Samba(
-                    newPasswd
-                )
-            )
-        else:
-            objectClasses = [to_bytes(s.upper()) for s in self.get("objectClass", ())]
-            if b"SAMBAACCOUNT" in objectClasses:
-                d = self.setPassword_Samba(newPasswd, style="sambaAccount")
-            elif b"SAMBASAMACCOUNT" in objectClasses:
-                d = self.setPassword_Samba(newPasswd, style="sambaSamAccount")
-            else:
-                d = succeed(self)
-        return d
+            await self.fetch("objectClass")
+            return await self.setPasswordMaybe_Samba(newPasswd)
 
-    async def setPasswordMaybe_Samba_async(self, newPasswd):
-        return await await_result(self.setPasswordMaybe_Samba(newPasswd))
+        objectClasses = [to_bytes(s.upper()) for s in self.get("objectClass", ())]
+        if b"SAMBAACCOUNT" in objectClasses:
+            return await self.setPassword_Samba(newPasswd, style="sambaAccount")
+        if b"SAMBASAMACCOUNT" in objectClasses:
+            return await self.setPassword_Samba(newPasswd, style="sambaSamAccount")
+        return self
+
+    setPasswordMaybe_Samba_async = setPasswordMaybe_Samba
 
     def _cbSetPassword(self, dl, names):
         assert len(dl) == len(names)
@@ -565,36 +536,29 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
             raise PasswordSetAggregateError(lst)
         return self
 
-    def _cbSetPassword_one(self, result):
-        return (True, None)
+    async def _setPasswordAll(self, newPasswd, prefix, names):
+        """Run every password changer in turn, collecting per-name outcomes.
 
-    def _ebSetPassword_one(self, fail):
-        fail.trap(ldaperrors.LDAPException, DNNotPresentError)
-        return (False, fail)
-
-    def _setPasswordAll(self, results, newPasswd, prefix, names):
-        if not names:
-            return results
-        name, names = names[0], names[1:]
-        if results and not results[-1][0]:
-            # failing
-            fail = Failure(PasswordSetAborted())
-            d = succeed(results + [(None, fail)])
-        else:
+        A changer that fails aborts the ones after it, but every name still
+        gets an entry so `_cbSetPassword` can report which one broke.
+        """
+        results = []
+        for name in names:
+            if results and not results[-1][0]:
+                # a previous changer failed, so this one never ran
+                results.append((None, Failure(PasswordSetAborted())))
+                continue
             fn = getattr(self, prefix + name)
-            d = maybeDeferred(fn, newPasswd)
-            d.addCallbacks(self._cbSetPassword_one, self._ebSetPassword_one)
+            result = await outcome.acapture(fn, newPasswd)
+            if isinstance(result, outcome.Error):
+                fail = Failure(result.error)
+                fail.trap(ldaperrors.LDAPException, DNNotPresentError)
+                results.append((False, fail))
+            else:
+                results.append((True, None))
+        return results
 
-            def cb(result):
-                (success, info) = result
-                return results + [(success, info)]
-
-            d.addCallback(cb)
-
-        d.addCallback(self._setPasswordAll, newPasswd, prefix, names)
-        return d
-
-    def setPassword(self, newPasswd):
+    async def setPassword(self, newPasswd):
         def _passwordChangerPriorityComparison(me, other):
             mePri = getattr(self, "_setPasswordPriority_" + me)
             otherPri = getattr(self, "_setPasswordPriority_" + other)
@@ -608,12 +572,10 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         ]
         names.sort(key=functools.cmp_to_key(_passwordChangerPriorityComparison))
 
-        d = maybeDeferred(self._setPasswordAll, [], newPasswd, prefix, names)
-        d.addCallback(self._cbSetPassword, names)
-        return d
+        results = await self._setPasswordAll(newPasswd, prefix, names)
+        return self._cbSetPassword(results, names)
 
-    async def setPassword_async(self, newPasswd):
-        return await await_result(self.setPassword(newPasswd))
+    setPassword_async = setPassword
 
     # end IEditableLDAPEntry
 
@@ -627,18 +589,16 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
                     return LDAPEntry(self.client, dn)
         raise NoContainingNamingContext(self.dn.getText())
 
-    def namingContext(self):
+    async def namingContext(self):
         o = LDAPEntry(client=self.client, dn="")
-        d = o.search(
+        results = await o.search(
             filterText="(objectClass=*)",
             scope=pureldap.LDAP_SCOPE_baseObject,
             attributes=["namingContexts"],
         )
-        d.addCallback(self._cbNamingContext_Entries)
-        return d
+        return self._cbNamingContext_Entries(results)
 
-    async def namingContext_async(self):
-        return await await_result(self.namingContext())
+    namingContext_async = namingContext
 
     def _cbFetch(self, results, overWrite):
         if len(results) != 1:
@@ -660,19 +620,19 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         self.undo()
         return self
 
-    def fetch(self, *attributes):
+    async def fetch(self, *attributes):
         self._checkState()
         if self._journal:
             raise ObjectDirtyError(
                 "cannot fetch attributes of %s, it is dirty" % repr(self)
             )
 
-        d = self.search(scope=pureldap.LDAP_SCOPE_baseObject, attributes=attributes)
-        d.addCallback(self._cbFetch, overWrite=attributes)
-        return d
+        results = await self.search(
+            scope=pureldap.LDAP_SCOPE_baseObject, attributes=attributes
+        )
+        return self._cbFetch(results, overWrite=attributes)
 
-    async def fetch_async(self, *attributes):
-        return await await_result(self.fetch(*attributes))
+    fetch_async = fetch
 
     def _cbSearchEntry(self, callback, objectName, attributes, complete):
         attrib = {}
@@ -683,7 +643,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         )
         callback(o)
 
-    def _cbSearchMsg(self, msg, controls, d, callback, complete, sizeLimitIsNonFatal):
+    def _cbSearchMsg(self, msg, controls, slot, callback, complete, sizeLimitIsNonFatal):
         if isinstance(msg, pureldap.LDAPSearchResultDone):
             assert msg.referral is None  # TODO
             e = ldaperrors.get(msg.resultCode, msg.errorMessage)
@@ -694,12 +654,12 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
                     if sizeLimitIsNonFatal:
                         pass
                 except Exception:
-                    d.errback(Failure(e))
+                    slot.set_exception(e)
                     return True
 
             # search ended successfully
             self._assertMatchedDN(msg.matchedDN)
-            d.callback(controls)
+            slot.set_value(controls)
             return True
         elif isinstance(msg, pureldap.LDAPSearchResultEntry):
             self._cbSearchEntry(
@@ -711,7 +671,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         else:
             raise ldaperrors.LDAPProtocolError("bad search response: %r" % msg)
 
-    def search(
+    async def search(
         self,
         filterText=None,
         filterObject=None,
@@ -727,7 +687,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         return_controls=False,
     ):
         self._checkState()
-        d = DeferredSource()
+        slot = ResultSlot()
         if filterObject is None and filterText is None:
             filterObject = pureldap.LDAPFilterMatchAll
         elif filterObject is None and filterText is not None:
@@ -751,53 +711,46 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
             cb = results.append
         else:
             cb = callback
-        try:
-            op = pureldap.LDAPSearchRequest(
-                baseObject=self.dn.getText(),
-                scope=scope,
-                derefAliases=derefAliases,
-                sizeLimit=sizeLimit,
-                timeLimit=timeLimit,
-                typesOnly=typesOnly,
-                filter=filterObject,
-                attributes=attributes,
-            )
-            dsend = self.client.send_multiResponse_ex(
-                op,
-                controls,
-                self._cbSearchMsg,
-                d,
-                cb,
-                complete=not attributes,
-                sizeLimitIsNonFatal=sizeLimitIsNonFatal,
-            )
-        except ldapclient.LDAPClientConnectionLostException:
-            d.errback(Failure(ldapclient.LDAPClientConnectionLostException()))
-        else:
-            if callback is None:
-                if return_controls:
-                    d.deferred.addCallback(lambda ctls: (results, ctls))
-                else:
-                    d.deferred.addCallback(lambda dummy: results)
+        op = pureldap.LDAPSearchRequest(
+            baseObject=self.dn.getText(),
+            scope=scope,
+            derefAliases=derefAliases,
+            sizeLimit=sizeLimit,
+            timeLimit=timeLimit,
+            typesOnly=typesOnly,
+            filter=filterObject,
+            attributes=attributes,
+        )
+        # `_cbSearchMsg` resolves `slot` with the response controls as soon as
+        # the server signals the search is done; the send itself may also fail
+        # before that ever happens.
+        result = await outcome.acapture(
+            self.client.send_multiResponse_ex,
+            op,
+            controls,
+            self._cbSearchMsg,
+            slot,
+            cb,
+            complete=not attributes,
+            sizeLimitIsNonFatal=sizeLimitIsNonFatal,
+        )
+        if isinstance(result, outcome.Error) and not slot.is_set:
+            raise result.error
 
-            def rerouteerr(e):
-                d.errback(e)
-                # returning None will stop the error
-                # from being propagated and logged.
+        ctls = await slot.wait()
+        if callback is not None:
+            return ctls
+        if return_controls:
+            return results, ctls
+        return results
 
-            dsend.addErrback(rerouteerr)
-        return d.deferred
+    search_async = search
 
-    async def search_async(self, *args, **kwargs):
-        return await await_result(self.search(*args, **kwargs))
-
-    def lookup(self, dn):
+    async def lookup(self, dn):
         e = self.__class__(self.client, dn)
-        d = e.fetch("1.1")
-        return d
+        return await e.fetch("1.1")
 
-    async def lookup_async(self, dn):
-        return await await_result(self.lookup(dn))
+    lookup_async = lookup
 
     # end IConnectedLDAPEntry
 
@@ -823,14 +776,12 @@ class LDAPEntryWithAutoFill(LDAPEntry):
         LDAPEntry.__init__(self, *args, **kwargs)
         self.autoFillers = []
 
-    def _cb_addAutofiller(self, r, autoFiller):
+    async def addAutofiller(self, autoFiller):
+        # Autofillers may be plain or async, depending on whether they need to
+        # talk to the server to work out their values.
+        r = await await_result(autoFiller.start(self))
         self.autoFillers.append(autoFiller)
         return r
-
-    def addAutofiller(self, autoFiller):
-        d = maybeDeferred(autoFiller.start, self)
-        d.addCallback(self._cb_addAutofiller, autoFiller)
-        return d
 
     def journal(self, journalOperation):
         LDAPEntry.journal(self, journalOperation)

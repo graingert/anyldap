@@ -7,7 +7,6 @@ import trustme
 from anyio.abc import SocketAttribute
 
 from anyldap import config, inmemory, testutil
-from anyldap.deferred import DeferredSource
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import (
     ldapclient,
@@ -662,10 +661,11 @@ async def test_proxybase_failure_and_starttls_response_paths():
     unavailable = proxybase.ProxyBase()
     unavailable.factory = object()
     assert (
-        await unavailable.handleStartTLSRequest(
+        unavailable.handleStartTLSRequest(
             pureldap.LDAPStartTLSRequest(), None, replies.append
-        )
-    ).resultCode == ldaperrors.LDAPUnavailable.resultCode
+        ).resultCode
+        == ldaperrors.LDAPUnavailable.resultCode
+    )
 
     class Factory:
         options = object()
@@ -678,10 +678,11 @@ async def test_proxybase_failure_and_starttls_response_paths():
     ) is None
     assert tls_server.startTLS_initiated
     assert (
-        await tls_server.handleStartTLSRequest(
+        tls_server.handleStartTLSRequest(
             pureldap.LDAPStartTLSRequest(), None, replies.append
-        )
-    ).resultCode == ldaperrors.LDAPOperationsError.resultCode
+        ).resultCode
+        == ldaperrors.LDAPOperationsError.resultCode
+    )
 
 
 async def test_proxybase_connection_tls_disconnect_and_backlog_paths():
@@ -749,43 +750,37 @@ async def test_proxybase_forwarding_and_example_response_paths():
         replies.append,
         pureldap.LDAPBindRequest(),
         None,
-        [],
     )
     example = proxybase.ExampleProxy()
     response = pureldap.LDAPBindResponse(resultCode=0)
-    assert await example.handleProxiedResponse(response, None, None) is response
+    assert example.handleProxiedResponse(response, None, None) is response
 
 
-async def test_proxybase_queues_until_connected_and_orders_deferred_responses():
+async def test_proxybase_queues_requests_until_connected():
     server = proxybase.ProxyBase()
     request = pureldap.LDAPSearchRequest()
     replies = []
     await server.handleUnknown(request, None, replies.append)
     assert server.queuedRequests == [(request, None, replies.append)]
 
-    first = DeferredSource()
-    second = DeferredSource()
-    pending = [first, second]
 
-    class DelayedProxy(proxybase.ProxyBase):
+async def test_proxybase_replies_in_response_order():
+    request = pureldap.LDAPSearchRequest()
+    replies = []
+
+    class RewritingProxy(proxybase.ProxyBase):
         def handleProxiedResponse(self, response, request, controls):
-            return pending.pop(0).deferred
+            return ("rewritten", response)
 
-    server = DelayedProxy()
-    sequence = []
+    server = RewritingProxy()
     entry = pureldap.LDAPSearchResultEntry("cn=entry", [])
     done = pureldap.LDAPSearchResultDone(resultCode=0)
+    # Only a search-done or bind response ends the exchange.
     assert not server._gotResponseFromProxiedServer(
-        entry, replies.append, request, None, sequence
+        entry, replies.append, request, None
     )
-    assert server._gotResponseFromProxiedServer(
-        done, replies.append, request, None, sequence
-    )
-    assert replies == []
-    first.callback(entry)
-    assert replies == [entry]
-    second.callback(done)
-    assert replies == [entry, done]
+    assert server._gotResponseFromProxiedServer(done, replies.append, request, None)
+    assert replies == [("rewritten", entry), ("rewritten", done)]
 
 
 async def test_proxybase_connection_close_and_quiet_starttls_paths():
@@ -810,9 +805,12 @@ async def test_proxybase_connection_close_and_quiet_starttls_paths():
     server = proxybase.ProxyBase()
     server.factory = Factory()
     replies = []
-    assert await server.handleStartTLSRequest(
-        pureldap.LDAPStartTLSRequest(), None, replies.append
-    ) is None
+    assert (
+        server.handleStartTLSRequest(
+            pureldap.LDAPStartTLSRequest(), None, replies.append
+        )
+        is None
+    )
     assert replies[0].resultCode == ldaperrors.Success.resultCode
 
 

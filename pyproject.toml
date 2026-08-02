@@ -11,7 +11,7 @@ maintainers = [{ name = "Bret Curtis", email = "psi29a@gmail.com" }]
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-dependencies = ["anyio", "dnspython", "exceptiongroup", "passlib", "pyparsing", "zope.interface"]
+dependencies = ["anyio", "dnspython", "exceptiongroup", "outcome", "passlib", "pyparsing", "zope.interface"]
 classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -148,6 +148,7 @@ deps =
     anyio
     dnspython
     exceptiongroup
+    outcome
     pyparsing
     pytest
     pytest-cov

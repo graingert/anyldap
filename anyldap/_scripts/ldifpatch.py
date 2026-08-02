@@ -3,25 +3,24 @@ import sys
 import anyio
 
 from anyldap import inmemory, usage
-from anyldap._async import await_result
 from anyldap.protocols.ldap import ldif, ldifdelta
 
 
-def output(tree, outputFile):
+async def output(tree, outputFile):
     outputFile.write(ldif._header())
 
     def _write(node):
         outputFile.write(node.toWire())
 
-    tree.subtree(callback=_write)
+    await tree.subtree(callback=_write)
 
 
 async def main(dataFile, patchFile, outputFile):
-    db = await await_result(inmemory.fromLDIFFile(dataFile))
+    db = await inmemory.fromLDIFFile(dataFile)
     patches = ldifdelta.fromLDIFFile(patchFile)
     for patch in patches:
-        patch.patch(db)
-    output(db, outputFile)
+        await patch.patch(db)
+    await output(db, outputFile)
 
 
 class MyOptions(usage.Options):

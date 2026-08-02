@@ -1,10 +1,9 @@
 from zope.interface import implementer
 
 from anyldap import entry, entryhelpers, interfaces
-from anyldap._async import await_result
-from anyldap.deferred import DeferredSource, maybeDeferred, succeed
+from anyldap._async import ResultSlot
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
-from anyldap.runtime import ConnectionDone, Failure
+from anyldap.runtime import ConnectionDone, Failure, unwrap_failure
 
 
 class LDAPCannotRemoveRootError(ldaperrors.LDAPNamingViolation):
@@ -27,42 +26,35 @@ class ReadOnlyInMemoryLDAPEntry(
     def parent(self):
         return self._parent
 
-    def children(self, callback=None):
+    async def children(self, callback=None):
         if callback is None:
-            return succeed(list(self._children.values()))
-        else:
-            for c in self._children.values():
-                callback(c)
-            return succeed(None)
+            return list(self._children.values())
+        for c in self._children.values():
+            callback(c)
+        return None
 
-    async def children_async(self, callback=None):
-        return await await_result(self.children(callback=callback))
+    children_async = children
 
-    def _lookup(self, dn):
+    async def lookup(self, dn):
+        if not isinstance(dn, distinguishedname.DistinguishedName):
+            dn = distinguishedname.DistinguishedName(stringValue=dn)
         if not self.dn.contains(dn):
             raise ldaperrors.LDAPNoSuchObject(dn.getText())
         if dn == self.dn:
-            return succeed(self)
+            return self
 
         for c in self._children.values():
             if c.dn.contains(dn):
-                return c.lookup(dn)
+                return await c.lookup(dn)
 
         raise ldaperrors.LDAPNoSuchObject(dn.getText())
 
-    def lookup(self, dn):
-        if not isinstance(dn, distinguishedname.DistinguishedName):
-            dn = distinguishedname.DistinguishedName(stringValue=dn)
-        return maybeDeferred(self._lookup, dn)
+    lookup_async = lookup
 
-    async def lookup_async(self, dn):
-        return await await_result(self.lookup(dn))
+    async def fetch(self, *attributes):
+        return self
 
-    def fetch(self, *attributes):
-        return succeed(self)
-
-    async def fetch_async(self, *attributes):
-        return await await_result(self.fetch(*attributes))
+    fetch_async = fetch
 
     def addChild(self, rdn, attributes):
         """TODO ugly API. Returns the created entry."""
@@ -78,20 +70,16 @@ class ReadOnlyInMemoryLDAPEntry(
         self._children[rdn_str] = e
         return e
 
-    def _delete(self):
+    async def delete(self):
         if self._parent is None:
             raise LDAPCannotRemoveRootError()
         if self._children:
             raise ldaperrors.LDAPNotAllowedOnNonLeaf(self.dn)
-        return self._parent.deleteChild(self.dn.split()[0])
+        return await self._parent.deleteChild(self.dn.split()[0])
 
-    def delete(self):
-        return maybeDeferred(self._delete)
+    delete_async = delete
 
-    async def delete_async(self):
-        return await await_result(self.delete())
-
-    def _deleteChild(self, rdn):
+    async def deleteChild(self, rdn):
         if not isinstance(rdn, distinguishedname.RelativeDistinguishedName):
             rdn = distinguishedname.RelativeDistinguishedName(stringValue=rdn)
         rdn_str = rdn.getText()
@@ -100,13 +88,9 @@ class ReadOnlyInMemoryLDAPEntry(
         except KeyError:
             raise ldaperrors.LDAPNoSuchObject(rdn.getText())
 
-    def deleteChild(self, rdn):
-        return maybeDeferred(self._deleteChild, rdn)
+    deleteChild_async = deleteChild
 
-    async def deleteChild_async(self, rdn):
-        return await await_result(self.deleteChild(rdn))
-
-    def _move(self, newDN):
+    async def move(self, newDN):
         if not isinstance(newDN, distinguishedname.DistinguishedName):
             newDN = distinguishedname.DistinguishedName(stringValue=newDN)
         if self._parent is not None and newDN.up() != self.dn.up():
@@ -114,11 +98,12 @@ class ReadOnlyInMemoryLDAPEntry(
             root = self
             while root._parent is not None:
                 root = root._parent
-            d = maybeDeferred(root.lookup, newDN.up())
+            newParent = await root.lookup(newDN.up())
         else:
-            d = succeed(self._parent)
-        d.addCallback(self._move2, newDN)
-        return d
+            newParent = self._parent
+        return self._move2(newParent, newDN)
+
+    move_async = move
 
     def _move2(self, newParent, newDN):
         if newParent is not None:
@@ -135,63 +120,57 @@ class ReadOnlyInMemoryLDAPEntry(
         self.dn = newDN
         return self
 
-    def move(self, newDN):
-        return maybeDeferred(self._move, newDN)
+    async def commit(self):
+        return True
 
-    async def move_async(self, newDN):
-        return await await_result(self.move(newDN))
-
-    def commit(self):
-        return succeed(True)
-
-    async def commit_async(self):
-        return await await_result(self.commit())
+    commit_async = commit
 
 
 class InMemoryLDIFProtocol(ldifprotocol.LDIF):
     """
     Receive LDIF data and gather results into an ReadOnlyInMemoryLDAPEntry.
 
-    You can override lookupFailed and addFailed to provide smarter
-    error handling. They are called as Deferred errbacks; returning
-    the reason causes error to pass onward and abort the whole
-    operation. Returning None from lookupFailed skips that entry, but
-    continues loading.
+    You can override lookupFailed and addFailed to provide smarter error
+    handling. They are called with the `Failure` and the entry that provoked
+    it; returning the reason causes the error to pass onward and abort the
+    whole operation. Returning None skips that entry, but continues loading.
 
-    When the full LDIF data has been read, the completed Deferred will
-    trigger.
+    Entries are gathered as they arrive and grafted onto the tree by
+    `completed()`, which is where the database becomes available.
     """
 
     def __init__(self):
         super().__init__()
         # Do not access this via db, just to make sure you respect the ordering
         self.db = None
-        self._deferred = DeferredSource()
-        self.completed = DeferredSource().deferred
+        self._pending = []
+        self._received = ResultSlot()
 
-    def _addEntry(self, db, entry):
-        d = db.lookup(entry.dn.up())
-        d.addErrback(self.lookupFailed, entry)
-
-        def _add(parent, entry):
+    async def _addEntry(self, db, entry):
+        try:
+            parent = await db.lookup(entry.dn.up())
+        except Exception as exc:
+            if self._reportFailure(self.lookupFailed, exc, entry):
+                return
+            raise
+        try:
             parent.addChild(rdn=entry.dn.split()[0], attributes=entry)
+        except Exception as exc:
+            if self._reportFailure(self.addFailed, exc, entry):
+                return
+            raise
 
-        d.addCallback(_add, entry)
-        d.addErrback(self.addFailed, entry)
-
-        def _passDB(_, db):
-            return db
-
-        d.addCallback(_passDB, db)
-        return d
+    @staticmethod
+    def _reportFailure(hook, exc, entry):
+        """Call `hook`; report whether it swallowed the error."""
+        return hook(Failure(exc), entry) is None
 
     def gotEntry(self, entry):
         if self.db is None:
             # first entry, create the db, prepare to process the rest
             self.db = ReadOnlyInMemoryLDAPEntry(dn=entry.dn, attributes=entry)
-            self._deferred.callback(self.db)
         else:
-            self._deferred.deferred.addCallback(self._addEntry, entry)
+            self._pending.append(entry)
 
     def lookupFailed(self, reason, entry):
         return reason  # pass the error (abort) by default
@@ -201,18 +180,20 @@ class InMemoryLDIFProtocol(ldifprotocol.LDIF):
 
     def connectionLost(self, reason):
         super().connectionLost(reason)
-        if not reason.check(ConnectionDone):
-            self.completed._errback(reason)
+        if reason.check(ConnectionDone):
+            self._received.set_value(None)
         else:
-            self._deferred.deferred.addCallbacks(
-                self.completed._callback,
-                self.completed._errback,
-            )
+            self._received.set_exception(unwrap_failure(reason))
 
-        del self._deferred  # invalidate it to flush out bugs
+    async def completed(self):
+        """Wait for the LDIF stream, then return the assembled database."""
+        await self._received.wait()
+        while self._pending:
+            await self._addEntry(self.db, self._pending.pop(0))
+        return self.db
 
 
-def fromLDIFFile(f):
+async def fromLDIFFile(f):
     """Read LDIF data from a file."""
 
     p = InMemoryLDIFProtocol()
@@ -223,4 +204,4 @@ def fromLDIFFile(f):
         p.dataReceived(data)
     p.connectionLost(Failure(ConnectionDone()))
 
-    return p.completed
+    return await p.completed()

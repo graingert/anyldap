@@ -49,3 +49,14 @@ class Failure(Exception):
 
     def raiseException(self):
         raise self.value
+
+
+def unwrap_failure(reason):
+    """Return the exception ``reason`` describes.
+
+    Connection-lost reasons reach us either as a bare exception or wrapped in
+    a `Failure`; callers that want to raise the reason need the former.
+    """
+    if isinstance(reason, Failure):
+        return reason.value
+    return reason

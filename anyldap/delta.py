@@ -121,7 +121,7 @@ class Operation:
         @param root: IConnectedLDAPEntry that is at the root of the
         subtree the patch applies to.
 
-        @returns: Deferred with None or failure.
+        @returns: None, once the patch has been applied.
         """
         raise NotImplementedError("%s.patch not implemented" % self.__class__.__name__)
 
@@ -178,16 +178,11 @@ class ModifyOp(Operation):
             result.append(m)
         return class_(dn, result)
 
-    def patch(self, root):
-        d = root.lookup(self.dn)
-
-        def gotEntry(entry, modifications):
-            for mod in self.modifications:
-                mod.patch(entry)
-            return entry
-
-        d.addCallback(gotEntry, self.modifications)
-        return d
+    async def patch(self, root):
+        entry = await root.lookup(self.dn)
+        for mod in self.modifications:
+            mod.patch(entry)
+        return entry
 
     def __repr__(self):
         dn = self.dn.getText()
@@ -228,14 +223,9 @@ class AddOp(Operation):
         l[1:1] = [ldif.attributeAsLDIF("changetype", "add").rstrip(b"\n")]
         return b"".join([x + b"\n" for x in l])
 
-    def patch(self, root):
-        d = root.lookup(self.entry.dn.up())
-
-        def gotParent(parent, entry):
-            parent.addChild(entry.dn.split()[0], entry)
-
-        d.addCallback(gotParent, self.entry)
-        return d
+    async def patch(self, root):
+        parent = await root.lookup(self.entry.dn.up())
+        parent.addChild(self.entry.dn.split()[0], self.entry)
 
     def __repr__(self):
         return self.__class__.__name__ + "(" + "%r" % self.entry + ")"
@@ -281,14 +271,9 @@ class DeleteOp(Operation):
         r.append(b"\n")
         return b"".join(r)
 
-    def patch(self, root):
-        d = root.lookup(self.dn)
-
-        def gotEntry(entry):
-            return entry.delete()
-
-        d.addCallback(gotEntry)
-        return d
+    async def patch(self, root):
+        entry = await root.lookup(self.dn)
+        return await entry.delete()
 
     def __repr__(self):
         dn = self.dn.getText()

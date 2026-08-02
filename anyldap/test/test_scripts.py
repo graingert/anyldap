@@ -22,10 +22,18 @@ from anyldap._scripts import (
     rename,
     search,
 )
-from anyldap.deferred import succeed
 from anyldap.protocols.ldap import ldapserver, merger, proxybase, svcbindproxy
 
 pytestmark = pytest.mark.anyio
+
+
+def _returning(value):
+    """Build an async stand-in that ignores its arguments and returns `value`."""
+
+    async def stub(*args, **kwargs):
+        return value
+
+    return stub
 
 
 @pytest.mark.parametrize(
@@ -366,7 +374,7 @@ async def test_fetchschema_main(monkeypatch, capsys):
     monkeypatch.setattr(
         fetchschema.fetchschema,
         "fetch",
-        lambda client, base: succeed((["attribute"], ["object"])),
+        _returning((["attribute"], ["object"])),
     )
     await fetchschema.main(FakeConfig())
     assert "attributetype attribute" in capsys.readouterr().out
@@ -379,7 +387,7 @@ async def test_getfreenumber_main(monkeypatch, capsys):
     monkeypatch.setattr(
         getfreenumber.numberalloc,
         "getFreeNumber",
-        lambda entry, name, min: succeed(1001),
+        _returning(1001),
     )
     await getfreenumber.main(FakeConfig())
     assert capsys.readouterr().out == "1001\n"

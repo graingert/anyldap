@@ -4,23 +4,26 @@ Tests for the code from docs/source/example.
 import os
 import sys
 
+import pytest
+
 from anyldap import inmemory, testutil
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors
-from anyldap.test import unittest
 
 # We inject the examples so that we can import them.
 # There is no cleanup, so this is leaving side effects.
 sys.path.append(os.path.abspath("docs/source/examples"))
 import anyldap_with_upn_bind
 
+pytestmark = pytest.mark.anyio
 
-class LDAPServerWithUPNBind(unittest.TestCase):
+
+class TestLDAPServerWithUPNBind:
     """
     Tests for docs/source/examples/anyldap_with_upn_bind.py
     """
 
-    def setUp(self):
+    def setup_method(self):
         self.root = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="dc=example,dc=com", attributes={"dc": "example"}
         )
@@ -48,15 +51,12 @@ class LDAPServerWithUPNBind(unittest.TestCase):
                 pureldap.LDAPBindRequest(dn=bind_dn, auth=password), id=4
             ).toWire(),
         )
-        self.assertEqual(
-            response,
-            pureldap.LDAPMessage(
+        assert response == (pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=0, matchedDN="cn=bob,dc=example,dc=com"
                 ),
                 id=4,
-            ).toWire(),
-        )
+            ).toWire())
 
     async def test_bindSuccessUPN(self):
         """
@@ -81,12 +81,9 @@ class LDAPServerWithUPNBind(unittest.TestCase):
                 id=734,
             ).toWire(),
         )
-        self.assertEqual(
-            response,
-            pureldap.LDAPMessage(
+        assert response == (pureldap.LDAPMessage(
                 pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPInvalidCredentials.resultCode
                 ),
                 id=734,
-            ).toWire(),
-        )
+            ).toWire())

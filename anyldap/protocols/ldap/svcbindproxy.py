@@ -47,14 +47,6 @@ class ServiceBindingProxy(proxy.Proxy):
         if fallback is not None:
             self.fallback = fallback
 
-    def _startSearch(self, request, controls, reply):
-        services = list(self.services)
-        baseDN = self.config.getIdentityBaseDN()
-        e = ldapsyntax.LDAPEntryWithClient(client=self.client, dn=baseDN)
-        d = self._tryService(services, e, request, controls, reply)
-        d.addCallback(self._maybeFallback, request, controls, reply)
-        return d
-
     async def _startSearch_async(self, request, controls, reply):
         services = list(self.services)
         baseDN = self.config.getIdentityBaseDN()
@@ -62,19 +54,7 @@ class ServiceBindingProxy(proxy.Proxy):
         entry = await self._tryService_async(services, e, request)
         return await self._maybeFallback_async(entry, request, controls, reply)
 
-    def _maybeFallback(self, entry, request, controls, reply):
-        if entry is not None:
-            msg = pureldap.LDAPBindResponse(
-                resultCode=ldaperrors.Success.resultCode, matchedDN=request.dn
-            )
-            return msg
-        elif self.fallback:
-            self.handleUnknown(request, controls, reply)
-        else:
-            msg = pureldap.LDAPBindResponse(
-                resultCode=ldaperrors.LDAPInvalidCredentials.resultCode
-            )
-            return msg
+    _startSearch = _startSearch_async
 
     async def _maybeFallback_async(self, entry, request, controls, reply):
         if entry is not None:
@@ -91,81 +71,6 @@ class ServiceBindingProxy(proxy.Proxy):
     def timestamp(self):
         now = datetime.datetime.now()
         return now.strftime("%Y%m%d%H%M%SZ")
-
-    def _tryService(self, services, baseEntry, request, controls, reply):
-        try:
-            serviceName = services.pop(0)
-        except IndexError:
-            return None
-        timestamp = self.timestamp()
-        d = baseEntry.search(
-            filterObject=pureldap.LDAPFilter_and(
-                [
-                    pureldap.LDAPFilter_equalityMatch(
-                        attributeDesc=pureldap.LDAPAttributeDescription("objectClass"),
-                        assertionValue=pureldap.LDAPAssertionValue(
-                            "serviceSecurityObject"
-                        ),
-                    ),
-                    pureldap.LDAPFilter_equalityMatch(
-                        attributeDesc=pureldap.LDAPAttributeDescription("owner"),
-                        assertionValue=pureldap.LDAPAssertionValue(request.dn),
-                    ),
-                    pureldap.LDAPFilter_equalityMatch(
-                        attributeDesc=pureldap.LDAPAttributeDescription("cn"),
-                        assertionValue=pureldap.LDAPAssertionValue(serviceName),
-                    ),
-                    pureldap.LDAPFilter_or(
-                        [
-                            # no time
-                            pureldap.LDAPFilter_not(
-                                pureldap.LDAPFilter_present("validFrom")
-                            ),
-                            # or already valid
-                            pureldap.LDAPFilter_lessOrEqual(
-                                attributeDesc=pureldap.LDAPAttributeDescription(
-                                    "validFrom"
-                                ),
-                                assertionValue=pureldap.LDAPAssertionValue(timestamp),
-                            ),
-                        ]
-                    ),
-                    pureldap.LDAPFilter_or(
-                        [
-                            # no time
-                            pureldap.LDAPFilter_not(
-                                pureldap.LDAPFilter_present("validUntil")
-                            ),
-                            # or still valid
-                            pureldap.LDAPFilter_greaterOrEqual(
-                                attributeDesc=pureldap.LDAPAttributeDescription(
-                                    "validUntil"
-                                ),
-                                assertionValue=pureldap.LDAPAssertionValue(timestamp),
-                            ),
-                        ]
-                    ),
-                ]
-            ),
-            attributes=("1.1",),
-        )
-
-        def _gotEntries(entries):
-            if not entries:
-                return None
-            assert len(entries) == 1  # TODO
-            e = entries[0]
-            d = e.bind(request.auth)
-            return d
-
-        d.addCallback(_gotEntries)
-        d.addCallbacks(
-            callback=self._loopIfNone,
-            callbackArgs=(services, baseEntry, request, controls, reply),
-            errback=self._loopIfBindError,
-            errbackArgs=(services, baseEntry, request, controls, reply),
-        )
-        return d
 
     async def _tryService_async(self, services, baseEntry, request):
         while services:
@@ -227,18 +132,6 @@ class ServiceBindingProxy(proxy.Proxy):
                 continue
         return None
 
-    def _loopIfNone(self, r, *a, **kw):
-        if r is None:
-            d = self._tryService(*a, **kw)
-            return d
-        else:
-            return r
-
-    def _loopIfBindError(self, fail, *a, **kw):
-        fail.trap(ldaperrors.LDAPInvalidCredentials)
-        d = self._tryService(*a, **kw)
-        return d
-
     fail_LDAPBindRequest = pureldap.LDAPBindResponse
 
     def handle_LDAPBindRequest(self, request, controls, reply):
@@ -252,11 +145,7 @@ class ServiceBindingProxy(proxy.Proxy):
         if request.dn == "":
             # anonymous bind
             return self.handleUnknown(request, controls, reply)
-        else:
-            if self._anyio_stream is not None:
-                return self._startSearch_async(request, controls, reply)
-            d = self._whenConnected(self._startSearch, request, controls, reply)
-            return d
+        return self._whenConnected(self._startSearch_async, request, controls, reply)
 
 
 if __name__ == "__main__":

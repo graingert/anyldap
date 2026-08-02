@@ -7,7 +7,6 @@ from zope.interface import implementer
 from anyldap import attributeset, delta, interfaces
 from anyldap._collections import InsensitiveDict
 from anyldap._encoder import WireStrAlias, get_strings, to_bytes
-from anyldap.deferred import maybeDeferred
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldif
 
 
@@ -218,8 +217,10 @@ class BaseLDAPEntry(WireStrAlias):
 
         return delta.ModifyOp(dn=self.dn, modifications=r)
 
-    def bind(self, password):
-        return maybeDeferred(self._bind, password)
+    async def bind(self, password):
+        return self._bind(password)
+
+    bind_async = bind
 
     def _bind(self, password):
         password = to_bytes(password)

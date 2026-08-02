@@ -3,11 +3,10 @@
 import anyio
 from anyio.streams.tls import TLSStream
 
-from anyldap._async import await_deferred
-from anyldap.deferred import DeferredSource
+from anyldap._async import ResultSlot
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldaperrors
-from anyldap.runtime import ConnectionDone, Failure, Protocol, logger
+from anyldap.runtime import ConnectionDone, Failure, Protocol, logger, unwrap_failure
 
 
 class _PrebufferedStream:
@@ -117,8 +116,8 @@ class LDAPClient(Protocol):
         # notify handlers of operations in flight
         while self.onwire:
             k, v = self.onwire.popitem()
-            d, _, _, _, _ = v
-            d.errback(reason)
+            slot, _, _, _, _ = v
+            slot.set_exception(unwrap_failure(reason))
 
     def _send(self, op, controls=None):
         if not self.connected:
@@ -129,7 +128,7 @@ class LDAPClient(Protocol):
         assert msg.id not in self.onwire
         return msg
 
-    def send(self, op, controls=None):
+    async def send(self, op, controls=None):
         """
         Send an LDAP operation to the server.
         @param op: the operation to send
@@ -137,34 +136,18 @@ class LDAPClient(Protocol):
         @param controls: Any controls to be included in the request.
         @type controls: LDAPControls
         @return: the response from server
-        @rtype: Deferred LDAPProtocolResponse
+        @rtype: LDAPProtocolResponse
         """
-        msg = self._send(op, controls=controls)
-        assert op.needs_answer
-        source = DeferredSource()
-        self.onwire[msg.id] = (source, False, None, None, None)
-        self._queue_anyio_write(msg.toWire())
-        return source.deferred
+        return await self._send_and_wait(op, controls, False, None, (), {})
 
-    async def send_async(self, op, controls=None):
-        msg = self._send(op, controls=controls)
-        assert op.needs_answer
-        source = DeferredSource()
-        self.onwire[msg.id] = (source, False, None, None, None)
-        await self._send_anyio_write(msg.toWire())
-        return await await_deferred(source.deferred)
-
-    def send_multiResponse(self, op, handler, *args, **kwargs):
+    async def send_multiResponse(self, op, handler, *args, **kwargs):
         """
         Send an LDAP operation to the server, expecting one or more
         responses.
 
-        If `handler` is provided, it will receive a LDAP response as
-        its first argument. The Deferred returned by this function will
-        never fire.
-
-        If `handler` is not provided, the Deferred returned by this
-        function will fire with the final LDAP response.
+        `handler` receives a LDAP response as its first argument and
+        returns a boolean, whether this was the final response. This
+        call completes once the handler has claimed a response as final.
 
         @param op: the operation to send
         @type op: LDAPProtocolRequest
@@ -173,38 +156,21 @@ class LDAPClient(Protocol):
         final response.
         @param args: positional arguments to pass to handler
         @param kwargs: keyword arguments to pass to handler
-        @return: the result from the first handler as a deferred that
-        completes when the first response has been received
-        @rtype: Deferred LDAPProtocolResponse
+        @return: the final LDAP response
+        @rtype: LDAPProtocolResponse
         """
-        msg = self._send(op)
-        assert op.needs_answer
-        source = DeferredSource()
-        self.onwire[msg.id] = (source, False, handler, args, kwargs)
-        self._queue_anyio_write(msg.toWire())
-        return source.deferred
+        return await self._send_and_wait(op, None, False, handler, args, kwargs)
 
-    async def send_multiResponse_async(self, op, handler, *args, **kwargs):
-        msg = self._send(op)
-        assert op.needs_answer
-        source = DeferredSource()
-        self.onwire[msg.id] = (source, False, handler, args, kwargs)
-        await self._send_anyio_write(msg.toWire())
-        result = await source.deferred
-        return result
-
-    def send_multiResponse_ex(self, op, controls=None, handler=None, *args, **kwargs):
+    async def send_multiResponse_ex(
+        self, op, controls=None, handler=None, *args, **kwargs
+    ):
         """
         Send an LDAP operation to the server, expecting one or more
         responses.
 
-        If `handler` is provided, it will receive a LDAP response *and*
-        response controls as its first 2 arguments. The Deferred returned
-        by this function will never fire.
-
-        If `handler` is not provided, the Deferred returned by this
-        function will fire with a tuple of the first LDAP response
-        and any associated response controls.
+        `handler` receives a LDAP response *and* response controls as its
+        first 2 arguments and returns a boolean, whether this was the final
+        response.
 
         @param op: the operation to send
         @type op: LDAPProtocolRequest
@@ -215,27 +181,24 @@ class LDAPClient(Protocol):
         final response.
         @param args: positional arguments to pass to handler
         @param kwargs: keyword arguments to pass to handler
-        @return: the result from the last handler as a deferred that
-        completes when the last response has been received
-        @rtype: Deferred LDAPProtocolResponse
+        @return: a tuple of the final LDAP response and its controls
+        @rtype: tuple
         """
-        msg = self._send(op, controls=controls)
-        assert op.needs_answer
-        source = DeferredSource()
-        self.onwire[msg.id] = (source, True, handler, args, kwargs)
-        self._queue_anyio_write(msg.toWire())
-        return source.deferred
+        return await self._send_and_wait(op, controls, True, handler, args, kwargs)
 
-    async def send_multiResponse_ex_async(
-        self, op, controls=None, handler=None, *args, **kwargs
-    ):
+    async def _send_and_wait(self, op, controls, return_controls, handler, args, kwargs):
         msg = self._send(op, controls=controls)
         assert op.needs_answer
-        source = DeferredSource()
-        self.onwire[msg.id] = (source, True, handler, args, kwargs)
+        slot = ResultSlot()
+        self.onwire[msg.id] = (slot, return_controls, handler, args, kwargs)
         await self._send_anyio_write(msg.toWire())
-        result = await source.deferred
-        return result
+        return await slot.wait()
+
+    # The `_async` spelling is the documented public API; the shorter names
+    # match the LDAP client interface these protocols implement.
+    send_async = send
+    send_multiResponse_async = send_multiResponse
+    send_multiResponse_ex_async = send_multiResponse_ex
 
     def unsolicitedNotification(self, msg):
         logger.info("Got unsolicited notification: %s", repr(msg))
@@ -255,15 +218,15 @@ class LDAPClient(Protocol):
                 except Exception as exc:
                     tls_upgrade["error"] = exc
                 tls_upgrade["response_received"] = True
-            d, return_controls, handler, args, kwargs = self.onwire[msg.id]
+            slot, return_controls, handler, args, kwargs = self.onwire[msg.id]
 
             if handler is None:
                 assert (args is None) or (args == ())
                 assert (kwargs is None) or (kwargs == {})
                 if return_controls:
-                    d.callback((msg.value, msg.controls))
+                    slot.set_value((msg.value, msg.controls))
                 else:
-                    d.callback(msg.value)
+                    slot.set_value(msg.value)
                 del self.onwire[msg.id]
             else:
                 assert args is not None
@@ -271,18 +234,20 @@ class LDAPClient(Protocol):
                 # Return true to mark request as fully handled
                 if return_controls:
                     if handler(msg.value, msg.controls, *args, **kwargs):
-                        d.callback((msg.value, msg.controls))
+                        slot.set_value((msg.value, msg.controls))
                         del self.onwire[msg.id]
                 else:
                     if handler(msg.value, *args, **kwargs):
-                        d.callback(msg.value)
+                        slot.set_value(msg.value)
                         del self.onwire[msg.id]
 
-    async def bind_async(self, dn="", auth=""):
+    async def bind(self, dn="", auth=""):
         if not self.connected:
             raise LDAPClientConnectionLostException()
-        result = await self.send_async(pureldap.LDAPBindRequest(dn=dn, auth=auth))
+        result = await self.send(pureldap.LDAPBindRequest(dn=dn, auth=auth))
         return self._handle_bind_msg(result)
+
+    bind_async = bind
 
     def _handle_bind_msg(self, msg):
         assert isinstance(msg, pureldap.LDAPBindResponse)
@@ -304,7 +269,7 @@ class LDAPClient(Protocol):
 
         return msg
 
-    async def startTLS_async(self, ctx=None, hostname=None):
+    async def startTLS(self, ctx=None, hostname=None):
         if not self.connected:
             raise LDAPClientConnectionLostException()
         if self.onwire:
@@ -312,8 +277,8 @@ class LDAPClient(Protocol):
         event = anyio.Event()
         op = pureldap.LDAPStartTLSRequest()
         msg = self._send(op)
-        source = DeferredSource()
-        self.onwire[msg.id] = (source, False, None, None, None)
+        slot = ResultSlot()
+        self.onwire[msg.id] = (slot, False, None, None, None)
         tls_upgrade = {
             "context": ctx,
             "hostname": hostname,
@@ -324,17 +289,21 @@ class LDAPClient(Protocol):
         }
         self._tls_upgrade = tls_upgrade
         await self._send_anyio_write(msg.toWire())
-        await await_deferred(source.deferred)
+        await slot.wait()
         await event.wait()
         self._tls_upgrade = None
         if tls_upgrade["error"] is not None:
             raise tls_upgrade["error"]
         return self
 
-    async def send_noResponse_async(self, op, controls=None):
+    startTLS_async = startTLS
+
+    async def send_noResponse(self, op, controls=None):
         msg = self._send(op, controls=controls)
         assert not op.needs_answer
         await self._send_anyio_write(msg.toWire())
+
+    send_noResponse_async = send_noResponse
 
     async def attach_stream(self, stream, task_group):
         self._anyio_stream = stream
@@ -413,16 +382,6 @@ class LDAPClient(Protocol):
                 ssl_context=ssl_context,
                 standard_compatible=False,
             )
-
-    def _queue_anyio_write(self, data):
-        if (
-            not self.connected
-            or self._anyio_stream is None
-            or self._anyio_task_group is None
-            or self._anyio_write_lock is None
-        ):
-            raise LDAPClientConnectionLostException()
-        self._anyio_task_group.start_soon(self._send_anyio_write, data)
 
     async def _send_anyio_write(self, data):
         lock = self._anyio_write_lock

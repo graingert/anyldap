@@ -3,7 +3,6 @@ LDAP protocol proxy server.
 """
 
 from anyldap._async import await_result
-from anyldap.deferred import logError, maybeDeferred, succeed
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, ldapserver
 from anyldap.runtime import Failure, logger
@@ -78,14 +77,12 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             return
         request, controls = result
         if request.needs_answer:
-            dseq = []
             await self.client.send_multiResponse_async(
                 request,
                 self._gotResponseFromProxiedServer,
                 reply,
                 request,
                 controls,
-                dseq,
             )
         else:
             await self.client.send_noResponse_async(request)
@@ -93,28 +90,18 @@ class ProxyBase(ldapserver.BaseLDAPServer):
     def handleBeforeForwardRequest(self, request, controls, reply):
         """
         Override to modify request and/or controls forwarded on to the proxied server.
-        Must return a tuple of request, controls or a deferred that fires the same.
-        Return `None` or a deferred that fires `None` to bypass forwarding the
+        Must return a tuple of request, controls, or an awaitable of the same.
+        Return `None` (or an awaitable of `None`) to bypass forwarding the
         request to the proxied server.  In this case, any response can be sent to the
         client via `reply(response)`.
         """
-        return succeed((request, controls))
+        return (request, controls)
 
-    def _gotResponseFromProxiedServer(self, response, reply, request, controls, dseq):
+    def _gotResponseFromProxiedServer(self, response, reply, request, controls):
         """
         Returns True if this is the last response to the request.
         """
-        d = maybeDeferred(self.handleProxiedResponse, response, request, controls)
-
-        def replyAndLinkToNextEntry(result):
-            dseq.pop(0)
-            reply(result)
-            if len(dseq) > 0:
-                dseq[0].addCallback(replyAndLinkToNextEntry)
-
-        dseq.append(d)
-        if len(dseq) == 1:
-            d.addCallback(replyAndLinkToNextEntry)
+        reply(self.handleProxiedResponse(response, request, controls))
         return isinstance(
             response,
             (
@@ -126,9 +113,9 @@ class ProxyBase(ldapserver.BaseLDAPServer):
     def handleProxiedResponse(self, response, request, controls):
         """
         Override to intercept and modify proxied responses.
-        Must return the modified response or a deferred that fires the modified response.
+        Must return the modified response.
         """
-        return succeed(response)
+        return response
 
     def handleUnknown(self, request, controls, reply):
         """
@@ -139,17 +126,15 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         """
         return self._forwardRequestToProxiedServer_async(request, controls, reply)
 
-    def handle_LDAPExtendedRequest(self, request, controls, reply):
+    async def handle_LDAPExtendedRequest(self, request, controls, reply):
         """
         Handler for extended LDAP requests (e.g. startTLS).
         """
         if self.debug:
             logger.info("Received extended request: %s", request.requestName)
         if request.requestName == pureldap.LDAPStartTLSRequest.oid:
-            d = maybeDeferred(self.handleStartTLSRequest, request, controls, reply)
-            d.addErrback(logError)
-            return d
-        return self.handleUnknown(request, controls, reply)
+            return self.handleStartTLSRequest(request, controls, reply)
+        return await await_result(self.handleUnknown(request, controls, reply))
 
     def handleStartTLSRequest(self, request, controls, reply):
         """
@@ -191,7 +176,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
                 "StartTLS not implemented.  "
                 "Responding with 'unavailable' (52): " + repr(msg)
             )
-        return succeed(msg)
+        return msg
 
     def handle_LDAPUnbindRequest(self, request, controls, reply):
         """
@@ -205,7 +190,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         assert self.clientConnector is not None, (
             "You must set the `clientConnector` property on this instance.  "
             "It should be a callable that attempts to connect to a server. "
-            "This callable should return a deferred that will fire with a "
+            "This callable should be awaitable and resolve to a "
             "protocol instance when the connection is complete."
         )
         ldapserver.BaseLDAPServer.connectionMade(self)
@@ -237,7 +222,7 @@ class ExampleProxy(ProxyBase):
         Log the representation of the responses received.
         """
         logger.info("Received response from proxied service: %s", repr(response))
-        return succeed(response)
+        return response
 
 
 if __name__ == "__main__":

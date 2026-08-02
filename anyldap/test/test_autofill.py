@@ -2,9 +2,12 @@
 Test cases for anyldap.protocols.ldap.autofill module.
 """
 
+import pytest
+
 from anyldap.protocols.ldap import ldapsyntax
-from anyldap.test import unittest
 from anyldap.testutil import LDAPClientTestDriver
+
+pytestmark = pytest.mark.anyio
 
 
 class Autofill_sum:  # TODO baseclass
@@ -30,8 +33,8 @@ class Autofill_sum:  # TODO baseclass
         ldapObject[self.resultAttr] = [sum]
 
 
-class LDAPAutoFill_Simple(unittest.TestCase):
-    def testSimpleSum(self):
+class TestLDAPAutoFill_Simple:
+    async def testSimpleSum(self):
         """A simple autofiller that calculates sums of attributes should work.."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -41,16 +44,13 @@ class LDAPAutoFill_Simple(unittest.TestCase):
                 "objectClass": ["some", "other"],
             },
         )
-        d = o.addAutofiller(Autofill_sum(resultAttr="sum", sumAttrs=["a", "b"]))
 
-        def cb(dummy):
-            client.assertNothingSent()
 
-            o["a"] = ["1"]
-            o["b"] = ["2", "3"]
+        await o.addAutofiller(Autofill_sum(resultAttr="sum", sumAttrs=["a", "b"]))
+        client.assertNothingSent()
 
-            self.assertTrue("sum" in o)
-            self.assertEqual(o["sum"], ["6"])
+        o["a"] = ["1"]
+        o["b"] = ["2", "3"]
 
-        d.addCallback(cb)
-        return d
+        assert "sum" in o
+        assert o["sum"] == ["6"]

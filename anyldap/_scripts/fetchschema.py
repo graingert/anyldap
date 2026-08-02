@@ -3,7 +3,6 @@ import sys
 import anyio
 
 from anyldap import config, usage
-from anyldap._async import await_result
 from anyldap.protocols.ldap import fetchschema, ldapclient, ldapconnector
 
 
@@ -31,7 +30,7 @@ async def main(cfg):
         dn=base_dn,
         overrides=cfg.getServiceLocationOverrides(),
     )
-    result = await await_result(fetchschema.fetch(client, base_dn))
+    result = await fetchschema.fetch(client, base_dn)
     _printResults(result)
 
 

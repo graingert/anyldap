@@ -2,13 +2,13 @@ from contextlib import AsyncExitStack
 
 import anyio
 
+from anyldap._async import await_result
 from anyldap._encoder import get_strings
-from anyldap.deferred import ensureDeferred, maybeDeferred
 from anyldap.protocols.ldap import distinguishedname
 
 
-def connectToLDAPEndpoint(reactor, endpointStr, clientProtocol):
-    return ensureDeferred(connectToLDAPEndpointAsync(endpointStr, clientProtocol))
+async def connectToLDAPEndpoint(reactor, endpointStr, clientProtocol):
+    return await connectToLDAPEndpointAsync(endpointStr, clientProtocol)
 
 
 def _parseTCPEndpoint(endpointStr):
@@ -164,7 +164,7 @@ class LDAPClientCreator:
         self.args = args
         self.kwargs = kwargs
 
-    def connect(self, dn, overrides=None, bindAddress=None):
+    async def connect(self, dn, overrides=None, bindAddress=None):
         override = _findOverride(
             distinguishedname.DistinguishedName(stringValue=dn)
             if not isinstance(dn, distinguishedname.DistinguishedName)
@@ -172,27 +172,22 @@ class LDAPClientCreator:
             overrides or {},
         )
         if callable(override):
-            return maybeDeferred(override, lambda: self.protocolClass(*self.args, **self.kwargs))
-        return ensureDeferred(
-            self.connectAsync(
-                dn,
-                overrides=overrides,
-                bindAddress=bindAddress,
+            return await await_result(
+                override(lambda: self.protocolClass(*self.args, **self.kwargs))
             )
+        return await self.connectAsync(
+            dn,
+            overrides=overrides,
+            bindAddress=bindAddress,
         )
 
-    def connectAnonymously(self, dn, overrides=None):
-        """Connect to remote host and bind anonymously, return Deferred of resulting protocol instance."""
-        d = self.connect(dn, overrides=overrides)
-
-        def _bind(client):
-            bind = getattr(client, "bind", None)
-            if bind is None:
-                return client
-            return maybeDeferred(bind)
-
-        d.addCallback(_bind)
-        return d
+    async def connectAnonymously(self, dn, overrides=None):
+        """Connect to remote host and bind anonymously, returning the protocol instance."""
+        client = await self.connect(dn, overrides=overrides)
+        bind = getattr(client, "bind", None)
+        if bind is None:
+            return client
+        return await await_result(bind())
 
     async def connectToEndpointAsync(self, endpointStr, *, tls=False):
         return await connectToLDAPEndpointAsync(

@@ -2,12 +2,15 @@
 Test cases for anyldap.entry
 """
 
+import pytest
+
 from anyldap import delta, entry
 from anyldap.protocols.ldap.ldaperrors import LDAPInvalidCredentials
-from anyldap.test import unittest
+
+pytestmark = pytest.mark.anyio
 
 
-class TestBaseLDAPEntry(unittest.TestCase):
+class TestBaseLDAPEntry:
     """
     Tests for anyldap.entry.BaseLDAPEntry.
     """
@@ -16,23 +19,22 @@ class TestBaseLDAPEntry(unittest.TestCase):
         value = entry.BaseLDAPEntry(
             dn="dc=foo", attributes={"member": ["cn=one"], "cn": ["foo"]}
         )
-        self.assertEqual(len(value), 2)
-        self.assertTrue(value)
-        self.assertTrue(value.__nonzero__())
-        self.assertTrue(value.hasMember("cn=one"))
-        self.assertFalse(value.hasMember("cn=two"))
+        assert len(value) == 2
+        assert value
+        assert value.__nonzero__()
+        assert value.hasMember("cn=one")
+        assert not (value.hasMember("cn=two"))
 
     def testEditableAbstractOperations(self):
         value = entry.EditableLDAPEntry(dn="dc=foo")
-        [
-            self.assertRaises(NotImplementedError, operation, *args)
-            for operation, args in [
-                (value.undo, ()),
-                (value.commit, ()),
-                (value.move, ("dc=bar",)),
-                (value.delete, ()),
-            ]
-        ]
+        for operation, args in [
+            (value.undo, ()),
+            (value.commit, ()),
+            (value.move, ("dc=bar",)),
+            (value.delete, ()),
+        ]:
+            with pytest.raises(NotImplementedError):
+                operation(*args)
 
     def testEqualitySameType(self):
         """
@@ -52,14 +54,14 @@ class TestBaseLDAPEntry(unittest.TestCase):
             },
         )
 
-        self.assertEqual(a, b)
+        assert a == b
 
     def testEqualityDifferentType(self):
         """
         It is not equal with objects of different types.
         """
         a = entry.BaseLDAPEntry(dn="dc=foo", attributes={})
-        self.assertFalse(a == object())
+        assert not (a == object())
 
     def testInequalityDifferentDN(self):
         """
@@ -67,12 +69,12 @@ class TestBaseLDAPEntry(unittest.TestCase):
         """
         a = entry.BaseLDAPEntry(dn="dn=foo", attributes={"foo": ["bar"]})
         b = entry.BaseLDAPEntry(dn="dn=bar", attributes={"foo": ["bar"]})
-        self.assertNotEqual(a, b)
+        assert a != b
 
-    def testBindPlainText(self):
+    async def testBindPlainText(self):
         """
         It will bind when the password for the entry is stored in plain text,
-        and will return a deferred which has itself as callback.
+        and returns itself.
         """
         sut = entry.BaseLDAPEntry(
             dn="dc=foo",
@@ -81,12 +83,9 @@ class TestBaseLDAPEntry(unittest.TestCase):
             },
         )
 
-        deferred = sut.bind(b"some-plain-text")
-        result = self.successResultOf(deferred)
+        assert sut is await sut.bind(b"some-plain-text")
 
-        self.assertIs(sut, result)
-
-    def testBindSeededSHA(self):
+    async def testBindSeededSHA(self):
         """
         It can bind with password stored in seeded SHA.
         """
@@ -97,12 +96,9 @@ class TestBaseLDAPEntry(unittest.TestCase):
             },
         )
 
-        deferred = sut.bind(b"secret")
-        result = self.successResultOf(deferred)
+        assert sut is await sut.bind(b"secret")
 
-        self.assertIs(sut, result)
-
-    def testBindPlainTextError(self):
+    async def testBindPlainTextError(self):
         """
         Return a LDAPInvalidCredentials failure when password don't match.
         """
@@ -113,12 +109,10 @@ class TestBaseLDAPEntry(unittest.TestCase):
             },
         )
 
-        deferred = sut.bind(b"other-password")
-        failure = self.failureResultOf(deferred)
+        with pytest.raises(LDAPInvalidCredentials):
+            await sut.bind(b"other-password")
 
-        self.assertTrue(failure.check(LDAPInvalidCredentials))
-
-    def testBindSHAError(self):
+    async def testBindSHAError(self):
         """
         Return a LDAPInvalidCredentials failure when encoded password don't
         match.
@@ -130,10 +124,8 @@ class TestBaseLDAPEntry(unittest.TestCase):
             },
         )
 
-        deferred = sut.bind(b"other-password")
-        failure = self.failureResultOf(deferred)
-
-        self.assertTrue(failure.check(LDAPInvalidCredentials))
+        with pytest.raises(LDAPInvalidCredentials):
+            await sut.bind(b"other-password")
 
     def testGetLDIF(self):
         """
@@ -146,12 +138,12 @@ class TestBaseLDAPEntry(unittest.TestCase):
                 "bar": ["foo"],
             },
         )
-        self.assertEqual(sut.getLDIF(), "dn: dc=foo\nbar: foo\nfoo: bar\n\n")
+        assert sut.getLDIF() == "dn: dc=foo\nbar: foo\nfoo: bar\n\n"
 
     def testNonzero(self):
         """Entry is always non-zero"""
         sut = entry.BaseLDAPEntry(dn="")
-        self.assertTrue(bool(sut))
+        assert bool(sut)
 
     def testRepr(self):
         """
@@ -164,12 +156,10 @@ class TestBaseLDAPEntry(unittest.TestCase):
                 "bar": ["foo"],
             },
         )
-        self.assertEqual(
-            repr(sut), "BaseLDAPEntry('dc=foo', {'bar': ['foo'], 'foo': ['bar']})"
-        )
+        assert repr(sut) == "BaseLDAPEntry('dc=foo', {'bar': ['foo'], 'foo': ['bar']})"
 
 
-class TestDiffEntry(unittest.TestCase):
+class TestDiffEntry:
     """
     Tests for anyldap.entry.BaseLDAPEntry.diff()
     """
@@ -188,7 +178,7 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(result, None)
+        assert result is None
 
     def testAdd_New_OneType_OneValue(self):
         a = entry.BaseLDAPEntry(
@@ -205,15 +195,12 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "dc=foo",
                 [
                     delta.Add("baz", ["quux"]),
                 ],
-            ),
-        )
+            ))
 
     def testAdd_New_OneType_ManyValues(self):
         a = entry.BaseLDAPEntry(
@@ -230,15 +217,12 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "dc=foo",
                 [
                     delta.Add("baz", ["quux", "thud", "foo"]),
                 ],
-            ),
-        )
+            ))
 
     def testAdd_New_ManyTypes(self):
         a = entry.BaseLDAPEntry(
@@ -256,16 +240,13 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "dc=foo",
                 [
                     delta.Add("bang", ["thud"]),
                     delta.Add("baz", ["quux"]),
                 ],
-            ),
-        )
+            ))
 
     def testAdd_Existing_OneType_OneValue(self):
         a = entry.BaseLDAPEntry(
@@ -281,15 +262,12 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "dc=foo",
                 [
                     delta.Add("foo", ["quux"]),
                 ],
-            ),
-        )
+            ))
 
     def testAdd_Existing_OneType_ManyValues(self):
         a = entry.BaseLDAPEntry(
@@ -305,15 +283,12 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "dc=foo",
                 [
                     delta.Add("foo", ["quux", "thud", "foo"]),
                 ],
-            ),
-        )
+            ))
 
     def testAdd_NewAndExisting_ManyTypes(self):
         a = entry.BaseLDAPEntry(
@@ -332,17 +307,14 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "dc=foo",
                 [
                     delta.Add("bang", ["thud", "barble"]),
                     delta.Add("baz", ["bar", "stump"]),
                     delta.Add("foo", ["thud", "bang"]),
                 ],
-            ),
-        )
+            ))
 
     def testDelete_All_OneType(self):
         a = entry.BaseLDAPEntry(
@@ -359,15 +331,12 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "dc=foo",
                 [
                     delta.Delete("baz", ["quux", "thud"]),
                 ],
-            ),
-        )
+            ))
 
     def testDelete_Some_OneType(self):
         a = entry.BaseLDAPEntry(
@@ -385,15 +354,12 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "dc=foo",
                 [
                     delta.Delete("baz", ["quux"]),
                 ],
-            ),
-        )
+            ))
 
     def testComplex(self):
         a = entry.BaseLDAPEntry(
@@ -412,9 +378,7 @@ class TestDiffEntry(unittest.TestCase):
             },
         )
         result = a.diff(b)
-        self.assertEqual(
-            result,
-            delta.ModifyOp(
+        assert result == (delta.ModifyOp(
                 "cn=Paula Jensen,ou=Product Development,dc=airius,dc=com",
                 [
                     delta.Add(
@@ -427,5 +391,4 @@ class TestDiffEntry(unittest.TestCase):
                     ),
                     delta.Delete("telephonenumber", ["+123 456"]),
                 ],
-            ),
-        )
+            ))

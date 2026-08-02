@@ -3,7 +3,6 @@ from types import SimpleNamespace
 import pytest
 
 from anyldap import checkers, config
-from anyldap._async import await_result
 from anyldap.protocols.ldap import ldaperrors
 
 pytestmark = pytest.mark.anyio
@@ -117,12 +116,15 @@ async def test_binding_checker_invalid_filter():
         await checker.requestAvatarId_async(SimpleNamespace(username=b"alice", password=b""))
 
 
-async def test_binding_checker_deferred_api(monkeypatch):
+async def test_binding_checker_requestAvatarId_alias(monkeypatch):
+    """`requestAvatarId` is another spelling of the same async method."""
     async def request(credentials):
         return credentials.username
 
     checker = checkers.LDAPBindingChecker(FakeConfig())
-    monkeypatch.setattr(checker, "requestAvatarId_async", request)
-    deferred = checker.requestAvatarId(SimpleNamespace(username=b"alice"))
-    assert deferred.called is False
-    assert await await_result(deferred) == b"alice"
+    monkeypatch.setattr(checker, "requestAvatarId", request)
+    assert await checker.requestAvatarId(SimpleNamespace(username=b"alice")) == b"alice"
+    assert (
+        checkers.LDAPBindingChecker.requestAvatarId
+        is checkers.LDAPBindingChecker.requestAvatarId_async
+    )

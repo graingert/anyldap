@@ -1,15 +1,12 @@
 import logging
 import sys
-import warnings
 
 import anyio
 import pytest
 
 from anyldap import testutil
-from anyldap.deferred import fail, succeed
 from anyldap.protocols import pureldap
-from anyldap.runtime import Failure
-from anyldap.test import unittest, util
+from anyldap.test import util
 from anyldap.test._anyio_helpers import AsyncLDAPClientDriver, MemoryByteStream
 from anyldap.test._testing import Clock, capture_logs
 
@@ -79,87 +76,37 @@ def test_clock_cancel_and_order():
 
 
 def test_capture_logs_restores_logger():
-    case = unittest.TestCase()
+    cleanups = []
     logger = logging.getLogger("anyldap.helper-test")
     original_level = logger.level
-    messages = capture_logs(case, logger.name, logging.INFO)
+    messages = capture_logs(cleanups, logger.name, logging.INFO)
     logger.info("captured")
     assert messages == ["captured"]
-    case.doCleanups()
+    for cleanup in cleanups:
+        cleanup()
     assert logger.level == original_level
 
 
 def test_capture_logs_preserves_more_verbose_logger_level():
-    case = unittest.TestCase()
+    cleanups = []
     logger = logging.getLogger("anyldap.verbose-helper-test")
     original_level = logger.level
     logger.setLevel(logging.DEBUG)
-    messages = capture_logs(case, logger.name, logging.INFO)
+    messages = capture_logs(cleanups, logger.name, logging.INFO)
     logger.info("captured")
     assert messages == ["captured"]
-    case.doCleanups()
+    for cleanup in cleanups:
+        cleanup()
     assert logger.level == logging.DEBUG
     logger.setLevel(original_level)
 
 
-async def test_coroutine_function_adapter():
-    async def add(left, right):
-        return left + right
-
-    wrapped = util.fromCoroutineFunction(add)
-    assert wrapped.__name__ == "add"
-    assert await wrapped(2, 3) == 5
-
-
-def test_unittest_compatibility_helpers():
-    case = unittest.TestCase()
-    first = case.mktemp()
-    second = case.mktemp()
-    assert first != second
-    case.failUnlessEqual(1, 1)
-    case.failIfEqual(1, 2)
-    case.failUnless(True)
-    case.failIf(False)
-    marker = object()
-    case.assertIdentical(marker, marker)
-    case.assertNotIdentical(marker, object())
-    with case.assertRaises(ValueError):
-        raise ValueError("bad")
-    with case.assertRaisesRegex(ValueError, "bad"):
-        raise ValueError("bad")
-    case.assertRaises(ValueError, int, "not-an-int")
-    case.assertRaisesRegex(ValueError, "invalid literal", int, "not-an-int")
-    assert unittest._is_deferred_like(succeed(None))
-    assert not unittest._is_deferred_like(object())
-    case.doCleanups()
-
-
-def test_unittest_failure_and_warning_helpers():
-    case = unittest.TestCase()
-    failure = fail(Failure(ValueError("bad")))
-    assert isinstance(case.failureResultOf(failure, ValueError), Failure)
-    assert case.assertFailure(fail(Failure(ValueError("bad"))), ValueError)
-    with pytest.raises(unittest.FailTest):
-        case.failureResultOf(succeed("ok"))
-    with pytest.raises(ValueError):
-        case.successResultOf(fail(Failure(ValueError("bad"))))
-    case._warnings = []
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.warn("notice")
-    case._warnings = caught
-    assert case.flushWarnings()[0]["message"] == "notice"
-    assert case.flushWarnings() == []
-
-
-async def test_unittest_rejects_invalid_return_and_handles_nested_deferred():
-    case = unittest.TestCase()
-    with pytest.raises(TypeError, match="must return None"):
-        case._callTestMethod(lambda: object())
-
-    async def nested():
-        return succeed("done")
-
-    await case._await_result(nested())
+def test_assert_permutation_ignores_order():
+    util.assert_permutation([{"a": 1}, {"b": 2}], [{"b": 2}, {"a": 1}])
+    with pytest.raises(util.FailTest, match="permutation"):
+        util.assert_permutation([{"a": 1}], [{"b": 2}])
+    with pytest.raises(util.FailTest, match="permutation"):
+        util.assert_permutation([{"a": 1}], [{"a": 1}, {"b": 2}])
 
 
 async def test_legacy_client_driver_paths():
@@ -169,7 +116,6 @@ async def test_legacy_client_driver_paths():
     driver.connectionMade()
     assert await driver.send(request) is response
     driver.assertSent(request)
-    driver.assertNothingSent() if False else None
     driver.responses.append([])
     driver.send_noResponse(request)
     driver.unbind()
@@ -177,7 +123,7 @@ async def test_legacy_client_driver_paths():
 
 
 def test_must_raise():
-    with pytest.raises(unittest.FailTest):
+    with pytest.raises(util.FailTest):
         testutil.mustRaise(None)
 
 

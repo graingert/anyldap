@@ -2,7 +2,6 @@
 Manage LDAP data as a tree of LDIF files.
 """
 import errno
-import functools
 import os
 import uuid
 
@@ -10,7 +9,6 @@ from zope.interface import implementer
 
 from anyldap import attributeset, entry, entryhelpers, interfaces
 from anyldap._encoder import to_unicode
-from anyldap.deferred import fail, maybeDeferred, succeed
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
 from anyldap.runtime import ConnectionDone, Failure, logger
 
@@ -44,8 +42,8 @@ class StoreParsedLDIF(ldifprotocol.LDIF):
         self.done = True
 
 
-def get(path, dn):
-    return maybeDeferred(_get, path, dn)
+async def get(path, dn):
+    return _get(path, dn)
 
 
 def _get(path, dn):
@@ -107,8 +105,8 @@ def _put(path, entry):
     return _putEntry(os.path.join(parentDir, "%s" % entryRDN.getText()), entry)
 
 
-def put(path, entry):
-    return maybeDeferred(functools.partial(_put, path, entry))
+async def put(path, entry):
+    return _put(path, entry)
 
 
 @implementer(interfaces.IConnectedLDAPEntry)
@@ -203,15 +201,17 @@ class LDIFTreeEntry(
                 callback(c)
             return None
 
-    def children(self, callback=None):
-        return maybeDeferred(self._children, callback=callback)
+    async def children(self, callback=None):
+        return self._children(callback=callback)
 
-    def lookup(self, dn):
+    children_async = children
+
+    async def lookup(self, dn):
         dn = distinguishedname.DistinguishedName(dn)
         if not self.dn.contains(dn):
-            return fail(ldaperrors.LDAPNoSuchObject(dn.getText()))
+            raise ldaperrors.LDAPNoSuchObject(dn.getText())
         if dn == self.dn:
-            return succeed(self)
+            return self
 
         it = dn.split()
         me = self.dn.split()
@@ -221,11 +221,12 @@ class LDIFTreeEntry(
         path = os.path.join(self.path, "%s.dir" % rdn.getText())
         entry = os.path.join(self.path, "%s.ldif" % rdn.getText())
         if not os.path.isdir(path) and not os.path.isfile(entry):
-            return fail(ldaperrors.LDAPNoSuchObject(dn.getText()))
-        else:
-            childDN = distinguishedname.DistinguishedName(listOfRDNs=(rdn,) + me)
-            c = self.__class__(path, childDN)
-            return c.lookup(dn)
+            raise ldaperrors.LDAPNoSuchObject(dn.getText())
+        childDN = distinguishedname.DistinguishedName(listOfRDNs=(rdn,) + me)
+        c = self.__class__(path, childDN)
+        return await c.lookup(dn)
+
+    lookup_async = lookup
 
     def _addChild(self, rdn, attributes):
         rdn = distinguishedname.RelativeDistinguishedName(rdn)
@@ -248,10 +249,9 @@ class LDIFTreeEntry(
         return e
 
     def addChild(self, rdn, attributes):
-        d = self._addChild(rdn, attributes)
-        return d
+        return self._addChild(rdn, attributes)
 
-    def _delete(self):
+    async def delete(self):
         if self.dn == "":
             raise LDAPCannotRemoveRootError()
         if self._sync_children():
@@ -263,19 +263,17 @@ class LDIFTreeEntry(
         os.remove(entryPath)
         return self
 
-    def delete(self):
-        return maybeDeferred(self._delete)
+    delete_async = delete
 
-    def _deleteChild(self, rdn):
+    async def deleteChild(self, rdn):
         if not isinstance(rdn, distinguishedname.RelativeDistinguishedName):
             rdn = distinguishedname.RelativeDistinguishedName(stringValue=rdn)
         for c in self._sync_children():
             if c.dn.split()[0] == rdn:
-                return c.delete()
+                return await c.delete()
         raise ldaperrors.LDAPNoSuchObject(rdn.getText())
 
-    def deleteChild(self, rdn):
-        return maybeDeferred(self._deleteChild, rdn)
+    deleteChild_async = deleteChild
 
     def __repr__(self):
         return f"{self.__class__.__name__}({self.path!r}, {self.dn.getText()!r})"
@@ -290,22 +288,18 @@ class LDIFTreeEntry(
             return NotImplemented
         return self.dn > other.dn
 
-    def commit(self):
+    async def commit(self):
         assert self.path.endswith(".dir")
         entryPath = self.path[: -len(".dir")]
-        d = maybeDeferred(_putEntry, entryPath, self)
-
-        def eb_(err):
+        try:
+            return _putEntry(entryPath, self)
+        except Exception:
             logger.error("[ERROR] Could not commit entry: %s.", self.dn)
             return False
 
-        d.addErrback(eb_)
-        return d
+    commit_async = commit
 
-    def move(self, newDN):
-        return maybeDeferred(self._move, newDN)
-
-    def _move(self, newDN):
+    async def move(self, newDN):
         if not isinstance(newDN, distinguishedname.DistinguishedName):
             newDN = distinguishedname.DistinguishedName(stringValue=newDN)
         if newDN.up() != self.dn.up():
@@ -316,13 +310,14 @@ class LDIFTreeEntry(
                 rootDN = rootDN.up()
                 rootPath = os.path.dirname(rootPath)
             root = self.__class__(path=rootPath, dn=rootDN)
-            d = maybeDeferred(root.lookup, newDN.up())
+            newParent = await root.lookup(newDN.up())
         else:
-            d = succeed(None)
-        d.addCallback(self._move2, newDN)
-        return d
+            newParent = None
+        return await self._move2(newParent, newDN)
 
-    def _move2(self, newParent, newDN):
+    move_async = move
+
+    async def _move2(self, newParent, newDN):
         # remove old RDN attributes
         for attr in self.dn.split()[0].split():
             self[attr.attributeType].remove(attr.value)
@@ -346,7 +341,7 @@ class LDIFTreeEntry(
         )
         self.dn = newDN
         self.path = newpath
-        return self.commit()
+        return await self.commit()
 
 
 if __name__ == "__main__":

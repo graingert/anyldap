@@ -1,27 +1,19 @@
-import functools
-
-import anyio
-
-from anyldap._async import await_deferred
-from anyldap.deferred import ensureDeferred
-from anyldap.runtime import Failure
+class FailTest(AssertionError):
+    """Raised by test helpers when an expectation was not met."""
 
 
-def _getDeferredResult(d):
-    try:
-        return anyio.run(await_deferred, d)
-    except Exception as exc:
-        return Failure(exc)
+def assert_permutation(first, second):
+    """Assert both iterables hold the same items, in any order.
 
-
-def pumpingDeferredResult(d):
-    result = _getDeferredResult(d)
-    return result.raiseException() if isinstance(result, Failure) else result
-
-
-def fromCoroutineFunction(corofn):
-    @functools.wraps(corofn)
-    def wrapper(*args, **kwargs):
-        return ensureDeferred(corofn(*args, **kwargs))
-
-    return wrapper
+    Unlike ``sorted(a) == sorted(b)`` this works for items that are not
+    orderable, which covers most of the LDAP value types.
+    """
+    first = list(first)
+    second = list(second)
+    remaining = list(second)
+    for item in first:
+        if item not in remaining:
+            raise FailTest(f"{first!r} is not a permutation of {second!r}")
+        remaining.remove(item)
+    if remaining:
+        raise FailTest(f"{first!r} is not a permutation of {second!r}")

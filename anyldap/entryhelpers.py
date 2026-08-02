@@ -1,6 +1,5 @@
 from anyldap import delta, ldapfilter
 from anyldap._encoder import get_strings
-from anyldap.deferred import succeed
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, ldapsyntax
 
@@ -16,96 +15,26 @@ def safelower(s):
 
 
 class DiffTreeMixin:
-    def _diffTree_gotMyChildren(self, myChildren, other, result):
-        d = other.children()
-        d.addCallback(self._diffTree_gotBothChildren, myChildren, other, result)
-        return d
+    async def _diffTree_commonChildren(self, children, result):
+        for a, b in children:
+            await a.diffTree(b, result)
+        return result
 
-    def _diffTree_gotBothChildren(self, otherChildren, myChildren, other, result):
-        def rdnToChild(rdn, l):
-            r = [x for x in l if x.dn.split()[0] == rdn]
-            assert len(r) == 1
-            return r[0]
+    async def _diffTree_addedChildren(self, children, result):
+        for child in children:
+            for c in await child.subtree():
+                result.append(delta.AddOp(c))
+        return result
 
-        my = {x.dn.split()[0] for x in myChildren}
-        his = {x.dn.split()[0] for x in otherChildren}
+    async def _diffTree_deletedChildren(self, children, result):
+        for child in children:
+            entries = await child.subtree()
+            entries.reverse()  # remove children before their parent
+            for c in entries:
+                result.append(delta.DeleteOp(c))
+        return result
 
-        # differences in common children
-        commonRDN = list(my & his)
-        commonRDN.sort()  # for reproducability only
-        d = self._diffTree_commonChildren(
-            [
-                (rdnToChild(rdn, myChildren), rdnToChild(rdn, otherChildren))
-                for rdn in commonRDN
-            ],
-            result,
-        )
-
-        # added children
-        addedRDN = list(his - my)
-        addedRDN.sort()  # for reproducability only
-        d2 = self._diffTree_addedChildren(
-            [rdnToChild(rdn, otherChildren) for rdn in addedRDN], result
-        )
-        d.addCallback(lambda _: d2)
-
-        # deleted children
-        deletedRDN = list(my - his)
-        deletedRDN.sort()  # for reproducability only
-        d3 = self._diffTree_deletedChildren(
-            [rdnToChild(rdn, myChildren) for rdn in deletedRDN], result
-        )
-        d.addCallback(lambda _: d3)
-
-        return d
-
-    def _diffTree_commonChildren(self, children, result):
-        if not children:
-            return succeed(result)
-        first, rest = children[0], children[1:]
-        a, b = first
-        d = a.diffTree(b, result)
-        d.addCallback(lambda _: self._diffTree_commonChildren(rest, result))
-        return d
-
-    def _diffTree_addedChildren(self, children, result):
-        if not children:
-            return result
-        first, rest = children[0], children[1:]
-
-        d = first.subtree()
-
-        def _gotSubtree(l, result):
-            for c in l:
-                o = delta.AddOp(c)
-                result.append(o)
-            return result
-
-        d.addCallback(_gotSubtree, result)
-
-        d.addCallback(lambda _: self._diffTree_addedChildren(rest, result))
-        return d
-
-    def _diffTree_deletedChildren(self, children, result):
-        if not children:
-            return result
-        first, rest = children[0], children[1:]
-
-        d = first.subtree()
-
-        def _gotSubtree(l, result):
-            l.reverse()  # remove children before their parent
-            for c in l:
-                o = delta.DeleteOp(c)
-                result.append(o)
-            return result
-
-        d.addCallback(_gotSubtree, result)
-
-        d.addCallback(lambda _: self._diffTree_deletedChildren(rest, result))
-        return d
-
-    def diffTree(self, other, result=None):
+    async def diffTree(self, other, result=None):
         assert (
             self.dn == other.dn
         ), "diffTree arguments must refer to same LDAP tree:" "%r != %r" % (
@@ -120,30 +49,51 @@ class DiffTreeMixin:
         if rootDiff is not None:
             result.append(rootDiff)
 
-        d = self.children()
-        d.addCallback(self._diffTree_gotMyChildren, other, result)
+        myChildren = await self.children()
+        otherChildren = await other.children()
 
-        return d
+        def rdnToChild(rdn, l):
+            r = [x for x in l if x.dn.split()[0] == rdn]
+            assert len(r) == 1
+            return r[0]
+
+        my = {x.dn.split()[0] for x in myChildren}
+        his = {x.dn.split()[0] for x in otherChildren}
+
+        # differences in common children
+        commonRDN = sorted(my & his)  # sorted for reproducability only
+        await self._diffTree_commonChildren(
+            [
+                (rdnToChild(rdn, myChildren), rdnToChild(rdn, otherChildren))
+                for rdn in commonRDN
+            ],
+            result,
+        )
+
+        # added children
+        addedRDN = sorted(his - my)
+        await self._diffTree_addedChildren(
+            [rdnToChild(rdn, otherChildren) for rdn in addedRDN], result
+        )
+
+        # deleted children
+        deletedRDN = sorted(my - his)
+        return await self._diffTree_deletedChildren(
+            [rdnToChild(rdn, myChildren) for rdn in deletedRDN], result
+        )
 
 
 class SubtreeFromChildrenMixin:
-    def subtree(self, callback=None):
+    async def subtree(self, callback=None):
         if callback is None:
             result = []
-            d = self.subtree(callback=result.append)
-            d.addCallback(lambda _: result)
-            return d
-        else:
-            callback(self)
-            d = self.children()
+            await self.subtree(callback=result.append)
+            return result
 
-            def _gotChildren(children, callback):
-                if children:
-                    while len(children) > 0:
-                        children.pop().subtree(callback)
-
-            d.addCallback(_gotChildren, callback)
-            return d
+        callback(self)
+        children = await self.children()
+        while children:
+            await children.pop().subtree(callback)
 
 
 class MatchMixin:
@@ -245,7 +195,7 @@ class MatchMixin:
 
 
 class SearchByTreeWalkingMixin:
-    def search(
+    async def search(
         self,
         filterText=None,
         filterObject=None,
@@ -279,9 +229,8 @@ class SearchByTreeWalkingMixin:
             iterator = self.children
         elif scope == pureldap.LDAP_SCOPE_baseObject:
 
-            def iterateSelf(callback):
+            async def iterateSelf(callback):
                 callback(self)
-                return succeed(None)
 
             iterator = iterateSelf
         else:
@@ -298,9 +247,8 @@ class SearchByTreeWalkingMixin:
             if entry.match(filterObject):
                 matchCallback(entry)
 
-        iterator(callback=_tryMatch)
+        await iterator(callback=_tryMatch)
 
         if callback is None:
-            return succeed(results)
-        else:
-            return succeed(None)
+            return results
+        return None
