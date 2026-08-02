@@ -1,9 +1,5 @@
 include *.rst
-include *.txt
 include *.md
-exclude .readthedocs.yml
-exclude .pre-commit-config.yaml
-exclude .git-blame-ignore-revs
 include LICENSE
 include docs/source/examples/ldif2ldif
 include anyldap.schema
@@ -22,12 +18,6 @@ recursive-include docs Makefile
 recursive-include docs/source/examples/addressbook run
 recursive-include docs/source/examples/addressbook summary
 recursive-include anyldap *.ldif
-
-# This is only needed by CI when reporting coverage.
-exclude codecov.yml
-
-# This is only needed by GitHub.
-exclude docs/PULL_REQUEST_TEMPLATE.md
 
 # This is only needed for dev purporse.
 prune docs/build/html
