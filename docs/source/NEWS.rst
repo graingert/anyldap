@@ -1,7 +1,7 @@
 Changelog
 =========
 
-0.1.0 (unreleased)
+0.1.0 (2026-08-02)
 ------------------
 
 First release of anyldap, a fork of ldaptor 21.2.0 ported from Twisted to
