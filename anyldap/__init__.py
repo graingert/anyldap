@@ -1,5 +1,12 @@
 """A Pure-Python AnyIO library for LDAP."""
-__version__ = "0.0.1"
+from importlib.metadata import PackageNotFoundError, version
+
+from exceptiongroup import suppress
+
+# setuptools-scm builds the version from the git tag, so there is nothing to
+# read from an uninstalled source tree.
+with suppress(PackageNotFoundError):
+    __version__ = version("anyldap")
 
 __title__ = "anyldap"
 __description__ = "A Pure-Python AnyIO library for LDAP"

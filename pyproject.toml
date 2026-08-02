@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools >= 77.0.0"]
+requires = ["setuptools >= 77.0.0", "setuptools-scm >= 8"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -63,19 +63,21 @@ anyldap-ldifpatch = "anyldap._scripts.ldifpatch:console_script"
 include-package-data = true
 
 [tool.setuptools.dynamic]
-version = { attr = "anyldap.__version__" }
 readme = { file = ["README.rst"], content-type = "text/x-rst" }
+
+# The version comes from the git tag; there is nothing to bump by hand.
+[tool.setuptools_scm]
 
 [tool.setuptools.packages.find]
 include = ["anyldap*"]
 
 # Files that are only needed in the repository (CI, GitHub, dev tooling) and
-# are deliberately kept out of the sdist. Listing them here rather than as
-# `exclude` rules in MANIFEST.in avoids setuptools warning that there is
-# nothing for those rules to exclude.
+# are deliberately kept out of the sdist by MANIFEST.in.
 [tool.check-manifest]
 ignore = [
     ".git-blame-ignore-revs",
+    ".github/**",
+    ".gitignore",
     ".pre-commit-config.yaml",
     ".readthedocs.yml",
     "codecov.yml",
@@ -208,6 +210,5 @@ depends = py{310,311,312,313,314,py3}-test
 """
 
 [tool.zest-releaser]
-python-file-with-version = "anyldap/__init__.py"
 history-file = "docs/source/NEWS.rst"
 tag-format = "v{version}"
