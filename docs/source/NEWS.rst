@@ -1,10 +1,79 @@
 Changelog
 =========
 
-21.2.1 (unreleased)
--------------------
+0.1.0 (unreleased)
+------------------
 
-- Dropped support for Python 3.5
+First release of anyldap, a fork of ldaptor 21.2.0 ported from Twisted to
+AnyIO. It runs unmodified on both asyncio and trio.
+
+Backwards incompatible changes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- The project, the importable package and the console scripts are renamed
+  from ``ldaptor`` to ``anyldap``. Replace ``import ldaptor`` with
+  ``import anyldap``, ``ldaptor-search`` with ``anyldap-search``, and so on
+  for the rest of the utilities. The bundled schema file is now
+  ``anyldap.schema``.
+- Twisted is no longer a dependency. Protocols are driven by AnyIO byte
+  streams rather than a reactor and transports, so there is no global reactor
+  to install, start or stop.
+- ``Deferred`` is gone. Every operation that used to return one is now a
+  coroutine, and the callback-style API that came with it — ``addCallback``,
+  ``addErrback``, ``addCallbacks``, ``addBoth`` — has no replacement, because
+  the results are awaited instead::
+
+      # before
+      d = entry.search(filterText="(cn=bob)")
+      d.addCallback(handle)
+
+      # now
+      results = await entry.search(filterText="(cn=bob)")
+
+  Failures surface as ordinary raised exceptions rather than ``Failure``
+  objects passed to an errback.
+- ``ProxyBase.handleProxiedResponse()`` must now be a plain method. It is
+  called while dispatching a response and cannot await; returning an
+  awaitable from it will not work.
+- Python 3.10 or newer is required. Support for Python 3.5 through 3.9 is
+  dropped, along with the last of the Python 2 compatibility code.
+- ``anyldap-ldap2pdns``, ``anyldap-ldap2dhcpconf``, ``anyldap-ldap2dnszones``
+  and ``anyldap-ldap2maradns`` are not yet ported and exit with a message
+  saying so. The remaining utilities work.
+
+Features
+^^^^^^^^
+
+- Servers are started with ``BaseLDAPServer.listen()``, which can be handed to
+  ``TaskGroup.start()`` to get the bound ``(host, port)`` once the listener is
+  ready. ``ldapserver.listen()`` takes a protocol factory, and
+  ``ldapserver.serve_stream()`` serves a single already-accepted stream.
+- Clients connect with ``ldapconnector.connectToLDAPDNAsync()`` or
+  ``connectToLDAPEndpointAsync()``, both of which return an async context
+  manager that closes the connection on exit.
+- Every LDAP operation is also available under an explicit ``*_async`` name —
+  ``bind_async()``, ``search_async()``, ``commit_async()`` and friends — for
+  code that prefers to spell out which calls await.
+- ``startTLS`` is supported on both the client and the server, wrapping the
+  live stream in an AnyIO ``TLSStream``.
+
+Other changes
+^^^^^^^^^^^^^
+
+- The version is derived from the git tag by setuptools-scm; there is no
+  hardcoded version in the source.
+- The test suite runs against both asyncio and trio, and statement and branch
+  coverage are both enforced at 100%.
+- Packaging metadata moved to PEP 621, and the documentation was rewritten
+  around the AnyIO API.
+
+
+.. note::
+
+   anyldap was forked from ldaptor 21.2.0. Everything below is ldaptor's own
+   changelog, kept for reference. The project and script names in it were
+   rewritten by the fork, so it reads ``anyldap`` where it originally said
+   ``ldaptor``.
 
 
 21.2.0 (2021-02-28)
