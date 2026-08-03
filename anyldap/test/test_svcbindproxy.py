@@ -1,4 +1,4 @@
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from typing import Any
 from unittest import mock
 
@@ -270,9 +270,9 @@ class ServiceEntry:
 class SearchBase:
     def __init__(self, results: Sequence[Sequence[object]]) -> None:
         self.results = list(results)
-        self.filters: list[dict[str, Any]] = []
+        self.filters: list[Mapping[str, object]] = []
 
-    async def search_async(self, **kwargs: Any) -> Sequence[object]:
+    async def search_async(self, **kwargs: object) -> Sequence[object]:
         self.filters.append(kwargs)
         return self.results.pop(0)
 

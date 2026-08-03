@@ -113,8 +113,10 @@ class TestMergedLDAPServerTest:
         :return the server, ready to connect
         """
 
-        def createClient(factory: Callable[[], Any]) -> Any:
-            proto = factory()
+        def createClient(
+            factory: Callable[[], object]
+        ) -> testutil.LDAPClientTestDriver:
+            proto = clients.pop()
             proto.connectionMade()
             return proto
 

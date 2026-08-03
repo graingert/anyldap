@@ -1,10 +1,9 @@
 from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
-from anyldap import checkers, config
+from anyldap import checkers, config, interfaces
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapconnector, ldaperrors, ldapsyntax
 
@@ -37,7 +36,7 @@ class FakeConfig:
     def getIdentitySearch(self, name: str) -> str:
         return f"(uid={name})"
 
-    def getServiceLocationOverrides(self) -> dict[Any, Any]:
+    def getServiceLocationOverrides(self) -> dict[str, interfaces.ServiceLocation]:
         return {}
 
 
@@ -135,7 +134,7 @@ async def test_binding_checker_invalid_filter() -> None:
 
 async def test_binding_checker_requestAvatarId_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     """`requestAvatarId` is another spelling of the same async method."""
-    async def request(credentials: Any) -> object:
+    async def request(credentials: checkers.UsernamePassword) -> object:
         return credentials.username
 
     checker = checkers.LDAPBindingChecker(FakeConfig())

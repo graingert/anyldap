@@ -1,5 +1,5 @@
 import ssl
-from typing import Any
+from typing import NoReturn
 
 import anyio
 import anyio.lowlevel
@@ -20,6 +20,7 @@ from anyldap.protocols.ldap import (
     proxybase,
     svcbindproxy,
 )
+from anyldap.protocols.ldap.proxybase import Controls
 from anyldap.runtime import ConnectionDone, Failure
 from anyldap.test._anyio_helpers import (
     AsyncLDAPClientDriver,
@@ -47,22 +48,22 @@ async def test_starttls_upgrades_real_socket_stream() -> None:
     authority.configure_trust(client_context)
 
     class StartTLSServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPExtendedRequest(
+        async def handle_LDAPExtendedRequest(
             self,
-            request: Any,
-            controls: Any,
-            reply: Any,
-        ) -> Any:
+            request: pureldap.LDAPExtendedRequest,
+            controls: Controls,
+            reply: ldapserver.Reply,
+        ) -> None:
             assert request.requestName == pureldap.LDAPStartTLSRequest.oid
             self.start_tls(server_context)
             reply(pureldap.LDAPStartTLSResponse(resultCode=0))
 
-        def handle_LDAPBindRequest(
+        async def handle_LDAPBindRequest(
             self,
-            request: Any,
-            controls: Any,
-            reply: Any,
-        ) -> Any:
+            request: pureldap.LDAPBindRequest,
+            controls: Controls,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPBindResponse:
             return pureldap.LDAPBindResponse(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
@@ -223,10 +224,10 @@ async def test_server_async_handler_error_uses_protocol_error_response() -> None
     class FailingServer(ldapserver.BaseLDAPServer):
         async def handle_LDAPBindRequest(
             self,
-            request: Any,
-            controls: Any,
-            reply: Any,
-        ) -> Any:
+            request: pureldap.LDAPBindRequest,
+            controls: Controls,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPBindResponse:
             raise RuntimeError("real handler failed")
 
     server = FailingServer()
@@ -328,8 +329,8 @@ async def test_proxy_public_interception_hook_can_answer_without_forwarding() ->
         def handleBeforeForwardRequest(
             self,
             request: pureldap.LDAPProtocolRequest,
-            controls: Any,
-            reply: Any,
+            controls: Controls,
+            reply: ldapserver.Reply,
         ) -> None:
             reply(pureldap.LDAPBindResponse(resultCode=0))
             return None
@@ -399,10 +400,10 @@ async def test_merged_server_attach_stream_merges_real_upstream_bind_responses()
     first_upstream = MemoryByteStream()
     second_upstream = MemoryByteStream()
 
-    def connect_first(protocol_factory: object) -> Any:
+    def connect_first(protocol_factory: object) -> ldapclient.LDAPClient:
         return first_client
 
-    def connect_second(protocol_factory: object) -> Any:
+    def connect_second(protocol_factory: object) -> ldapclient.LDAPClient:
         return second_client
 
     server = merger.MergedLDAPServer(
@@ -441,7 +442,7 @@ async def test_merged_server_attach_stream_merges_real_upstream_bind_responses()
 
 
 async def test_merged_server_reports_real_async_connector_failure() -> None:
-    def refuse_connection(protocol_factory: object) -> Any:
+    def refuse_connection(protocol_factory: object) -> NoReturn:
         raise OSError("connection refused")
 
     server = merger.MergedLDAPServer(
@@ -492,7 +493,7 @@ async def test_proxy_attach_stream_forwards_bind() -> None:
     )
     client.connectionMade()
 
-    def connect_client(protocol_factory: object) -> Any:
+    def connect_client(protocol_factory: object) -> testutil.LDAPClientTestDriver:
         return client
 
     server = proxy.Proxy(
@@ -527,7 +528,7 @@ async def test_service_binding_proxy_attach_stream_intercepts_bind(
     )
     client.connectionMade()
 
-    def connect_client(protocol_factory: object) -> Any:
+    def connect_client(protocol_factory: object) -> testutil.LDAPClientTestDriver:
         return client
 
     server = svcbindproxy.ServiceBindingProxy(
@@ -732,7 +733,7 @@ async def test_proxybase_connection_tls_disconnect_and_backlog_paths(
     disconnected_client.connectionMade()
     disconnected_server = proxybase.ProxyBase()
 
-    async def disconnect_during_connect() -> Any:
+    async def disconnect_during_connect() -> testutil.LDAPClientTestDriver:
         disconnected_server.connectionLost(ConnectionDone())
         return disconnected_client
 
@@ -792,14 +793,20 @@ async def test_proxybase_replies_in_response_order() -> None:
     request = pureldap.LDAPSearchRequest()
     replies: list[pureber.BERBase] = []
 
+    class Rewritten(pureldap.LDAPProtocolResponse):
+        """What a rewriting proxy sent on, so a reply can be recognised."""
+
+        def __init__(self, original: pureldap.LDAPProtocolResponse) -> None:
+            self.original = original
+
     class RewritingProxy(proxybase.ProxyBase):
         def handleProxiedResponse(
             self,
             response: pureldap.LDAPProtocolResponse,
             request: pureldap.LDAPProtocolRequest,
-            controls: Any,
-        ) -> Any:
-            return ("rewritten", response)
+            controls: Controls,
+        ) -> pureldap.LDAPProtocolResponse:
+            return Rewritten(response)
 
     server = RewritingProxy()
     entry = pureldap.LDAPSearchResultEntry("cn=entry", [])
@@ -809,7 +816,8 @@ async def test_proxybase_replies_in_response_order() -> None:
         entry, replies.append, request, None
     )
     assert server._gotResponseFromProxiedServer(done, replies.append, request, None)
-    assert replies == [("rewritten", entry), ("rewritten", done)]
+    rewritten = [reply for reply in replies if isinstance(reply, Rewritten)]
+    assert [reply.original for reply in rewritten] == [entry, done]
 
 
 async def test_proxybase_connection_close_and_quiet_starttls_paths() -> None:

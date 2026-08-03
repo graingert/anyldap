@@ -1,7 +1,7 @@
 import subprocess
 import sys
+from unittest import mock
 from collections.abc import Callable, Sequence
-from typing import Any
 
 import anyio
 import anyio.lowlevel
@@ -9,7 +9,7 @@ import pytest
 
 from anyldap import config
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldaperrors, proxy
+from anyldap.protocols.ldap import ldapclient, ldaperrors, proxy
 from anyldap.test._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
@@ -48,7 +48,7 @@ async def test_stub_client_close_uses_async_interface() -> None:
     assert not client.connected
 
 
-def _legacy_server(client: Any = None) -> proxy.Proxy:
+def _legacy_server(client: ldapclient.LDAPClientLike | None = None) -> proxy.Proxy:
     server = proxy.Proxy(config.LDAPConfig(serviceLocationOverrides={}))
     server.client = client
     return server
@@ -93,6 +93,11 @@ async def test_async_queue_uses_client_async_interface() -> None:
 
 async def test_async_queue_uses_async_client_methods() -> None:
     class AsyncClient:
+        connected = True
+
+        # Queueing sends; the proxy has no reason to close this one.
+        aclose = mock.AsyncMock()
+
         def __init__(self) -> None:
             self.calls: list[tuple[object, ...]] = []
 
@@ -115,6 +120,7 @@ async def test_async_queue_uses_async_client_methods() -> None:
     await server._clientQueue_async(pureldap.LDAPBindRequest(), None, lambda response: None)
     await server._clientQueue_async(pureldap.LDAPUnbindRequest(), None, lambda response: None)
     assert [call[0] for call in client.calls] == ["multi", "none"]
+    AsyncClient.aclose.assert_not_called()
 
 
 async def test_async_unknown_handler_waits_for_connection() -> None:
@@ -166,6 +172,10 @@ async def test_connection_lost_schedules_async_close_paths() -> None:
     class AsyncCloseClient:
         connected = True
 
+        # Losing the connection closes the client; it sends nothing.
+        send_multiResponse_async = mock.AsyncMock()
+        send_noResponse_async = mock.AsyncMock()
+
         def __init__(self) -> None:
             self.closed = False
 
@@ -186,12 +196,16 @@ async def test_connection_lost_schedules_async_close_paths() -> None:
 
     assert first_client.closed
     assert second_client.closed
+    AsyncCloseClient.send_multiResponse_async.assert_not_called()
+    AsyncCloseClient.send_noResponse_async.assert_not_called()
 
 
 async def test_connection_lost_without_task_group_cannot_schedule_async_close() -> None:
     class AsyncCloseClient:
         connected = True
         aclose = anyio.lowlevel.checkpoint
+        send_multiResponse_async = mock.AsyncMock()
+        send_noResponse_async = mock.AsyncMock()
 
     server = _legacy_server(AsyncCloseClient())
     server.connectionLost(Exception("closed"))
@@ -201,6 +215,8 @@ async def test_connection_lost_without_task_group_cannot_schedule_async_close() 
     server.unbound = True
     server.connectionLost(Exception("closed"))
     assert server.client is None
+    AsyncCloseClient.send_multiResponse_async.assert_not_called()
+    AsyncCloseClient.send_noResponse_async.assert_not_called()
 
 
 async def test_proxy_module_is_not_a_legacy_entrypoint() -> None:
