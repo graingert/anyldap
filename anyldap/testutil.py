@@ -2,17 +2,26 @@
 
 from collections.abc import Callable, Iterable
 from types import FrameType
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 import anyio
 from anyio.abc import ByteStream, SocketAttribute, SocketListener, TaskGroup
 
-from anyldap._encoder import to_bytes
+from anyldap._encoder import SupportsToWire, to_bytes
 from anyldap.runtime import Failure
 from anyldap.test import util
 
+if TYPE_CHECKING:
+    from anyldap.protocols.ldap import ldapserver
 
-async def exchange_async(protocol: Any, wire_data: bytes) -> bytes:
+# What a driver is sent: an LDAP message, or the marker standing in for the
+# unbind response it fakes.
+Sent = SupportsToWire | str
+
+
+async def exchange_async(
+    protocol: "ldapserver.BaseLDAPServer", wire_data: bytes
+) -> bytes:
     chunks: list[bytes] = []
     from anyldap.protocols.ldap import ldapserver
 
@@ -81,12 +90,13 @@ class LDAPClientTestDriver:
 
     fakeUnbindResponse = "fake-unbind-by-LDAPClientTestDriver"
 
-    def __init__(self, *responses: Iterable[Any] | Failure) -> None:
-        self.sent: list[Any] = []
+    def __init__(self, *responses: Iterable[object] | Failure) -> None:
+        # A response is whatever the test wrote; the driver only hands it on.
+        self.sent: list[Sent] = []
         self.responses = list(responses)
         self.connected: int | None = None
 
-    async def send(self, op: Any) -> Any:
+    async def send(self, op: Sent) -> object:
         self.sent.append(op)
         resps = self._response()
         assert len(resps) == 1, "got %d responses for a .send()" % len(resps)
@@ -99,7 +109,7 @@ class LDAPClientTestDriver:
 
     async def send_multiResponse_(
         self,
-        op: Any,
+        op: Sent,
         controls: object,
         return_controls: bool,
         handler: Callable[..., object] | None,
@@ -132,7 +142,7 @@ class LDAPClientTestDriver:
                 assert ret, msg
 
     async def send_multiResponse(
-        self, op: Any, handler: Callable[..., object], *args: object, **kwargs: object
+        self, op: Sent, handler: Callable[..., object], *args: object, **kwargs: object
     ) -> None:
         await self.send_multiResponse_(op, None, False, handler, *args, **kwargs)
 
@@ -140,7 +150,7 @@ class LDAPClientTestDriver:
 
     async def send_multiResponse_ex(
         self,
-        op: Any,
+        op: Sent,
         controls: object = None,
         handler: Callable[..., object] | None = None,
         *args: object,
@@ -150,7 +160,7 @@ class LDAPClientTestDriver:
 
     send_multiResponse_ex_async = send_multiResponse_ex
 
-    def send_noResponse(self, op: Any) -> None:
+    def send_noResponse(self, op: Sent) -> None:
         if len(self.responses) == 0:
             msg = "Ran out of responses"
             assert op == self.fakeUnbindResponse, msg
@@ -158,10 +168,10 @@ class LDAPClientTestDriver:
             self.responses.pop(0)
         self.sent.append(op)
 
-    async def send_noResponse_async(self, op: Any) -> None:
+    async def send_noResponse_async(self, op: Sent) -> None:
         self.send_noResponse(op)
 
-    def _response(self) -> list[Any]:
+    def _response(self) -> list[object]:
         assert self.responses, "Ran out of responses"
         responses = self.responses.pop(0)
         assert not isinstance(responses, Failure)
@@ -171,7 +181,7 @@ class LDAPClientTestDriver:
         # just a bit more explicit
         self.assertSent()
 
-    def assertSent(self, *shouldBeSent: Any) -> None:
+    def assertSent(self, *shouldBeSent: Sent) -> None:
         expected = list(shouldBeSent)
         msg = f"{self.__class__.__name__} expected to send {expected!r} but sent {self.sent!r}"
         assert self.sent == expected, msg

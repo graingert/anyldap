@@ -1,11 +1,12 @@
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any
+from types import ModuleType
 
 import anyio
 import pytest
 from anyio.abc import ByteStream, SocketAttribute, SocketListener, SocketStream
 from anyio.streams.stapled import MultiListener
 
+from anyldap import testutil
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
 
@@ -88,20 +89,20 @@ def decode_message(wire_bytes: bytes) -> pureber.BERBase | None:
 class AsyncLDAPClientDriver:
     fake_unbind_response = "fake-unbind-by-AsyncLDAPClientDriver"
 
-    def __init__(self, *responses: Iterable[Any] | BaseException) -> None:
+    def __init__(self, *responses: Iterable[object] | BaseException) -> None:
         self.responses = list(responses)
-        self.sent: list[Any] = []
+        self.sent: list[testutil.Sent] = []
         self.connected = True
         self.closed = False
         self.closed_event = anyio.Event()
 
-    def _response(self) -> list[Any]:
+    def _response(self) -> list[object]:
         assert self.responses, "Ran out of responses"
         item = self.responses.pop(0)
         assert not isinstance(item, BaseException)
         return list(item)
 
-    async def send(self, op: Any) -> Any:
+    async def send(self, op: testutil.Sent) -> object:
         self.sent.append(op)
         responses = self._response()
         assert len(responses) == 1, f"got {len(responses)} responses for .send()"
@@ -113,7 +114,7 @@ class AsyncLDAPClientDriver:
     send_async = send
 
     async def send_multiResponse(
-        self, op: Any, handler: Callable[..., object], *args: object, **kwargs: object
+        self, op: testutil.Sent, handler: Callable[..., object], *args: object, **kwargs: object
     ) -> None:
         self.sent.append(op)
         for response in self._response():
@@ -123,7 +124,7 @@ class AsyncLDAPClientDriver:
 
     async def send_multiResponse_ex(
         self,
-        op: Any,
+        op: testutil.Sent,
         controls: object = None,
         handler: Callable[..., object] | None = None,
         *args: object,
@@ -136,7 +137,7 @@ class AsyncLDAPClientDriver:
 
     send_multiResponse_ex_async = send_multiResponse_ex
 
-    async def send_noResponse_async(self, op: Any) -> None:
+    async def send_noResponse_async(self, op: testutil.Sent) -> None:
         self.sent.append(op)
         if self.responses:
             self._response()
@@ -156,7 +157,7 @@ class AsyncLDAPClientDriver:
 
 
 def patch_client_creator(
-    monkeypatch: pytest.MonkeyPatch, module: Any, client: object
+    monkeypatch: pytest.MonkeyPatch, module: ModuleType, client: object
 ) -> None:
     class FakeCreator:
         def __init__(self, reactor: object, protocol: object) -> None:
