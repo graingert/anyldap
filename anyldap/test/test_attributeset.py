@@ -47,6 +47,15 @@ class TestLDAPAttributeSet:
         b = ["b", "d", "c"]
         assert a == b
 
+    def testEquality_False_NotIterable(self):
+        """
+        Comparing against something that is not a set of values at all
+        answers no, rather than failing to iterate it.
+        """
+        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
+        assert not a == 3
+        assert a != 3
+
     def testEquality_False_Value(self):
         """
         LDAPAttributeSet objects are not equal when they have
