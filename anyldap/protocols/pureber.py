@@ -17,7 +17,9 @@
 
 from collections import UserList
 from collections.abc import Iterable, Sized
-from typing import ClassVar, Protocol, Self
+from typing import ClassVar, Protocol
+
+from typing_extensions import Self
 
 from anyldap._encoder import WireStrAlias, to_bytes
 

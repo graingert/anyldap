@@ -3,9 +3,20 @@ from typing import Any, ClassVar
 from anyldap._encoder import to_bytes
 
 
-def get(resultCode: int, errorMessage: str) -> "LDAPResult":
+def get(resultCode: int, errorMessage: str | bytes) -> "LDAPResult":
     """Get an instance of the correct exception for this resultCode."""
     return LDAPExceptionCollection.get_instance(resultCode, errorMessage)
+
+
+def get_exception(resultCode: int, errorMessage: str | bytes) -> "LDAPException":
+    """As get(), for a result code that is known not to be success.
+
+    Success is a result, not an exception, so raising what get() returns is
+    only valid once success has been ruled out.
+    """
+    result = get(resultCode, errorMessage)
+    assert isinstance(result, LDAPException), result
+    return result
 
 
 class LDAPExceptionCollection(type):
@@ -34,7 +45,7 @@ class LDAPExceptionCollection(type):
         return cls
 
     @classmethod
-    def get_instance(mcs, code: int, message: Any) -> "LDAPResult":
+    def get_instance(mcs, code: int, message: str | bytes) -> "LDAPResult":
         """Get an instance of the correct exception for this result code."""
         cls = mcs.collection.get(code)
         if cls is not None:
@@ -55,7 +66,7 @@ class Success(LDAPResult):
     resultCode = 0
     name = b"success"
 
-    def __init__(self, msg: str):
+    def __init__(self, msg: str | bytes):
         pass
 
 
@@ -79,7 +90,7 @@ class LDAPException(Exception, LDAPResult):
 
 
 class LDAPUnknownError(LDAPException):
-    def __init__(self, resultCode: int, message: str | None=None):
+    def __init__(self, resultCode: int, message: str | bytes | None = None):
         assert resultCode not in LDAPExceptionCollection.collection, (
             "resultCode %r must be unknown" % resultCode
         )

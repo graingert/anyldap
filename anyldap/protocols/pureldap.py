@@ -2,7 +2,9 @@
 
 import string
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from typing import ClassVar, Protocol, Self, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
+
+from typing_extensions import Self
 
 from anyldap._encoder import to_bytes, to_unicode
 from anyldap.protocols.pureber import (

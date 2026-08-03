@@ -118,7 +118,7 @@ async def put(path: AnyPath, entry: entry.BaseLDAPEntry) -> bool:
     return await _put(path, entry)
 
 
-@implementer(interfaces.IConnectedLDAPEntry)
+@implementer(interfaces.IWalkableLDAPEntry)
 class LDIFTreeEntry(
     entry.EditableLDAPEntry,
     entryhelpers.DiffTreeMixin,
@@ -223,8 +223,8 @@ class LDIFTreeEntry(
 
     async def children(
         self,
-        callback: Callable[[interfaces.IConnectedLDAPEntry], object] | None = None,
-    ) -> list[interfaces.IConnectedLDAPEntry] | None:
+        callback: Callable[[interfaces.IWalkableLDAPEntry], object] | None = None,
+    ) -> list[interfaces.IWalkableLDAPEntry] | None:
         children = await self._child_entries()
         if callback is None:
             return list(children)

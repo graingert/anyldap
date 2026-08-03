@@ -293,7 +293,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         assert isinstance(msg, pureldap.LDAPBindResponse)
         assert msg.referral is None  # TODO
         if msg.resultCode != ldaperrors.Success.resultCode:
-            raise ldaperrors.get(msg.resultCode, msg.errorMessage)
+            raise ldaperrors.get_exception(msg.resultCode, msg.errorMessage)
         return self
 
     # end ILDAPEntry
@@ -328,7 +328,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         assert isinstance(msg, pureldap.LDAPModifyResponse)
         assert msg.referral is None  # TODO
         if msg.resultCode != ldaperrors.Success.resultCode:
-            raise ldaperrors.get(msg.resultCode, msg.errorMessage)
+            raise ldaperrors.get_exception(msg.resultCode, msg.errorMessage)
 
         self._assertMatchedDN(msg.matchedDN)
 
@@ -352,7 +352,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         assert isinstance(msg, pureldap.LDAPModifyDNResponse)
         assert msg.referral is None  # TODO
         if msg.resultCode != ldaperrors.Success.resultCode:
-            raise ldaperrors.get(msg.resultCode, msg.errorMessage)
+            raise ldaperrors.get_exception(msg.resultCode, msg.errorMessage)
 
         self._assertMatchedDN(msg.matchedDN)
         self.dn = newDN
@@ -378,10 +378,10 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
     def _cbDeleteDone(self, msg):
         assert isinstance(msg, pureldap.LDAPResult)
         if not isinstance(msg, pureldap.LDAPDelResponse):
-            raise ldaperrors.get(msg.resultCode, msg.errorMessage)
+            raise ldaperrors.get_exception(msg.resultCode, msg.errorMessage)
         assert msg.referral is None  # TODO
         if msg.resultCode != ldaperrors.Success.resultCode:
-            raise ldaperrors.get(msg.resultCode, msg.errorMessage)
+            raise ldaperrors.get_exception(msg.resultCode, msg.errorMessage)
 
         self._assertMatchedDN(msg.matchedDN)
         return self
@@ -401,7 +401,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         )
         assert msg.referral is None  # TODO
         if msg.resultCode != ldaperrors.Success.resultCode:
-            raise ldaperrors.get(msg.resultCode, msg.errorMessage)
+            raise ldaperrors.get_exception(msg.resultCode, msg.errorMessage)
 
         self._assertMatchedDN(msg.matchedDN)
         e = self.__class__(dn=dn, client=self.client)
@@ -438,7 +438,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         assert isinstance(msg, pureldap.LDAPExtendedResponse)
         assert msg.referral is None  # TODO
         if msg.resultCode != ldaperrors.Success.resultCode:
-            raise ldaperrors.get(msg.resultCode, msg.errorMessage)
+            raise ldaperrors.get_exception(msg.resultCode, msg.errorMessage)
 
         self._assertMatchedDN(msg.matchedDN)
         return self

@@ -6,7 +6,9 @@ changing of location in tree)
 """
 
 from collections.abc import Iterable, Sequence
-from typing import ClassVar, Protocol, Self
+from typing import ClassVar, Protocol
+
+from typing_extensions import Self
 
 from anyldap import attributeset, interfaces
 from anyldap._async import await_result

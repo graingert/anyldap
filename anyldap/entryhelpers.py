@@ -10,7 +10,7 @@ from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldapsyntax
 AttributeText = str | bytes
 
 
-Entry = interfaces.IConnectedLDAPEntry
+Entry = interfaces.IWalkableLDAPEntry
 
 
 class Readable(Protocol):
@@ -193,7 +193,7 @@ class SubtreeFromChildrenMixin:
 
         # self is the entry the mixin was mixed into; the callback is handed
         # entries, so say that the host is one.
-        assert interfaces.IConnectedLDAPEntry.providedBy(self)
+        assert interfaces.IWalkableLDAPEntry.providedBy(self)
         callback(self)
         children = await self.children()
         assert children is not None
@@ -348,7 +348,7 @@ class SearchByTreeWalkingMixin:
             async def iterateSelf(
                 callback: Callable[[Entry], object],
             ) -> list[Entry] | None:
-                assert interfaces.IConnectedLDAPEntry.providedBy(self)
+                assert interfaces.IWalkableLDAPEntry.providedBy(self)
                 callback(self)
                 return None
 

@@ -1,4 +1,4 @@
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
 from zope.interface import Interface
@@ -264,22 +264,10 @@ class IConnectedLDAPEntry(ILDAPEntry):
     whole.
 
     Being part of a tree does not stop it being an entry, and every
-    implementer already provided both.
+    implementer already provided both. What every such entry can do is
+    find another by name, search below itself, and grow a child; walking
+    its own children is IWalkableLDAPEntry.
     """
-
-    def diffTree(
-        other: "IConnectedLDAPEntry",
-        # Whatever the caller is accumulating the differences into. A list of
-        # a named type would not accept the caller's own list, which is
-        # invariant in its element.
-        result: list[Any] | None = None,
-    ) -> Awaitable[object]:
-        """
-        Compute the differences between this subtree and another.
-
-        @return: A list of operations that would make this tree look like
-        other.
-        """
 
     def search(
         filterText: str | None = None,
@@ -291,7 +279,9 @@ class IConnectedLDAPEntry(ILDAPEntry):
         timeLimit: int = 0,
         typesOnly: int = 0,
         callback: Callable[["IConnectedLDAPEntry"], object] | None = None,
-    ) -> Awaitable[list["IConnectedLDAPEntry"] | None]:
+        # A sequence rather than a list: a tree that walks itself hands back
+        # its own kind of entry, and a list of those is not a list of these.
+    ) -> Awaitable[Sequence["IConnectedLDAPEntry"] | None]:
         """
 
         Perform an LDAP search with this object as the base.
@@ -330,44 +320,6 @@ class IConnectedLDAPEntry(ILDAPEntry):
 
         """
 
-    def children(
-        callback: Callable[["IConnectedLDAPEntry"], object] | None = None
-    ) -> Awaitable[list["IConnectedLDAPEntry"] | None]:
-        """
-
-        List the direct children of this entry. Try to avoid using
-        .search(), as this will be used later to implement .search()
-        on LDAP backends.
-
-        @param callback: Callback function to call for each resulting
-        LDAPEntry. None means gather the results into a list and
-        return it from here.
-
-        @return: Completes when the list is over, giving None if
-        callback was given and a list of the children if callback is
-        not given or is None.
-
-        """
-
-    def subtree(
-        callback: Callable[["IConnectedLDAPEntry"], object] | None = None
-    ) -> Awaitable[list["IConnectedLDAPEntry"] | None]:
-        """
-
-        List the subtree rooted at this entry, including this
-        entry. Try to avoid using .search(), as this will be used
-        later to implement .search() on LDAP backends.
-
-        @param callback: Callback function to call for each resulting
-        LDAPEntry. None means gather the results into a list and
-        return it from here.
-
-        @return: Completes when the list is over, giving None if
-        callback was given and a list of the children if callback is
-        not given or is None.
-
-        """
-
     def lookup(dn: AnyDN) -> Awaitable["IConnectedLDAPEntry"]:
         """
         Lookup the referred to by dn.
@@ -388,6 +340,55 @@ class IConnectedLDAPEntry(ILDAPEntry):
         @return: The new child entry.
         """
 
+
+
+class IWalkableLDAPEntry(IConnectedLDAPEntry):
+    """
+    An entry whose tree can be walked a level at a time.
+
+    The backends that hold the whole tree can list a node's children and
+    test an entry against a filter themselves. An entry backed by a server
+    asks the server to search instead.
+    """
+
+    def children(
+        callback: Callable[["IWalkableLDAPEntry"], object] | None = None
+    ) -> Awaitable[list["IWalkableLDAPEntry"] | None]:
+        """
+
+        List the direct children of this entry. Try to avoid using
+        .search(), as this will be used later to implement .search()
+        on LDAP backends.
+
+        @param callback: Callback function to call for each resulting
+        LDAPEntry. None means gather the results into a list and
+        return it from here.
+
+        @return: Completes when the list is over, giving None if
+        callback was given and a list of the children if callback is
+        not given or is None.
+
+        """
+
+    def subtree(
+        callback: Callable[["IWalkableLDAPEntry"], object] | None = None
+    ) -> Awaitable[list["IWalkableLDAPEntry"] | None]:
+        """
+
+        List the subtree rooted at this entry, including this
+        entry. Try to avoid using .search(), as this will be used
+        later to implement .search() on LDAP backends.
+
+        @param callback: Callback function to call for each resulting
+        LDAPEntry. None means gather the results into a list and
+        return it from here.
+
+        @return: Completes when the list is over, giving None if
+        callback was given and a list of the children if callback is
+        not given or is None.
+
+        """
+
     def match(filter: BERBase) -> bool:
         """
 
@@ -401,6 +402,20 @@ class IConnectedLDAPEntry(ILDAPEntry):
 
         """
 
+
+    def diffTree(
+        other: "IWalkableLDAPEntry",
+        # Whatever the caller is accumulating the differences into. A list of
+        # a named type would not accept the caller's own list, which is
+        # invariant in its element.
+        result: list[Any] | None = None,
+    ) -> Awaitable[object]:
+        """
+        Compute the differences between this subtree and another.
+
+        @return: A list of operations that would make this tree look like
+        other.
+        """
 
 class IServerBackedLDAPEntry(IConnectedLDAPEntry):
     """

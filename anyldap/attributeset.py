@@ -1,6 +1,8 @@
 from collections.abc import Iterable
 from copy import deepcopy
-from typing import Self, TypeVar
+from typing import TypeVar
+
+from typing_extensions import Self
 
 from anyldap._encoder import get_strings
 

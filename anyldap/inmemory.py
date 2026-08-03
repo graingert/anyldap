@@ -19,7 +19,7 @@ class ReadableFile(TypingProtocol):
     def read(self, size: int) -> bytes | Awaitable[bytes]: ...
 
 
-@implementer(interfaces.IConnectedLDAPEntry)
+@implementer(interfaces.IWalkableLDAPEntry)
 class ReadOnlyInMemoryLDAPEntry(
     entry.EditableLDAPEntry,
     entryhelpers.DiffTreeMixin,
@@ -41,8 +41,8 @@ class ReadOnlyInMemoryLDAPEntry(
 
     async def children(
         self,
-        callback: Callable[[interfaces.IConnectedLDAPEntry], object] | None = None,
-    ) -> list[interfaces.IConnectedLDAPEntry] | None:
+        callback: Callable[[interfaces.IWalkableLDAPEntry], object] | None = None,
+    ) -> list[interfaces.IWalkableLDAPEntry] | None:
         if callback is None:
             return list(self._children.values())
         for c in self._children.values():
