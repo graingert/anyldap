@@ -468,9 +468,12 @@ def test_clientConnectionLost_rep() -> None:
 
 
 def test_startTLSBusyError_rep() -> None:
-    # Whatever was on the wire is repr'd into the message.
-    error = ldapclient.LDAPStartTLSBusyError("xyzzy")  # type: ignore[arg-type]
-    assert b"Cannot STARTTLS while operations on wire: 'xyzzy'" == error.toWire()
+    # What is still on the wire is named in the message.
+    slot: ResultSlot[object] = ResultSlot()
+    error = ldapclient.LDAPStartTLSBusyError({4: (slot, False, None, (), {})})
+    message = error.toWire()
+    assert message.startswith(b"Cannot STARTTLS while operations on wire: {4: (")
+    assert repr(slot).encode() in message
 
 
 def test_StartTLSInvalidResponseName_rep() -> None:

@@ -10,7 +10,9 @@ from anyldap.protocols.ldap import distinguishedname
 
 # An option's value is whatever its own handler makes of it: a string from
 # the command line, a flag, a parsed scope, a mapping of service locations.
-# Reading one back is untyped by nature, which is what Any is for.
+# Reading one back is untyped by nature, which is what Any is for -- narrowing
+# it would mean each Options subclass exposing its own options as attributes,
+# rather than every caller asserting its way out of the bag.
 OptionValue = Any
 
 __all__ = [

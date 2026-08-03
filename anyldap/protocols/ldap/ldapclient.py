@@ -46,6 +46,8 @@ class _PrebufferedStream(ByteStream):
 
     @property
     def extra_attributes(self) -> Mapping[Any, Callable[[], Any]]:
+        # anyio's own signature: an attribute is whatever its provider says,
+        # keyed by the token that asks for it.
         return self.stream.extra_attributes
 
     async def receive(self, max_bytes: int = 65536) -> bytes:

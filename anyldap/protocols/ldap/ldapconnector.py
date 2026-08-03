@@ -242,6 +242,8 @@ async def connectToLDAPDNAsync(
     resolver: Resolver | None = None,
     tls: bool = False,
     ssl_context: ssl.SSLContext | None = None,
+    # A connection, or whatever an override handed back in its place. The
+    # override is the caller's own, so this cannot say what it produced.
 ) -> Any:
     resolved = await _resolveServiceLocationAsync(
         dn, overrides=overrides, resolver=resolver
@@ -291,6 +293,7 @@ class LDAPClientCreator(Generic[_P]):
         dn: interfaces.AnyDN,
         overrides: Overrides | None = None,
         bindAddress: tuple[str, int] | None = None,
+        # See connectToLDAPDNAsync: an override's product is the caller's.
     ) -> Any:
         override = _findOverride(
             distinguishedname.DistinguishedName(stringValue=dn)
@@ -310,6 +313,7 @@ class LDAPClientCreator(Generic[_P]):
 
     async def connectAnonymously(
         self, dn: interfaces.AnyDN, overrides: Overrides | None = None
+        # See connectToLDAPDNAsync: an override's product is the caller's.
     ) -> Any:
         """Connect to remote host and bind anonymously, returning the protocol instance."""
         client = await self.connect(dn, overrides=overrides)
@@ -341,6 +345,7 @@ class LDAPClientCreator(Generic[_P]):
         *,
         tls: bool = False,
         ssl_context: ssl.SSLContext | None = None,
+        # See connectToLDAPDNAsync: an override's product is the caller's.
     ) -> Any:
         return await connectToLDAPDNAsync(
             dn,
@@ -361,6 +366,7 @@ class LDAPClientCreator(Generic[_P]):
         *,
         tls: bool = False,
         ssl_context: ssl.SSLContext | None = None,
+        # See connectToLDAPDNAsync: an override's product is the caller's.
     ) -> Any:
         client = await self.connectAsync(
             dn,
