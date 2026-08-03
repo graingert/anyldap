@@ -270,18 +270,6 @@ class IConnectedLDAPEntry(ILDAPEntry):
         other.
         """
 
-    def fetch(*attributes: str | bytes) -> Awaitable["ILDAPEntry"]:
-        """
-        Fetch the attributes of this object from the server.
-
-        @param attributes: Attributes to fetch. If none, fetch all
-        attributes. Fetched attributes are overwritten, and if
-        fetching all attributes, attributes that are not on the server
-        are removed.
-
-        @return: Completes when the operation is done.
-        """
-
     def search(
         filterText: str | None = None,
         filterObject: BERBase | None = None,
@@ -407,10 +395,22 @@ class IServerBackedLDAPEntry(IConnectedLDAPEntry):
     """
     An entry whose tree lives on an LDAP server.
 
-    Asking a server what its naming contexts are is something only an entry
-    with a server to ask can do; the in-memory and LDIF backends are trees
-    unto themselves.
+    Fetching an entry's attributes, and asking a server what its naming
+    contexts are, are things only an entry with a server to ask can do; the
+    in-memory and LDIF backends are trees unto themselves.
     """
+
+    def fetch(*attributes: str | bytes) -> Awaitable["ILDAPEntry"]:
+        """
+        Fetch the attributes of this object from the server.
+
+        @param attributes: Attributes to fetch. If none, fetch all
+        attributes. Fetched attributes are overwritten, and if
+        fetching all attributes, attributes that are not on the server
+        are removed.
+
+        @return: Completes when the operation is done.
+        """
 
     def namingContext() -> Awaitable["ILDAPEntry"]:
         """

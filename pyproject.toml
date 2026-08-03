@@ -108,7 +108,6 @@ module = [
     "anyldap.config",
     "anyldap.dns",
     "anyldap.generate_password",
-    "anyldap.ldiftree",
     "anyldap.numberalloc",
     "anyldap.protocols.ldap.autofill.posixAccount",
     "anyldap.protocols.ldap.autofill.sambaSamAccount",
