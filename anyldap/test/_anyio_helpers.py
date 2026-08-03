@@ -3,13 +3,13 @@ from typing import Any
 
 import anyio
 import pytest
-from anyio.abc import SocketAttribute
+from anyio.abc import ByteStream, SocketAttribute
 
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
 
 
-class MemoryByteStream:
+class MemoryByteStream(ByteStream):
     def __init__(self) -> None:
         self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream(0)
         self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream(0)
@@ -22,6 +22,9 @@ class MemoryByteStream:
         data = await self._incoming_recv.receive()
         assert isinstance(data, bytes)
         return data
+
+    async def send_eof(self) -> None:
+        await self._outgoing_send.aclose()
 
     async def aclose(self) -> None:
         self.closed = True

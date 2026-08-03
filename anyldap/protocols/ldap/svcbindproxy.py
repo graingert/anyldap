@@ -1,11 +1,33 @@
 import datetime
 from collections.abc import Awaitable, Iterable, Sequence
+from typing import Protocol
 
 from anyldap._async import await_result
-from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldaperrors, ldapserver, ldapsyntax, proxy
+from anyldap.protocols import pureber, pureldap
+from anyldap.protocols.ldap import (
+    ldapclient,
+    ldaperrors,
+    ldapserver,
+    ldapsyntax,
+    proxy,
+)
 
 Controls = Iterable[pureldap.Control] | None
+
+
+class SearchableEntry(Protocol):
+    """What the proxy looks for service entries under.
+
+    Only searched, so a test can supply the results directly rather than a
+    whole entry with a client behind it.
+    """
+
+    async def search_async(
+        self,
+        *,
+        filterObject: pureber.BERBase,
+        attributes: Sequence[str | bytes],
+    ) -> object: ...
 
 
 class ServiceBindingProxy(proxy.Proxy):
@@ -66,6 +88,7 @@ class ServiceBindingProxy(proxy.Proxy):
         baseDN = self.config.getIdentityBaseDN()
         # Only reached through _whenConnected, which waits for the client.
         assert self.client is not None
+        assert isinstance(self.client, ldapclient.LDAPServiceClient)
         e = ldapsyntax.LDAPEntryWithClient(client=self.client, dn=baseDN)
         entry = await self._tryService_async(services, e, request)
         return await self._maybeFallback_async(entry, request, controls, reply)
@@ -97,7 +120,7 @@ class ServiceBindingProxy(proxy.Proxy):
     async def _tryService_async(
         self,
         services: list[str],
-        baseEntry: ldapsyntax.LDAPEntryWithClient,
+        baseEntry: SearchableEntry,
         request: pureldap.LDAPBindRequest,
     ) -> object:
         while services:

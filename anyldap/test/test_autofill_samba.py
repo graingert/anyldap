@@ -5,17 +5,25 @@ import pytest
 
 from anyldap import testutil
 from anyldap.protocols.ldap import ldapsyntax
-from anyldap.protocols.ldap.autofill import sambaAccount, sambaSamAccount
+from anyldap.protocols.ldap.autofill import (
+    ObjectMissingObjectClassException,
+    sambaAccount,
+    sambaSamAccount,
+)
 
 pytestmark = pytest.mark.anyio
 
 
 def test_notify_ignores_unrelated_attributes() -> None:
-    assert sambaAccount.Autofill_samba().notify({}, "description") is None
-    assert (
-        sambaSamAccount.Autofill_samba("S-1-5-21").notify({}, "description")
-        is None
+    """An attribute neither autofiller derives anything from is left alone."""
+    entry = ldapsyntax.LDAPEntryWithAutoFill(
+        client=testutil.LDAPClientTestDriver(), dn="cn=foo,dc=example,dc=com"
     )
+
+    sambaAccount.Autofill_samba().notify(entry, "description")
+    sambaSamAccount.Autofill_samba("S-1-5-21").notify(entry, "description")
+
+    assert list(entry.keys()) == []
 
 
 class TestLDAPAutoFill_sambaAccount:
@@ -30,7 +38,7 @@ class TestLDAPAutoFill_sambaAccount:
             },
         )
         autoFiller = sambaAccount.Autofill_samba()
-        with pytest.raises(sambaAccount.ObjectMissingObjectClassException):
+        with pytest.raises(ObjectMissingObjectClassException):
             await o.addAutofiller(autoFiller)
         client.assertNothingSent()
 
@@ -138,7 +146,7 @@ class TestLDAPAutoFill_sambaSamAccount:
             },
         )
         autoFiller = sambaSamAccount.Autofill_samba(domainSID="foo")
-        with pytest.raises(sambaSamAccount.ObjectMissingObjectClassException):
+        with pytest.raises(ObjectMissingObjectClassException):
             await o.addAutofiller(autoFiller)
         client.assertNothingSent()
 

@@ -105,15 +105,11 @@ module = [
     "anyldap.test._anyio_helpers",
     "anyldap.test.test_anyio_server",
     "anyldap.test.test_autofill",
-    "anyldap.test.test_autofill_samba",
     "anyldap.test.test_ldapclient",
     "anyldap.test.test_ldapsyntax",
-    "anyldap.test.test_merger",
-    "anyldap.test.test_proxy",
     "anyldap.test.test_pureldap",
     "anyldap.test.test_scripts",
     "anyldap.test.test_server",
-    "anyldap.test.test_svcbindproxy",
 ]
 
 [tool.coverage.run]

@@ -13,8 +13,9 @@ from anyldap.protocols.pureber import BERBase
 # What a method takes where it will build a DistinguishedName out of it.
 AnyDN = DistinguishedName | str | bytes
 
-# Where to reach the server holding a given part of the tree.
-ServiceLocation = tuple[str | None, str | int | None]
+# Where to reach the server holding a given part of the tree, or something
+# that takes over connecting to it.
+ServiceLocation = tuple[str | None, str | int | None] | Callable[..., Any]
 
 # Mapping is invariant in its key, so accepting a DN however it is spelled
 # means naming each spelling rather than the union of them.

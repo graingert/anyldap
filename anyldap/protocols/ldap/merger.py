@@ -20,7 +20,7 @@ Controls = Iterable[pureldap.Control] | None
 
 
 class MergedLDAPServer(ldapserver.BaseLDAPServer):
-    protocol = ldapclient.LDAPClient
+    protocol: Callable[[], ldapclient.LDAPClientLike] = ldapclient.LDAPClient
 
     def __init__(
         self,
@@ -28,7 +28,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         use_tls: Sequence[bool],
     ) -> None:
         ldapserver.BaseLDAPServer.__init__(self)
-        self.clients: list[ldapclient.LDAPClient] = []
+        self.clients: list[ldapclient.LDAPClientLike] = []
         self.configs = configs
         self.use_tls = use_tls
         self.all_connected = False
@@ -47,7 +47,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         self._start_anyio_close()
         raise ldaperrors.LDAPOther(f"Cannot connect to server.{reason}")
 
-    def _cbConnectionMade(self, proto: ldapclient.LDAPClient) -> None:
+    def _cbConnectionMade(self, proto: ldapclient.LDAPClientLike) -> None:
         self.clients.append(proto)
 
         if len(self.clients) == len(self.configs):
@@ -107,7 +107,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
                 reply(response)
             return final
 
-        async def send(client: ldapclient.LDAPClient) -> None:
+        async def send(client: ldapclient.LDAPClientLike) -> None:
             if request.needs_answer:
                 await client.send_multiResponse_async(request, got_response)
             else:

@@ -2,7 +2,8 @@
 
 import ssl
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, TypedDict
+from typing import Any, TypedDict, runtime_checkable
+from typing import Protocol as TypingProtocol
 
 import anyio
 from anyio.abc import ByteStream, TaskGroup
@@ -87,6 +88,48 @@ class LDAPStartTLSInvalidResponseName(ldaperrors.LDAPException):
 
     def toWire(self) -> bytes:
         return b"Invalid responseName in STARTTLS response: %r" % (self.responseName,)
+
+
+class LDAPClientLike(TypingProtocol):
+    """What a proxying server needs of its connection to the real server.
+
+    A proxy forwards requests and closes the connection when its own client
+    goes away; which client is doing that is not its business, which is what
+    lets a test drive one.
+    """
+
+    @property
+    def connected(self) -> object: ...
+
+    async def send_multiResponse_async(
+        self,
+        op: pureldap.LDAPProtocolRequest,
+        handler: Callable[..., bool],
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
+
+    async def send_noResponse_async(
+        self, op: pureldap.LDAPProtocolRequest
+    ) -> None: ...
+
+    async def aclose(self) -> None: ...
+
+
+@runtime_checkable
+class LDAPServiceClient(LDAPClientLike, TypingProtocol):
+    """A client a service binding proxy can also search through."""
+
+    async def send(self, op: pureldap.LDAPProtocolRequest) -> object: ...
+
+    async def send_multiResponse_ex(
+        self,
+        op: pureldap.LDAPProtocolRequest,
+        controls: Iterable[pureldap.Control] | None,
+        handler: Callable[..., bool] | None,
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
 
 
 class LDAPClient(Protocol):

@@ -1,9 +1,13 @@
+from collections.abc import Awaitable, Sequence
+from typing import Any, cast
+from unittest import mock
+
 import anyio
 import pytest
 
 from anyldap import config, ldapfilter, testutil
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldaperrors, proxy, svcbindproxy
+from anyldap.protocols.ldap import ldapclient, ldaperrors, proxy, svcbindproxy
 from anyldap.test._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
@@ -16,7 +20,7 @@ pytestmark = pytest.mark.anyio
 NOW = "20050213140302Z"
 
 
-def _search_request(service_name):
+def _search_request(service_name: str) -> pureldap.LDAPSearchRequest:
     return pureldap.LDAPSearchRequest(
         baseObject="dc=example,dc=com",
         derefAliases=0,
@@ -36,7 +40,12 @@ def _search_request(service_name):
     )
 
 
-async def _create_server(monkeypatch: pytest.MonkeyPatch, services, fallback, *responses):
+async def _create_server(
+    monkeypatch: pytest.MonkeyPatch,
+    services: Sequence[str],
+    fallback: bool,
+    *responses: Sequence[object],
+) -> tuple[svcbindproxy.ServiceBindingProxy, MemoryByteStream, AsyncLDAPClientDriver]:
     client = AsyncLDAPClientDriver(*responses)
     patch_client_creator(monkeypatch, proxy, client)
     server = svcbindproxy.ServiceBindingProxy(
@@ -47,7 +56,8 @@ async def _create_server(monkeypatch: pytest.MonkeyPatch, services, fallback, *r
         services=services,
         fallback=fallback,
     )
-    server.timestamp = lambda: NOW
+    # Fixed, so the validity filters the proxy builds are predictable.
+    monkeypatch.setattr(server, "timestamp", lambda: NOW)
     stream = MemoryByteStream()
     return server, stream, client
 
@@ -71,6 +81,8 @@ async def test_bind_no_matching_services_found_no_fallback(monkeypatch: pytest.M
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
         client.assert_sent(
             _search_request("svc1"),
@@ -100,6 +112,8 @@ async def test_bind_no_matching_services_found_fallback_success(monkeypatch: pyt
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         client.assert_sent(
             _search_request("svc1"),
@@ -132,6 +146,8 @@ async def test_bind_no_matching_services_found_fallback_bad_auth(monkeypatch: py
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
         client.assert_sent(
             _search_request("svc1"),
@@ -168,6 +184,8 @@ async def test_bind_match_success(monkeypatch: pytest.MonkeyPatch) -> None:
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         assert response.value.matchedDN == b"cn=jack,dc=example,dc=com"
         client.assert_sent(
@@ -180,14 +198,19 @@ async def test_bind_match_success(monkeypatch: pytest.MonkeyPatch) -> None:
         await server.aclose()
 
 
-def _legacy_proxy(services=None, fallback=False):
-    server = svcbindproxy.ServiceBindingProxy(
+def _legacy_proxy(
+    services: Sequence[str] | None = None, fallback: bool = False
+) -> svcbindproxy.ServiceBindingProxy:
+    class FixedTime(svcbindproxy.ServiceBindingProxy):
+        def timestamp(self) -> str:
+            return NOW
+
+    server = FixedTime(
         config=config.LDAPConfig(identityBaseDN="dc=example,dc=com"),
         services=services,
         fallback=fallback,
     )
-    server.timestamp = lambda: NOW
-    server.client = object()
+    server.client = cast(ldapclient.LDAPClientLike, object())
     return server
 
 
@@ -197,45 +220,58 @@ async def test_maybe_fallback_results() -> None:
     success = await server._maybeFallback_async(
         object(), request, None, lambda value: None
     )
+    assert success is not None
     assert success.resultCode == ldaperrors.Success.resultCode
     assert success.matchedDN == "cn=alice"
 
     denied = await server._maybeFallback_async(
         None, request, None, lambda value: None
     )
+    assert denied is not None
     assert denied.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
 
     class FallbackProxy(svcbindproxy.ServiceBindingProxy):
-        forwarded = None
+        forwarded: tuple[object, ...] | None = None
 
-        async def handleUnknown(self, request, controls, reply) -> None:
+        async def _forward(
+            self, request: object, controls: object, reply: object
+        ) -> None:
             self.forwarded = (request, controls, reply)
+
+        def handleUnknown(  # type: ignore[override]
+            self, request: object, controls: object, reply: object
+        ) -> Awaitable[None]:
+            return self._forward(request, controls, reply)
 
     fallback = FallbackProxy(
         config=config.LDAPConfig(identityBaseDN="dc=example"), fallback=True
     )
-    assert (
-        await fallback._maybeFallback_async(None, request, "controls", "reply") is None
-    )
-    assert fallback.forwarded == (request, "controls", "reply")
+    controls: list[pureldap.Control] = [("1.2.3", None, None)]
+    reply = mock.Mock()
+
+    assert await fallback._maybeFallback_async(None, request, controls, reply) is None
+
+    # Forwarded rather than answered here.
+    assert fallback.forwarded == (request, controls, reply)
+    reply.assert_not_called()
 
 
 class ServiceEntry:
-    def __init__(self, bind_result=None) -> None:
+    def __init__(self, bind_result: object = None) -> None:
         self.bind_result = bind_result
 
-    async def bind_async(self, password):
+    async def bind_async(self, password: object) -> object:
         if isinstance(self.bind_result, BaseException):
             raise self.bind_result
         return self.bind_result or self
 
 
 class SearchBase:
-    def __init__(self, results) -> None:
+    def __init__(self, results: Sequence[Sequence[object]]) -> None:
         self.results = list(results)
-        self.filters = []
+        self.filters: list[dict[str, Any]] = []
 
-    async def search_async(self, **kwargs):
+    async def search_async(self, **kwargs: Any) -> Sequence[object]:
         self.filters.append(kwargs)
         return self.results.pop(0)
 
@@ -270,8 +306,13 @@ async def test_bind_handler_validation_and_anonymous_forwarding() -> None:
         )
 
     class AnonymousProxy(svcbindproxy.ServiceBindingProxy):
-        async def handleUnknown(self, request, controls, reply):
+        async def _forward(self) -> str:
             return "forwarded"
+
+        def handleUnknown(  # type: ignore[override]
+            self, request: object, controls: object, reply: object
+        ) -> Awaitable[str]:
+            return self._forward()
 
     anonymous = AnonymousProxy(config=config.LDAPConfig())
     result = anonymous.handle_LDAPBindRequest(
@@ -280,7 +321,9 @@ async def test_bind_handler_validation_and_anonymous_forwarding() -> None:
     assert await result == "forwarded"
 
 
-async def test_legacy_bind_uses_connected_client_search_interface() -> None:
+async def test_legacy_bind_uses_connected_client_search_interface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = testutil.LDAPClientTestDriver(
         [pureldap.LDAPSearchResultDone(ldaperrors.Success.resultCode)]
     )
@@ -290,7 +333,7 @@ async def test_legacy_bind_uses_connected_client_search_interface() -> None:
         services=["svc"],
         fallback=False,
     )
-    server.timestamp = lambda: NOW
+    monkeypatch.setattr(server, "timestamp", lambda: NOW)
     server.client = client
 
     response = await server.handle_LDAPBindRequest(
@@ -299,6 +342,7 @@ async def test_legacy_bind_uses_connected_client_search_interface() -> None:
         lambda value: None,
     )
 
+    assert isinstance(response, pureldap.LDAPBindResponse)
     assert response.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
     client.assertSent(_search_request("svc"))
 
@@ -345,6 +389,8 @@ async def test_bind_match_success_later(monkeypatch: pytest.MonkeyPatch) -> None
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         assert response.value.matchedDN == b"cn=jack,dc=example,dc=com"
         client.assert_sent(
@@ -399,6 +445,8 @@ async def test_bind_match_bad_auth(monkeypatch: pytest.MonkeyPatch) -> None:
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
         client.assert_sent(
             _search_request("svc1"),

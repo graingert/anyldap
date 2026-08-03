@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from anyldap._async import await_result
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, ldapserver
-from anyldap.protocols.ldap.ldapclient import LDAPClient
+from anyldap.protocols.ldap.ldapclient import LDAPClientLike
 from anyldap.runtime import Failure, Protocol, logger
 
 Controls = Iterable[pureldap.Control] | None
@@ -25,10 +25,12 @@ class ProxyBase(ldapserver.BaseLDAPServer):
     the proxied server.
     """
 
-    client: LDAPClient | None = None
+    client: LDAPClientLike | None = None
     unbound = False
     use_tls = False
-    clientConnector: Callable[[], LDAPClient | Awaitable[LDAPClient]] | None = None
+    clientConnector: (
+        Callable[[], LDAPClientLike | Awaitable[LDAPClientLike]] | None
+    ) = None
 
     def __init__(self) -> None:
         ldapserver.BaseLDAPServer.__init__(self)

@@ -15,9 +15,9 @@ Controls = Iterable[pureldap.Control] | None
 
 
 class Proxy(ldapserver.BaseLDAPServer):
-    protocol = ldapclient.LDAPClient
+    protocol: Callable[[], ldapclient.LDAPClientLike] = ldapclient.LDAPClient
 
-    client: ldapclient.LDAPClient | None = None
+    client: ldapclient.LDAPClientLike | None = None
     unbound = False
 
     def __init__(self, config: interfaces.ILDAPConfig) -> None:
@@ -39,7 +39,7 @@ class Proxy(ldapserver.BaseLDAPServer):
             await self._connected.wait()
         return await await_result(fn(*a, **kw))
 
-    def _cbConnectionMade(self, proto: ldapclient.LDAPClient) -> None:
+    def _cbConnectionMade(self, proto: ldapclient.LDAPClientLike) -> None:
         self.client = proto
         self._connected.set()
 

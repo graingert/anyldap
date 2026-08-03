@@ -1,5 +1,7 @@
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import anyio
 import anyio.lowlevel
@@ -22,13 +24,19 @@ class StubClient:
     connected = True
 
     def __init__(self) -> None:
-        self.calls = []
+        self.calls: list[tuple[object, ...]] = []
 
-    async def send_multiResponse_async(self, request, callback, reply) -> None:
-        self.calls.append(("multi", request, callback, reply))
+    async def send_multiResponse_async(
+        self,
+        op: pureldap.LDAPProtocolRequest,
+        handler: Callable[..., bool],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        self.calls.append(("multi", op, handler, *args))
 
-    async def send_noResponse_async(self, request) -> None:
-        self.calls.append(("none", request))
+    async def send_noResponse_async(self, op: pureldap.LDAPProtocolRequest) -> None:
+        self.calls.append(("none", op))
 
     async def aclose(self) -> None:
         self.connected = False
@@ -40,13 +48,13 @@ async def test_stub_client_close_uses_async_interface() -> None:
     assert not client.connected
 
 
-def _legacy_server(client=None):
+def _legacy_server(client: Any = None) -> proxy.Proxy:
     server = proxy.Proxy(config.LDAPConfig(serviceLocationOverrides={}))
     server.client = client
     return server
 
 
-async def _connect_after_checkpoint(server) -> None:
+async def _connect_after_checkpoint(server: proxy.Proxy) -> None:
     """Let the waiter block first, then complete the connection."""
     await anyio.lowlevel.checkpoint()
     server._cbConnectionMade(StubClient())
@@ -86,13 +94,21 @@ async def test_async_queue_uses_client_async_interface() -> None:
 async def test_async_queue_uses_async_client_methods() -> None:
     class AsyncClient:
         def __init__(self) -> None:
-            self.calls = []
+            self.calls: list[tuple[object, ...]] = []
 
-        async def send_multiResponse_async(self, request, callback, reply) -> None:
-            self.calls.append(("multi", request, callback, reply))
+        async def send_multiResponse_async(
+            self,
+            op: pureldap.LDAPProtocolRequest,
+            handler: Callable[..., bool],
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            self.calls.append(("multi", op, handler, *args))
 
-        async def send_noResponse_async(self, request) -> None:
-            self.calls.append(("none", request))
+        async def send_noResponse_async(
+            self, op: pureldap.LDAPProtocolRequest
+        ) -> None:
+            self.calls.append(("none", op))
 
     client = AsyncClient()
     server = _legacy_server(client)
@@ -102,11 +118,12 @@ async def test_async_queue_uses_async_client_methods() -> None:
 
 
 async def test_async_unknown_handler_waits_for_connection() -> None:
-    server = _legacy_server(StubClient())
+    client = StubClient()
+    server = _legacy_server(client)
     await server._handleUnknown_async(
         pureldap.LDAPBindRequest(), None, lambda response: None
     )
-    assert server.client.calls[0][0] == "multi"
+    assert client.calls[0][0] == "multi"
 
 
 async def test_connection_lost_without_task_group_detaches_client() -> None:
@@ -135,7 +152,7 @@ async def test_async_connection_made_uses_configured_override() -> None:
 
 
 async def test_async_connection_made_handles_override_failure() -> None:
-    def fail_to_connect(factory) -> None:
+    def fail_to_connect(factory: object) -> None:
         raise OSError("unreachable")
 
     configured = config.LDAPConfig(serviceLocationOverrides={"": fail_to_connect})
@@ -197,7 +214,9 @@ async def test_proxy_module_is_not_a_legacy_entrypoint() -> None:
     assert "AnyIO server entrypoints" in result.stderr
 
 
-async def _create_server(monkeypatch: pytest.MonkeyPatch, *responses):
+async def _create_server(
+    monkeypatch: pytest.MonkeyPatch, *responses: Sequence[object]
+) -> tuple[proxy.Proxy, MemoryByteStream, AsyncLDAPClientDriver]:
     client = AsyncLDAPClientDriver(*responses)
     patch_client_creator(monkeypatch, proxy, client)
     server = proxy.Proxy(config.LDAPConfig(serviceLocationOverrides={}))
@@ -217,6 +236,8 @@ async def test_bind(monkeypatch: pytest.MonkeyPatch) -> None:
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=4).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == 0
         assert response.id == 4
         client.assert_sent(pureldap.LDAPBindRequest())
@@ -237,6 +258,8 @@ async def test_bind_sasl_no_credentials(monkeypatch: pytest.MonkeyPatch) -> None
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == 14
         assert response.value.serverSaslCreds == b"test123"
         assert response.id == 4
@@ -267,13 +290,21 @@ async def test_search(monkeypatch: pytest.MonkeyPatch) -> None:
             pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=3).toWire(),
         )
         bind_response = decode_message(await stream.next_write())
+        assert isinstance(bind_response, pureldap.LDAPMessage)
         entry1 = decode_message(await stream.next_write())
+        assert isinstance(entry1, pureldap.LDAPMessage)
         entry2 = decode_message(await stream.next_write())
+        assert isinstance(entry2, pureldap.LDAPMessage)
         done = decode_message(await stream.next_write())
+        assert isinstance(done, pureldap.LDAPMessage)
 
+        assert isinstance(bind_response.value, pureldap.LDAPResult)
         assert bind_response.value.resultCode == 0
+        assert isinstance(entry1.value, pureldap.LDAPSearchResultEntry)
         assert entry1.value.objectName == b"cn=foo,dc=example,dc=com"
+        assert isinstance(entry2.value, pureldap.LDAPSearchResultEntry)
         assert entry2.value.objectName == b"cn=bar,dc=example,dc=com"
+        assert isinstance(done.value, pureldap.LDAPResult)
         assert done.value.resultCode == ldaperrors.Success.resultCode
         client.assert_sent(
             pureldap.LDAPBindRequest(),

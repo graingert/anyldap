@@ -133,3 +133,15 @@ def test_calltrace_profiles_calls(capsys: pytest.CaptureFixture[str]) -> None:
     testutil.calltrace()
     sys.setprofile(None)
     assert "call" in capsys.readouterr().out
+
+
+async def test_memory_stream_send_eof_closes_the_outgoing_side() -> None:
+    """Ending the stream is what a protocol does when it has nothing more."""
+    stream = MemoryByteStream()
+    try:
+        await stream.send_eof()
+
+        with pytest.raises(anyio.ClosedResourceError):
+            await stream.send(b"too late")
+    finally:
+        await stream.aclose()
