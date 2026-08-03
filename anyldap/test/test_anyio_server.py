@@ -2,6 +2,7 @@ import ssl
 
 import anyio
 import anyio.lowlevel
+import anyio.streams.tls
 import pytest
 import trustme
 from anyio.abc import SocketAttribute
@@ -10,6 +11,7 @@ from anyldap import config, inmemory, testutil
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import (
     ldapclient,
+    ldapconnector,
     ldaperrors,
     ldapserver,
     merger,
@@ -823,3 +825,53 @@ async def test_server_stream_state_guards():
     await server._send_anyio_write(b"data")
     with pytest.raises(ldapserver.LDAPServerConnectionLostException):
         await server._upgrade_to_tls(None, b"response")
+
+
+async def test_ldaps_connects_over_tls_from_the_start():
+    """A client reaches an LDAPS server, which is TLS before any LDAP.
+
+    Distinct from STARTTLS, which negotiates in the clear first. The
+    connector had no way to be told which certificates to trust, so this
+    could only ever have reached a server whose certificate chains to the
+    system trust store.
+    """
+    authority = trustme.CA()
+    # The listener reports a numeric address, which is what gets verified.
+    certificate = authority.issue_cert("localhost", "127.0.0.1")
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    certificate.configure_cert(server_context)
+    client_context = ssl.create_default_context()
+    authority.configure_trust(client_context)
+
+    root = inmemory.ReadOnlyInMemoryLDAPEntry(
+        dn="dc=example,dc=com", attributes={"dc": ["example"]}
+    )
+
+    def make_server():
+        server = ldapserver.LDAPServer()
+        server.factory = root
+        return server
+
+    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
+    tls_listener = anyio.streams.tls.TLSListener(
+        listener, server_context, standard_compatible=False
+    )
+    host, port = listener.extra(SocketAttribute.local_address)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(ldapserver.serve, tls_listener, make_server)
+
+        connection = await ldapconnector.connectToLDAPEndpointAsync(
+            f"tcp:host={host}:port={port}",
+            ldapclient.LDAPClient,
+            tls=True,
+            ssl_context=client_context,
+        )
+        client = connection.protocol
+        try:
+            with anyio.fail_after(5):
+                response = await client.send_async(pureldap.LDAPBindRequest())
+            assert response.resultCode == ldaperrors.Success.resultCode
+        finally:
+            await connection.aclose()
+        await tls_listener.aclose()

@@ -1,20 +1,31 @@
+from collections.abc import Callable, Sequence
+from typing import Any
+
 import outcome
 
-from anyldap import numberalloc
+from anyldap import interfaces, numberalloc
 from anyldap.protocols.ldap import autofill, ldapsyntax
 
 
 class Autofill_posix:  # TODO baseclass
-    def __init__(self, baseDN, freeNumberGetter=numberalloc.getFreeNumber):
+    def __init__(
+        self,
+        baseDN: interfaces.AnyDN,
+        freeNumberGetter: Callable[..., Any] = numberalloc.getFreeNumber,
+    ) -> None:
         self.baseDN = baseDN
         self.freeNumberGetter = freeNumberGetter
 
-    def _cb_gotNumbers(self, numbers, ldapObject):
+    def _cb_gotNumbers(
+        self,
+        numbers: Sequence[outcome.Outcome[int]],
+        ldapObject: ldapsyntax.LDAPEntryWithClient,
+    ) -> None:
         uid, gid = numbers
         ldapObject["uidNumber"] = [str(uid.unwrap())]
         ldapObject["gidNumber"] = [str(gid.unwrap())]
 
-    async def start(self, ldapObject):
+    async def start(self, ldapObject: ldapsyntax.LDAPEntryWithClient) -> None:
         assert "objectClass" in ldapObject
         if "posixAccount" not in ldapObject["objectClass"]:
             raise autofill.ObjectMissingObjectClassException(ldapObject)
@@ -33,5 +44,7 @@ class Autofill_posix:  # TODO baseclass
         ]
         self._cb_gotNumbers(numbers, ldapObject)
 
-    def notify(self, ldapObject, attributeType):
+    def notify(
+        self, ldapObject: ldapsyntax.LDAPEntryWithClient, attributeType: str | bytes
+    ) -> None:
         pass

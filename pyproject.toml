@@ -112,9 +112,6 @@ module = [
     "anyldap._scripts.passwd",
     "anyldap._scripts.rename",
     "anyldap._scripts.search",
-    "anyldap.checkers",
-    "anyldap.protocols.ldap.autofill.posixAccount",
-    "anyldap.protocols.ldap.fetchschema",
     "anyldap.test._anyio_helpers",
     "anyldap.test._testing",
     "anyldap.test.test_anyio_runtime",
@@ -160,8 +157,6 @@ module = [
     "anyldap.test.test_vendored_des",
     "anyldap.test.test_vendored_md4",
     "anyldap.test.util",
-    "anyldap.testutil",
-    "anyldap.usage",
 ]
 
 [tool.coverage.run]

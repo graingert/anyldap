@@ -1,3 +1,4 @@
+import ssl
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from types import TracebackType
@@ -138,22 +139,34 @@ async def _connect(
     *,
     bindAddress: tuple[str, int] | None = None,
     tls: bool = False,
+    ssl_context: ssl.SSLContext | None = None,
 ) -> ByteStream:
-    """anyio.connect_tcp, whose overloads take tls as a literal."""
+    """anyio.connect_tcp, whose overloads take tls as a literal.
+
+    A protocol reads its stream from its own task, so closing cannot also
+    read: an LDAPS stream is closed the same way STARTTLS closes the one it
+    upgraded.
+    """
     return await anyio.connect_tcp(  # type: ignore[call-overload,no-any-return]
         host,
         port,
         local_host=bindAddress[0] if bindAddress else None,
         local_port=bindAddress[1] if bindAddress else None,
         tls=tls,
+        ssl_context=ssl_context,
+        tls_standard_compatible=False,
     )
 
 
 async def connectToLDAPEndpointAsync(
-    endpointStr: str, clientProtocol: ProtocolFactory, *, tls: bool = False
+    endpointStr: str,
+    clientProtocol: ProtocolFactory,
+    *,
+    tls: bool = False,
+    ssl_context: ssl.SSLContext | None = None,
 ) -> AsyncLDAPClientConnection:
     host, port = _parseTCPEndpoint(endpointStr)
-    stream = await _connect(host, port, tls=tls)
+    stream = await _connect(host, port, tls=tls, ssl_context=ssl_context)
     exit_stack = AsyncExitStack()
     await exit_stack.__aenter__()
     task_group = await exit_stack.enter_async_context(anyio.create_task_group())
@@ -173,6 +186,7 @@ async def connectToLDAPDNAsync(
     bindAddress: tuple[str, int] | None = None,
     resolver: Callable[..., Awaitable[Any]] | None = None,
     tls: bool = False,
+    ssl_context: ssl.SSLContext | None = None,
 ) -> Any:
     resolved = await _resolveServiceLocationAsync(
         dn, overrides=overrides, resolver=resolver
@@ -181,7 +195,9 @@ async def connectToLDAPDNAsync(
         return resolved(clientProtocol)
 
     host, port = resolved
-    stream = await _connect(host, port, bindAddress=bindAddress, tls=tls)
+    stream = await _connect(
+        host, port, bindAddress=bindAddress, tls=tls, ssl_context=ssl_context
+    )
     exit_stack = AsyncExitStack()
     await exit_stack.__aenter__()
     task_group = await exit_stack.enter_async_context(anyio.create_task_group())
@@ -248,12 +264,17 @@ class LDAPClientCreator:
         return await await_result(bind())
 
     async def connectToEndpointAsync(
-        self, endpointStr: str, *, tls: bool = False
+        self,
+        endpointStr: str,
+        *,
+        tls: bool = False,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> AsyncLDAPClientConnection:
         return await connectToLDAPEndpointAsync(
             endpointStr,
             lambda: self.protocolClass(*self.args, **self.kwargs),
             tls=tls,
+            ssl_context=ssl_context,
         )
 
     async def connectAsync(
@@ -264,6 +285,7 @@ class LDAPClientCreator:
         resolver: Callable[..., Awaitable[Any]] | None = None,
         *,
         tls: bool = False,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> Any:
         return await connectToLDAPDNAsync(
             dn,
@@ -272,6 +294,7 @@ class LDAPClientCreator:
             bindAddress=bindAddress,
             resolver=resolver,
             tls=tls,
+            ssl_context=ssl_context,
         )
 
     async def connectAnonymouslyAsync(
@@ -282,6 +305,7 @@ class LDAPClientCreator:
         resolver: Callable[..., Awaitable[Any]] | None = None,
         *,
         tls: bool = False,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> Any:
         client = await self.connectAsync(
             dn,
@@ -289,6 +313,7 @@ class LDAPClientCreator:
             bindAddress=bindAddress,
             resolver=resolver,
             tls=tls,
+            ssl_context=ssl_context,
         )
         await client.bind_async()
         return client
