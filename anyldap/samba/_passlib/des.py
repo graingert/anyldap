@@ -50,8 +50,7 @@ The netbsd des-crypt implementation has some nice notes on how this all works -
 #=============================================================================
 # core
 import struct
-from collections.abc import Iterable, Iterator
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from typing import TypeVar
 
 # These convert a key without changing its representation: bytes in, bytes

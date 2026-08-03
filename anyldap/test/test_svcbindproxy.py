@@ -1,5 +1,4 @@
 from collections.abc import Awaitable, Mapping, Sequence
-from typing import Any
 from unittest import mock
 
 import anyio

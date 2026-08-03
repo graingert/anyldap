@@ -88,6 +88,8 @@ class TestBERBaseTests:
     Unit tests for generic BERBase.
     """
 
+    # The arguments in a row build that row's class and no other, which is
+    # what keeps them from being narrowed.
     valuesToTest: tuple[tuple[type[pureber.BERBase], list[Any]], ...] = (
         (pureber.BERBase, []),
         (pureber.BERInteger, [0]),

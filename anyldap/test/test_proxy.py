@@ -1,7 +1,7 @@
 import subprocess
 import sys
-from unittest import mock
 from collections.abc import Callable, Sequence
+from unittest import mock
 
 import anyio
 import anyio.lowlevel

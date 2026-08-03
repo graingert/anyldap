@@ -1,5 +1,4 @@
 from collections.abc import Callable, Sequence
-from typing import Any
 
 import anyio
 import pytest

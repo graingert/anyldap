@@ -20,8 +20,10 @@ def l(s: bytes) -> list[int]:
 
 
 # A class, how to build one, the decoder its wire form needs, and that form.
+# The arguments in a row build that row's class and no other, which is what
+# keeps them from being narrowed.
 KnownValue = tuple[
-    type[Any],
+    type[pureber.BERBase],
     Sequence[Any],
     Mapping[str, Any],
     pureber.BERDecoderContext | None,
