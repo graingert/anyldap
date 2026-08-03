@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from anyldap._async import await_result
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, ldapserver
-from anyldap.protocols.ldap.ldapclient import LDAPClientLike
+from anyldap.protocols.ldap.ldapclient import LDAPClientLike, TLSUpgradable
 from anyldap.runtime import Failure, Protocol, logger
 
 Controls = Iterable[pureldap.Control] | None
@@ -258,6 +258,8 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             return
 
         if self.use_tls:
+            # Only a client that can raise TLS may be asked to.
+            assert isinstance(proto, TLSUpgradable)
             proto = await proto.startTLS_async()
 
         self.client = proto

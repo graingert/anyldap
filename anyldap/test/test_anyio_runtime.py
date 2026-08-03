@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from typing import Any
 
 import anyio
 import pytest
@@ -22,7 +23,7 @@ async def test_await_result_accepts_all_result_shapes() -> None:
 
 
 async def test_result_slot_replays_a_value() -> None:
-    slot = ResultSlot()
+    slot: ResultSlot[Any] = ResultSlot()
     assert not slot.is_set
     slot.set_value("done")
     assert slot.is_set
@@ -30,14 +31,14 @@ async def test_result_slot_replays_a_value() -> None:
 
 
 async def test_result_slot_replays_an_exception() -> None:
-    slot = ResultSlot()
+    slot: ResultSlot[Any] = ResultSlot()
     slot.set_exception(ValueError("boom"))
     with pytest.raises(ValueError, match="boom"):
         await slot.wait()
 
 
 async def test_result_slot_waits_for_a_late_producer() -> None:
-    slot = ResultSlot()
+    slot: ResultSlot[Any] = ResultSlot()
 
     async def produce() -> None:
         slot.set_value("late")
@@ -48,7 +49,7 @@ async def test_result_slot_waits_for_a_late_producer() -> None:
 
 
 async def test_result_slot_rejects_a_second_result() -> None:
-    slot = ResultSlot()
+    slot: ResultSlot[Any] = ResultSlot()
     slot.set_value(1)
     with pytest.raises(RuntimeError, match="result already set"):
         slot.set_value(2)

@@ -18,7 +18,7 @@ from anyldap.runtime import ConnectionDone, Failure, Protocol, logger, unwrap_fa
 # caller wants the response controls too, and the handler to run for each
 # response with its own arguments.
 Pending = tuple[
-    ResultSlot,
+    ResultSlot[object],
     bool,
     Callable[..., bool] | None,
     tuple[object, ...] | None,
@@ -114,6 +114,13 @@ class LDAPClientLike(TypingProtocol):
     ) -> None: ...
 
     async def aclose(self) -> None: ...
+
+
+@runtime_checkable
+class TLSUpgradable(LDAPClientLike, TypingProtocol):
+    """A client that can raise TLS on the connection it already has."""
+
+    async def startTLS_async(self) -> "TLSUpgradable": ...
 
 
 @runtime_checkable
@@ -291,7 +298,7 @@ class LDAPClient(Protocol):
     ) -> object:
         msg = self._send(op, controls=controls)
         assert op.needs_answer
-        slot = ResultSlot()
+        slot: ResultSlot[object] = ResultSlot()
         self.onwire[msg.id] = (slot, return_controls, handler, args, kwargs)
         await self._send_anyio_write(msg.toWire())
         return await slot.wait()
@@ -387,7 +394,7 @@ class LDAPClient(Protocol):
         event = anyio.Event()
         op = pureldap.LDAPStartTLSRequest()
         msg = self._send(op)
-        slot = ResultSlot()
+        slot: ResultSlot[object] = ResultSlot()
         self.onwire[msg.id] = (slot, False, None, None, None)
         tls_upgrade: TLSUpgrade = {
             "context": ctx,

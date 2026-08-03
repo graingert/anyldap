@@ -175,7 +175,7 @@ class InMemoryLDIFProtocol(ldifprotocol.LDIF):
         # Do not access this via db, just to make sure you respect the ordering
         self.db: ReadOnlyInMemoryLDAPEntry | None = None
         self._pending: list[entry.BaseLDAPEntry] = []
-        self._received = ResultSlot()
+        self._received: ResultSlot[None] = ResultSlot()
 
     async def _addEntry(
         self, db: ReadOnlyInMemoryLDAPEntry, entry: entry.BaseLDAPEntry

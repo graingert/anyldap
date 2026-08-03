@@ -740,7 +740,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         self,
         msg: object,
         controls: object,
-        slot: ResultSlot,
+        slot: ResultSlot[object],
         callback: Callable[["LDAPEntryWithClient"], object],
         complete: int,
         sizeLimitIsNonFatal: bool,
@@ -791,7 +791,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
         return_controls: bool = False,
     ) -> object:
         self._checkState()
-        slot = ResultSlot()
+        slot: ResultSlot[object] = ResultSlot()
         if filterObject is None and filterText is None:
             filterObject = pureldap.LDAPFilterMatchAll
         elif filterObject is None and filterText is not None:

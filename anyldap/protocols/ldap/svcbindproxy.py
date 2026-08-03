@@ -2,7 +2,6 @@ import datetime
 from collections.abc import Awaitable, Iterable, Sequence
 from typing import Protocol
 
-from anyldap._async import await_result
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import (
     ldapclient,
@@ -107,7 +106,7 @@ class ServiceBindingProxy(proxy.Proxy):
                 resultCode=ldaperrors.Success.resultCode, matchedDN=request.dn
             )
         if self.fallback:
-            await await_result(self.handleUnknown(request, controls, reply))
+            await self.handleUnknown(request, controls, reply)
             return None
         return pureldap.LDAPBindResponse(
             resultCode=ldaperrors.LDAPInvalidCredentials.resultCode

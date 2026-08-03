@@ -77,9 +77,26 @@ jobs:
         run: tox -e py312-linters
 
   mypy:
+    # What mypy concludes depends on the version it is checking for, so it
+    # runs under each of them.
+    name: mypy py${{ matrix.python-version }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.10"
+            tox-env: py310-mypy
+          - python-version: "3.11"
+            tox-env: py311-mypy
+          - python-version: "3.12"
+            tox-env: py312-mypy
+          - python-version: "3.13"
+            tox-env: py313-mypy
+          - python-version: "3.14"
+            tox-env: py314-mypy
 
     steps:
       - name: Checkout
@@ -92,14 +109,14 @@ jobs:
       - name: Set Up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install tox
         run: python -m pip install tox
 
       - name: Run mypy
-        run: tox -e py312-mypy
+        run: tox -e ${{ matrix.tox-env }}
 
   build:
     runs-on: ubuntu-latest

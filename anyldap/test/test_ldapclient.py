@@ -226,7 +226,7 @@ async def test_client_response_dispatch_and_disconnect_errors() -> None:
         pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(resultCode=0), id=0)
     )
 
-    controlled = ResultSlot()
+    controlled: ResultSlot[Any] = ResultSlot()
     client.onwire[1] = (controlled, True, None, (), {})
     controls = [(b"1.2.3", False, None)]
     client.handle(
@@ -234,11 +234,13 @@ async def test_client_response_dispatch_and_disconnect_errors() -> None:
             pureldap.LDAPBindResponse(resultCode=0), id=1, controls=controls
         )
     )
-    response, returned_controls = await controlled.wait()
+    result = await controlled.wait()
+    assert isinstance(result, tuple)
+    response, returned_controls = result
     assert isinstance(response, pureldap.LDAPBindResponse)
     assert returned_controls == controls
 
-    pending = ResultSlot()
+    pending: ResultSlot[Any] = ResultSlot()
     client.onwire[2] = (pending, False, lambda response: False, (), {})
     client.handle(
         pureldap.LDAPMessage(pureldap.LDAPSearchResultEntry("cn=a", []), id=2)
@@ -249,7 +251,7 @@ async def test_client_response_dispatch_and_disconnect_errors() -> None:
     )
     assert isinstance(await pending.wait(), pureldap.LDAPSearchResultDone)
 
-    disconnected = ResultSlot()
+    disconnected: ResultSlot[Any] = ResultSlot()
     client.onwire[3] = (disconnected, False, None, None, None)
     reason = Failure(ConnectionError("closed"))
     client.connectionLost(reason)
