@@ -634,6 +634,9 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
                 results.append((True, None))
         return results
 
+    # A local entry sets a password in place, with a salt it chooses; a
+    # remote one negotiates with the server and has nowhere to put a salt.
+    # The interface asks only for the password, which both honour.
     async def setPassword(  # type: ignore[override]
         self, newPasswd: bytes
     ) -> "LDAPEntryWithClient":

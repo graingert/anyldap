@@ -170,13 +170,22 @@ class LDIFDelta(ldifprotocol.LDIF):
         raise LDIFDeltaDeleteHasJunkAfterChangeTypeError(self.dn, line)
 
 
+class _CollectingLDIFDelta(LDIFDelta):
+    """A parser that collects what it produces instead of dispatching it."""
+
+    def __init__(self, collected: list[object]) -> None:
+        super().__init__()
+        self.collected = collected
+
+    def gotEntry(self, obj: object) -> None:
+        self.collected.append(obj)
+
+
 def fromLDIFFile(f: ReadableFile) -> list[object]:
     """Read LDIF data from a file."""
 
-    p = LDIFDelta()
     l: list[object] = []
-    # Collecting rather than subclassing, which the hook exists to allow.
-    p.gotEntry = l.append  # type: ignore[assignment]
+    p = _CollectingLDIFDelta(l)
     while 1:
         data = f.read()
         if not data:
