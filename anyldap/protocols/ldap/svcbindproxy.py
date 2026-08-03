@@ -1,8 +1,11 @@
 import datetime
+from collections.abc import Awaitable, Iterable, Sequence
 
 from anyldap._async import await_result
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldaperrors, ldapsyntax, proxy
+from anyldap.protocols.ldap import ldaperrors, ldapserver, ldapsyntax, proxy
+
+Controls = Iterable[pureldap.Control] | None
 
 
 class ServiceBindingProxy(proxy.Proxy):
@@ -26,11 +29,17 @@ class ServiceBindingProxy(proxy.Proxy):
     request to the real server.
     """
 
-    services = []
+    services: Sequence[str] = []
 
     fallback = False
 
-    def __init__(self, services=None, fallback=None, *a, **kw):
+    def __init__(
+        self,
+        services: Iterable[str] | None = None,
+        fallback: bool | None = None,
+        *a: object,
+        **kw: object,
+    ) -> None:
         """
         Initialize the object.
 
@@ -41,22 +50,35 @@ class ServiceBindingProxy(proxy.Proxy):
         the normal LDAP bind mechanism.
         """
 
-        proxy.Proxy.__init__(self, *a, **kw)
+        proxy.Proxy.__init__(self, *a, **kw)  # type: ignore[arg-type]
         if services is not None:
             self.services = list(services)
         if fallback is not None:
             self.fallback = fallback
 
-    async def _startSearch_async(self, request, controls, reply):
+    async def _startSearch_async(
+        self,
+        request: pureldap.LDAPBindRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> pureldap.LDAPBindResponse | None:
         services = list(self.services)
         baseDN = self.config.getIdentityBaseDN()
+        # Only reached through _whenConnected, which waits for the client.
+        assert self.client is not None
         e = ldapsyntax.LDAPEntryWithClient(client=self.client, dn=baseDN)
         entry = await self._tryService_async(services, e, request)
         return await self._maybeFallback_async(entry, request, controls, reply)
 
     _startSearch = _startSearch_async
 
-    async def _maybeFallback_async(self, entry, request, controls, reply):
+    async def _maybeFallback_async(
+        self,
+        entry: object,
+        request: pureldap.LDAPBindRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> pureldap.LDAPBindResponse | None:
         if entry is not None:
             return pureldap.LDAPBindResponse(
                 resultCode=ldaperrors.Success.resultCode, matchedDN=request.dn
@@ -68,11 +90,16 @@ class ServiceBindingProxy(proxy.Proxy):
             resultCode=ldaperrors.LDAPInvalidCredentials.resultCode
         )
 
-    def timestamp(self):
+    def timestamp(self) -> str:
         now = datetime.datetime.now()
         return now.strftime("%Y%m%d%H%M%SZ")
 
-    async def _tryService_async(self, services, baseEntry, request):
+    async def _tryService_async(
+        self,
+        services: list[str],
+        baseEntry: ldapsyntax.LDAPEntryWithClient,
+        request: pureldap.LDAPBindRequest,
+    ) -> object:
         while services:
             serviceName = services.pop(0)
             timestamp = self.timestamp()
@@ -123,6 +150,7 @@ class ServiceBindingProxy(proxy.Proxy):
                 ),
                 attributes=("1.1",),
             )
+            assert isinstance(entries, Sequence)
             if not entries:
                 continue
             assert len(entries) == 1
@@ -134,7 +162,12 @@ class ServiceBindingProxy(proxy.Proxy):
 
     fail_LDAPBindRequest = pureldap.LDAPBindResponse
 
-    def handle_LDAPBindRequest(self, request, controls, reply):
+    def handle_LDAPBindRequest(
+        self,
+        request: pureldap.LDAPBindRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> Awaitable[object]:
         if request.version != 3:
             raise ldaperrors.LDAPProtocolError(
                 "Version %u not supported" % request.version

@@ -1,22 +1,35 @@
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
+from types import TracebackType
+from typing import Any
 
 import anyio
+from anyio.abc import ByteStream
 
+from anyldap import interfaces
 from anyldap._async import await_result
 from anyldap._encoder import get_strings
 from anyldap.protocols.ldap import distinguishedname
 
+# What builds the protocol object once the stream is up.
+ProtocolFactory = Callable[[], Any]
 
-async def connectToLDAPEndpoint(reactor, endpointStr, clientProtocol):
+# An override either says where the server is, or takes over connecting.
+Override = interfaces.ServiceLocation | Callable[..., Any]
+
+
+async def connectToLDAPEndpoint(
+    reactor: object, endpointStr: str, clientProtocol: ProtocolFactory
+) -> "AsyncLDAPClientConnection":
     return await connectToLDAPEndpointAsync(endpointStr, clientProtocol)
 
 
-def _parseTCPEndpoint(endpointStr):
+def _parseTCPEndpoint(endpointStr: str) -> tuple[str, int]:
     pieces = endpointStr.split(":")
     if not pieces or pieces[0] != "tcp":
         raise ValueError(f"Unsupported endpoint string {endpointStr!r}")
 
-    options = {}
+    options: dict[str, str] = {}
     for piece in pieces[1:]:
         key, sep, value = piece.partition("=")
         if not sep:
@@ -30,24 +43,32 @@ def _parseTCPEndpoint(endpointStr):
 
 
 class AsyncLDAPClientConnection:
-    def __init__(self, exit_stack, protocol):
+    def __init__(self, exit_stack: AsyncExitStack, protocol: Any) -> None:
         self._exit_stack = exit_stack
         self.protocol = protocol
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         await self._exit_stack.aclose()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Any:
         return self.protocol
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         await self.aclose()
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self.protocol, name)
 
 
-def _findOverride(dn, overrides):
+def _findOverride(
+    dn: distinguishedname.DistinguishedName,
+    overrides: Mapping[Any, Override],
+) -> Override | None:
     while True:
         for dn_variant in get_strings(dn):
             if dn_variant in overrides:
@@ -58,19 +79,26 @@ def _findOverride(dn, overrides):
     return None
 
 
-async def _resolveServiceLocationAsync(dn, overrides=None, resolver=None):
-    if not isinstance(dn, distinguishedname.DistinguishedName):
-        dn = distinguishedname.DistinguishedName(stringValue=dn)
+async def _resolveServiceLocationAsync(
+    dn: interfaces.AnyDN,
+    overrides: Mapping[Any, Override] | None = None,
+    resolver: Callable[..., Awaitable[Any]] | None = None,
+) -> tuple[str, int] | Callable[..., Any]:
+    target = (
+        dn
+        if isinstance(dn, distinguishedname.DistinguishedName)
+        else distinguishedname.DistinguishedName(stringValue=dn)
+    )
     if overrides is None:
         overrides = {}
 
-    override = _findOverride(dn, overrides)
+    override = _findOverride(target, overrides)
     if callable(override):
         return override
 
-    domain = dn.getDomainName() or ""
-    overriddenHost = None
-    overriddenPort = None
+    domain = target.getDomainName() or ""
+    overriddenHost: str | None = None
+    overriddenPort: str | int | None = None
     if override is not None:
         overriddenHost, overriddenPort = override
 
@@ -82,8 +110,8 @@ async def _resolveServiceLocationAsync(dn, overrides=None, resolver=None):
 
         resolver = dns.asyncresolver.resolve
 
-    host = overriddenHost
-    port = overriddenPort
+    host: str | None = overriddenHost
+    port: str | int | None = overriddenPort
     if domain:
         answers = await resolver(f"_ldap._tcp.{domain}", "SRV")
         records = sorted(
@@ -104,9 +132,28 @@ async def _resolveServiceLocationAsync(dn, overrides=None, resolver=None):
     return host, int(port)
 
 
-async def connectToLDAPEndpointAsync(endpointStr, clientProtocol, *, tls=False):
+async def _connect(
+    host: str,
+    port: int,
+    *,
+    bindAddress: tuple[str, int] | None = None,
+    tls: bool = False,
+) -> ByteStream:
+    """anyio.connect_tcp, whose overloads take tls as a literal."""
+    return await anyio.connect_tcp(  # type: ignore[call-overload,no-any-return]
+        host,
+        port,
+        local_host=bindAddress[0] if bindAddress else None,
+        local_port=bindAddress[1] if bindAddress else None,
+        tls=tls,
+    )
+
+
+async def connectToLDAPEndpointAsync(
+    endpointStr: str, clientProtocol: ProtocolFactory, *, tls: bool = False
+) -> AsyncLDAPClientConnection:
     host, port = _parseTCPEndpoint(endpointStr)
-    stream = await anyio.connect_tcp(host, port, tls=tls)
+    stream = await _connect(host, port, tls=tls)
     exit_stack = AsyncExitStack()
     await exit_stack.__aenter__()
     task_group = await exit_stack.enter_async_context(anyio.create_task_group())
@@ -119,14 +166,14 @@ async def connectToLDAPEndpointAsync(endpointStr, clientProtocol, *, tls=False):
 
 
 async def connectToLDAPDNAsync(
-    dn,
-    clientProtocol,
+    dn: interfaces.AnyDN,
+    clientProtocol: ProtocolFactory,
     *,
-    overrides=None,
-    bindAddress=None,
-    resolver=None,
-    tls=False,
-):
+    overrides: Mapping[Any, Override] | None = None,
+    bindAddress: tuple[str, int] | None = None,
+    resolver: Callable[..., Awaitable[Any]] | None = None,
+    tls: bool = False,
+) -> Any:
     resolved = await _resolveServiceLocationAsync(
         dn, overrides=overrides, resolver=resolver
     )
@@ -134,13 +181,7 @@ async def connectToLDAPDNAsync(
         return resolved(clientProtocol)
 
     host, port = resolved
-    stream = await anyio.connect_tcp(
-        host,
-        port,
-        local_host=bindAddress[0] if bindAddress else None,
-        local_port=bindAddress[1] if bindAddress else None,
-        tls=tls,
-    )
+    stream = await _connect(host, port, bindAddress=bindAddress, tls=tls)
     exit_stack = AsyncExitStack()
     await exit_stack.__aenter__()
     task_group = await exit_stack.enter_async_context(anyio.create_task_group())
@@ -153,18 +194,33 @@ async def connectToLDAPDNAsync(
 
 
 class LDAPConnector:
-    def _findOverRide(self, dn, overrides):
+    def _findOverRide(
+        self,
+        dn: distinguishedname.DistinguishedName,
+        overrides: Mapping[Any, Override],
+    ) -> Override | None:
         return _findOverride(dn, overrides)
 
 
 class LDAPClientCreator:
-    def __init__(self, reactor, protocolClass, *args, **kwargs):
+    def __init__(
+        self,
+        reactor: object,
+        protocolClass: Callable[..., Any],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
         self.reactor = reactor
         self.protocolClass = protocolClass
         self.args = args
         self.kwargs = kwargs
 
-    async def connect(self, dn, overrides=None, bindAddress=None):
+    async def connect(
+        self,
+        dn: interfaces.AnyDN,
+        overrides: Mapping[Any, Override] | None = None,
+        bindAddress: tuple[str, int] | None = None,
+    ) -> Any:
         override = _findOverride(
             distinguishedname.DistinguishedName(stringValue=dn)
             if not isinstance(dn, distinguishedname.DistinguishedName)
@@ -181,7 +237,9 @@ class LDAPClientCreator:
             bindAddress=bindAddress,
         )
 
-    async def connectAnonymously(self, dn, overrides=None):
+    async def connectAnonymously(
+        self, dn: interfaces.AnyDN, overrides: Mapping[Any, Override] | None = None
+    ) -> Any:
         """Connect to remote host and bind anonymously, returning the protocol instance."""
         client = await self.connect(dn, overrides=overrides)
         bind = getattr(client, "bind", None)
@@ -189,7 +247,9 @@ class LDAPClientCreator:
             return client
         return await await_result(bind())
 
-    async def connectToEndpointAsync(self, endpointStr, *, tls=False):
+    async def connectToEndpointAsync(
+        self, endpointStr: str, *, tls: bool = False
+    ) -> AsyncLDAPClientConnection:
         return await connectToLDAPEndpointAsync(
             endpointStr,
             lambda: self.protocolClass(*self.args, **self.kwargs),
@@ -197,8 +257,14 @@ class LDAPClientCreator:
         )
 
     async def connectAsync(
-        self, dn, overrides=None, bindAddress=None, resolver=None, *, tls=False
-    ):
+        self,
+        dn: interfaces.AnyDN,
+        overrides: Mapping[Any, Override] | None = None,
+        bindAddress: tuple[str, int] | None = None,
+        resolver: Callable[..., Awaitable[Any]] | None = None,
+        *,
+        tls: bool = False,
+    ) -> Any:
         return await connectToLDAPDNAsync(
             dn,
             lambda: self.protocolClass(*self.args, **self.kwargs),
@@ -209,8 +275,14 @@ class LDAPClientCreator:
         )
 
     async def connectAnonymouslyAsync(
-        self, dn, overrides=None, bindAddress=None, resolver=None, *, tls=False
-    ):
+        self,
+        dn: interfaces.AnyDN,
+        overrides: Mapping[Any, Override] | None = None,
+        bindAddress: tuple[str, int] | None = None,
+        resolver: Callable[..., Awaitable[Any]] | None = None,
+        *,
+        tls: bool = False,
+    ) -> Any:
         client = await self.connectAsync(
             dn,
             overrides=overrides,

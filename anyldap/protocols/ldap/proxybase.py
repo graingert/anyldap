@@ -2,10 +2,18 @@
 LDAP protocol proxy server.
 """
 
+from collections.abc import Awaitable, Callable, Iterable
+
 from anyldap._async import await_result
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, ldapserver
-from anyldap.runtime import Failure, logger
+from anyldap.protocols.ldap.ldapclient import LDAPClient
+from anyldap.runtime import Failure, Protocol, logger
+
+Controls = Iterable[pureldap.Control] | None
+
+# A request waiting for the client connection, with what to answer it on.
+Queued = tuple[pureldap.LDAPProtocolRequest, Controls, ldapserver.Reply]
 
 
 class ProxyBase(ldapserver.BaseLDAPServer):
@@ -17,19 +25,19 @@ class ProxyBase(ldapserver.BaseLDAPServer):
     the proxied server.
     """
 
-    client = None
+    client: LDAPClient | None = None
     unbound = False
     use_tls = False
-    clientConnector = None
+    clientConnector: Callable[[], LDAPClient | Awaitable[LDAPClient]] | None = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         ldapserver.BaseLDAPServer.__init__(self)
         # Requests that are ready before the client connection is established
         # are queued.
-        self.queuedRequests = []
+        self.queuedRequests: list[Queued] = []
         self.startTLS_initiated = False
 
-    def connectionLost(self, reason):
+    def connectionLost(self, reason: BaseException = Protocol.connectionDone) -> None:
         if self.client is not None and self.client.connected:
             if self._anyio_task_group is not None:
                 self._anyio_task_group.start_soon(self.client.aclose)
@@ -37,7 +45,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         self.client = None
         ldapserver.BaseLDAPServer.connectionLost(self, reason)
 
-    def _failedToConnectToProxiedServer(self, err):
+    def _failedToConnectToProxiedServer(self, err: Failure) -> None:
         """
         The connection to the proxied server failed.
         """
@@ -47,6 +55,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         )
         while len(self.queuedRequests) > 0:
             request, controls, reply = self.queuedRequests.pop(0)
+            msg: pureldap.LDAPProtocolResponse
             if isinstance(request, pureldap.LDAPBindRequest):
                 msg = pureldap.LDAPBindResponse(
                     resultCode=ldaperrors.LDAPUnavailable.resultCode
@@ -60,12 +69,17 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             reply(msg)
         self._start_anyio_close()
 
-    async def _processBacklog_async(self):
+    async def _processBacklog_async(self) -> None:
         while len(self.queuedRequests) > 0:
             request, controls, reply = self.queuedRequests.pop(0)
             await self._forwardRequestToProxiedServer_async(request, controls, reply)
 
-    async def _forwardRequestToProxiedServer_async(self, request, controls, reply):
+    async def _forwardRequestToProxiedServer_async(
+        self,
+        request: pureldap.LDAPProtocolRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> None:
         if self.client is None:
             self.queuedRequests.append((request, controls, reply))
             return
@@ -87,7 +101,16 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         else:
             await self.client.send_noResponse_async(request)
 
-    def handleBeforeForwardRequest(self, request, controls, reply):
+    def handleBeforeForwardRequest(
+        self,
+        request: pureldap.LDAPProtocolRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> (
+        tuple[pureldap.LDAPProtocolRequest, Controls]
+        | Awaitable[tuple[pureldap.LDAPProtocolRequest, Controls] | None]
+        | None
+    ):
         """
         Override to modify request and/or controls forwarded on to the proxied server.
         Must return a tuple of request, controls, or an awaitable of the same.
@@ -97,7 +120,13 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         """
         return (request, controls)
 
-    def _gotResponseFromProxiedServer(self, response, reply, request, controls):
+    def _gotResponseFromProxiedServer(
+        self,
+        response: pureldap.LDAPProtocolResponse,
+        reply: ldapserver.Reply,
+        request: pureldap.LDAPProtocolRequest,
+        controls: Controls,
+    ) -> bool:
         """
         Returns True if this is the last response to the request.
         """
@@ -110,14 +139,24 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             ),
         )
 
-    def handleProxiedResponse(self, response, request, controls):
+    def handleProxiedResponse(
+        self,
+        response: pureldap.LDAPProtocolResponse,
+        request: pureldap.LDAPProtocolRequest,
+        controls: Controls,
+    ) -> pureldap.LDAPProtocolResponse:
         """
         Override to intercept and modify proxied responses.
         Must return the modified response.
         """
         return response
 
-    def handleUnknown(self, request, controls, reply):
+    def handleUnknown(  # type: ignore[override]
+        self,
+        request: pureldap.LDAPProtocolRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> Awaitable[None]:
         """
         Forwards requests to the proxied server.
         This handler is overridden from `anyldap.protocol.ldap.server.BaseServer`.
@@ -126,7 +165,12 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         """
         return self._forwardRequestToProxiedServer_async(request, controls, reply)
 
-    async def handle_LDAPExtendedRequest(self, request, controls, reply):
+    async def handle_LDAPExtendedRequest(
+        self,
+        request: pureldap.LDAPExtendedRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> object:
         """
         Handler for extended LDAP requests (e.g. startTLS).
         """
@@ -136,7 +180,12 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             return self.handleStartTLSRequest(request, controls, reply)
         return await await_result(self.handleUnknown(request, controls, reply))
 
-    def handleStartTLSRequest(self, request, controls, reply):
+    def handleStartTLSRequest(
+        self,
+        request: pureldap.LDAPExtendedRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> pureldap.LDAPStartTLSResponse | None:
         """
         If the protocol factory has an `options` attribute it is assumed
         to be a TLS context/options object that can be used to initiate TLS
@@ -145,6 +194,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         Otherwise, this method returns an `unavailable` result code.
         """
         debug_flag = self.debug
+        msg: pureldap.LDAPStartTLSResponse | None
         if debug_flag:
             logger.info("Received startTLS request: %r", request)
         if hasattr(self.factory, "options"):
@@ -178,7 +228,12 @@ class ProxyBase(ldapserver.BaseLDAPServer):
             )
         return msg
 
-    def handle_LDAPUnbindRequest(self, request, controls, reply):
+    def handle_LDAPUnbindRequest(
+        self,
+        request: pureldap.LDAPUnbindRequest,
+        controls: Controls,
+        reply: ldapserver.Reply,
+    ) -> Awaitable[None]:
         """
         The client has requested to gracefully end the connection.
         Disconnect from the proxied server.
@@ -186,7 +241,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         self.unbound = True
         return self.handleUnknown(request, controls, reply)
 
-    async def connectionMade_async(self):
+    async def connectionMade_async(self) -> None:
         assert self.clientConnector is not None, (
             "You must set the `clientConnector` property on this instance.  "
             "It should be a callable that attempts to connect to a server. "
@@ -217,7 +272,12 @@ class ExampleProxy(ProxyBase):
     A simple example of using `ProxyBase` to log responses.
     """
 
-    def handleProxiedResponse(self, response, request, controls):
+    def handleProxiedResponse(
+        self,
+        response: pureldap.LDAPProtocolResponse,
+        request: pureldap.LDAPProtocolRequest,
+        controls: Controls,
+    ) -> pureldap.LDAPProtocolResponse:
         """
         Log the representation of the responses received.
         """
