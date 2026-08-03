@@ -12,6 +12,13 @@ def test_base_parser_accepts_entry_hook():
     assert parser.gotEntry(object()) is None
 
 
+def test_line_receiver_is_abstract():
+    """Splitting the stream into lines is all _LineReceiver does with it."""
+    receiver = ldifprotocol._LineReceiver()
+    with pytest.raises(NotImplementedError):
+        receiver.dataReceived(b"a line\n")
+
+
 class FixStringRepresentation:
     """
     A simple object which has a fix string representation.

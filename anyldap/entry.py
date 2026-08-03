@@ -1,6 +1,6 @@
 import base64
 import random
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator
 from hashlib import sha1
 from typing import ClassVar
 
@@ -48,7 +48,7 @@ class BaseLDAPEntry(WireStrAlias):
     def __init__(
         self,
         dn: interfaces.AnyDN,
-        attributes: Mapping[AttributeText, Iterable[AttributeText]] = {},
+        attributes: interfaces.Attributes = {},
     ) -> None:
         """
 

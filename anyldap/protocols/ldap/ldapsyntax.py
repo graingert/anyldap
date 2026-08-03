@@ -121,7 +121,7 @@ class JournaledLDAPAttributeSet(attributeset.LDAPAttributeSet):
 @implementer(
     interfaces.ILDAPEntry,
     interfaces.IEditableLDAPEntry,
-    interfaces.IConnectedLDAPEntry,
+    interfaces.IServerBackedLDAPEntry,
 )
 class LDAPEntryWithClient(entry.EditableLDAPEntry):
     _state = "invalid"

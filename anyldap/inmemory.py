@@ -1,13 +1,22 @@
+from collections.abc import Awaitable, Callable
+from typing import Protocol as TypingProtocol
+
 from zope.interface import implementer
 
 from anyldap import entry, entryhelpers, interfaces
 from anyldap._async import ResultSlot, await_result
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
-from anyldap.runtime import ConnectionDone, Failure, unwrap_failure
+from anyldap.runtime import ConnectionDone, Failure, Protocol, unwrap_failure
 
 
 class LDAPCannotRemoveRootError(ldaperrors.LDAPNamingViolation):
     """Cannot remove root of LDAP tree"""
+
+
+class ReadableFile(TypingProtocol):
+    """A plain file-like or an anyio AsyncFile."""
+
+    def read(self, size: int) -> bytes | Awaitable[bytes]: ...
 
 
 @implementer(interfaces.IConnectedLDAPEntry)
@@ -18,15 +27,22 @@ class ReadOnlyInMemoryLDAPEntry(
     entryhelpers.MatchMixin,
     entryhelpers.SearchByTreeWalkingMixin,
 ):
-    def __init__(self, *a, **kw):
-        entry.BaseLDAPEntry.__init__(self, *a, **kw)
-        self._parent = None
-        self._children = {}
+    def __init__(
+        self,
+        dn: interfaces.AnyDN,
+        attributes: interfaces.Attributes = {},
+    ) -> None:
+        entry.BaseLDAPEntry.__init__(self, dn, attributes)
+        self._parent: "ReadOnlyInMemoryLDAPEntry | None" = None
+        self._children: dict[str, "ReadOnlyInMemoryLDAPEntry"] = {}
 
-    def parent(self):
+    def parent(self) -> "ReadOnlyInMemoryLDAPEntry | None":
         return self._parent
 
-    async def children(self, callback=None):
+    async def children(
+        self,
+        callback: Callable[[interfaces.IConnectedLDAPEntry], object] | None = None,
+    ) -> list[interfaces.IConnectedLDAPEntry] | None:
         if callback is None:
             return list(self._children.values())
         for c in self._children.values():
@@ -35,7 +51,9 @@ class ReadOnlyInMemoryLDAPEntry(
 
     children_async = children
 
-    async def lookup(self, dn):
+    async def lookup(
+        self, dn: interfaces.AnyDN
+    ) -> interfaces.IConnectedLDAPEntry:
         if not isinstance(dn, distinguishedname.DistinguishedName):
             dn = distinguishedname.DistinguishedName(stringValue=dn)
         if not self.dn.contains(dn):
@@ -51,12 +69,16 @@ class ReadOnlyInMemoryLDAPEntry(
 
     lookup_async = lookup
 
-    async def fetch(self, *attributes):
+    async def fetch(self, *attributes: str | bytes) -> interfaces.ILDAPEntry:
         return self
 
     fetch_async = fetch
 
-    def addChild(self, rdn, attributes):
+    def addChild(
+        self,
+        rdn: distinguishedname.RelativeDistinguishedName | str | bytes,
+        attributes: interfaces.Attributes,
+    ) -> "ReadOnlyInMemoryLDAPEntry":
         """TODO ugly API. Returns the created entry."""
         rdn = distinguishedname.RelativeDistinguishedName(rdn)
         rdn_str = rdn.getText()
@@ -70,7 +92,7 @@ class ReadOnlyInMemoryLDAPEntry(
         self._children[rdn_str] = e
         return e
 
-    async def delete(self):
+    async def delete(self) -> "ReadOnlyInMemoryLDAPEntry":
         if self._parent is None:
             raise LDAPCannotRemoveRootError()
         if self._children:
@@ -79,7 +101,9 @@ class ReadOnlyInMemoryLDAPEntry(
 
     delete_async = delete
 
-    async def deleteChild(self, rdn):
+    async def deleteChild(
+        self, rdn: distinguishedname.RelativeDistinguishedName | str | bytes
+    ) -> "ReadOnlyInMemoryLDAPEntry":
         if not isinstance(rdn, distinguishedname.RelativeDistinguishedName):
             rdn = distinguishedname.RelativeDistinguishedName(stringValue=rdn)
         rdn_str = rdn.getText()
@@ -90,23 +114,30 @@ class ReadOnlyInMemoryLDAPEntry(
 
     deleteChild_async = deleteChild
 
-    async def move(self, newDN):
+    async def move(self, newDN: interfaces.AnyDN) -> "ReadOnlyInMemoryLDAPEntry":
         if not isinstance(newDN, distinguishedname.DistinguishedName):
             newDN = distinguishedname.DistinguishedName(stringValue=newDN)
         if self._parent is not None and newDN.up() != self.dn.up():
             # climb up the tree to root
-            root = self
-            while root._parent is not None:
-                root = root._parent
-            newParent = await root.lookup(newDN.up())
+            root: ReadOnlyInMemoryLDAPEntry = self
+            while (parent := root._parent) is not None:
+                root = parent
+            found = await root.lookup(newDN.up())
+            assert isinstance(found, ReadOnlyInMemoryLDAPEntry)
+            newParent: ReadOnlyInMemoryLDAPEntry | None = found
         else:
             newParent = self._parent
         return self._move2(newParent, newDN)
 
     move_async = move
 
-    def _move2(self, newParent, newDN):
+    def _move2(
+        self,
+        newParent: "ReadOnlyInMemoryLDAPEntry | None",
+        newDN: distinguishedname.DistinguishedName,
+    ) -> "ReadOnlyInMemoryLDAPEntry":
         if newParent is not None:
+            assert self._parent is not None
             del self._parent._children[self.dn.split()[0].getText()]
             newParent._children[newDN.split()[0].getText()] = self
             self._parent = newParent
@@ -120,7 +151,7 @@ class ReadOnlyInMemoryLDAPEntry(
         self.dn = newDN
         return self
 
-    async def commit(self):
+    async def commit(self) -> bool:
         return True
 
     commit_async = commit
@@ -139,20 +170,23 @@ class InMemoryLDIFProtocol(ldifprotocol.LDIF):
     `completed()`, which is where the database becomes available.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         # Do not access this via db, just to make sure you respect the ordering
-        self.db = None
-        self._pending = []
+        self.db: ReadOnlyInMemoryLDAPEntry | None = None
+        self._pending: list[entry.BaseLDAPEntry] = []
         self._received = ResultSlot()
 
-    async def _addEntry(self, db, entry):
+    async def _addEntry(
+        self, db: ReadOnlyInMemoryLDAPEntry, entry: entry.BaseLDAPEntry
+    ) -> None:
         try:
             parent = await db.lookup(entry.dn.up())
         except Exception as exc:
             if self._reportFailure(self.lookupFailed, exc, entry):
                 return
             raise
+        assert isinstance(parent, ReadOnlyInMemoryLDAPEntry)
         try:
             parent.addChild(rdn=entry.dn.split()[0], attributes=entry)
         except Exception as exc:
@@ -161,39 +195,48 @@ class InMemoryLDIFProtocol(ldifprotocol.LDIF):
             raise
 
     @staticmethod
-    def _reportFailure(hook, exc, entry):
+    def _reportFailure(
+        hook: Callable[[Failure, "entry.BaseLDAPEntry"], object],
+        exc: BaseException,
+        entry: "entry.BaseLDAPEntry",
+    ) -> bool:
         """Call `hook`; report whether it swallowed the error."""
         return hook(Failure(exc), entry) is None
 
-    def gotEntry(self, entry):
+    def gotEntry(self, entry: "entry.BaseLDAPEntry") -> None:
         if self.db is None:
             # first entry, create the db, prepare to process the rest
             self.db = ReadOnlyInMemoryLDAPEntry(dn=entry.dn, attributes=entry)
         else:
             self._pending.append(entry)
 
-    def lookupFailed(self, reason, entry):
+    def lookupFailed(
+        self, reason: Failure, entry: "entry.BaseLDAPEntry"
+    ) -> object:
         return reason  # pass the error (abort) by default
 
-    def addFailed(self, reason, entry):
+    def addFailed(self, reason: Failure, entry: "entry.BaseLDAPEntry") -> object:
         return reason  # pass the error (abort) by default
 
-    def connectionLost(self, reason):
+    def connectionLost(self, reason: BaseException = Protocol.connectionDone) -> None:
         super().connectionLost(reason)
-        if reason.check(ConnectionDone):
+        # A reason reaches us either bare or wrapped in a Failure.
+        unwrapped = unwrap_failure(reason)
+        if isinstance(unwrapped, ConnectionDone):
             self._received.set_value(None)
         else:
-            self._received.set_exception(unwrap_failure(reason))
+            self._received.set_exception(unwrapped)
 
-    async def completed(self):
+    async def completed(self) -> ReadOnlyInMemoryLDAPEntry:
         """Wait for the LDIF stream, then return the assembled database."""
         await self._received.wait()
+        assert self.db is not None
         while self._pending:
             await self._addEntry(self.db, self._pending.pop(0))
         return self.db
 
 
-async def fromLDIFFile(f):
+async def fromLDIFFile(f: ReadableFile) -> ReadOnlyInMemoryLDAPEntry:
     """Read LDIF data from a file."""
 
     p = InMemoryLDIFProtocol()

@@ -1,13 +1,16 @@
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Protocol
 
-from anyldap import delta, ldapfilter
+from anyldap import delta, interfaces, ldapfilter
 from anyldap._encoder import get_strings, to_bytes
 from anyldap.attributeset import LDAPAttributeSet
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldapsyntax
 
 AttributeText = str | bytes
+
+
+Entry = interfaces.IConnectedLDAPEntry
 
 
 class Readable(Protocol):
@@ -36,16 +39,16 @@ class Walkable(Protocol):
     def diff(self, other: Any) -> delta.ModifyOp | None: ...
 
     async def children(
-        self, callback: Callable[["Walkable"], object] | None = None
-    ) -> list["Walkable"] | None: ...
+        self, callback: Callable[[Entry], object] | None = None
+    ) -> list[Entry] | None: ...
 
     async def subtree(
-        self, callback: Callable[["Walkable"], object] | None = None
-    ) -> list["Walkable"] | None: ...
+        self, callback: Callable[[Entry], object] | None = None
+    ) -> list[Entry] | None: ...
 
     async def diffTree(
-        self, other: "Walkable", result: list[delta.Operation] | None = None
-    ) -> list[delta.Operation]: ...
+        self, other: Entry, result: list[Any] | None = None
+    ) -> object: ...
 
     def match(self, filter: pureber.BERBase) -> bool: ...
 
@@ -57,16 +60,16 @@ class DiffTreeHost(Walkable, Protocol):
 
     async def _diffTree_commonChildren(
         self,
-        children: Iterable[tuple[Walkable, Walkable]],
+        children: Iterable[tuple[Entry, Entry]],
         result: list[delta.Operation],
     ) -> list[delta.Operation]: ...
 
     async def _diffTree_addedChildren(
-        self, children: Iterable[Walkable], result: list[delta.Operation]
+        self, children: Iterable[Entry], result: list[delta.Operation]
     ) -> list[delta.Operation]: ...
 
     async def _diffTree_deletedChildren(
-        self, children: Iterable[Walkable], result: list[delta.Operation]
+        self, children: Iterable[Entry], result: list[delta.Operation]
     ) -> list[delta.Operation]: ...
 
 
@@ -93,7 +96,7 @@ def safelower(s: object) -> object:
 class DiffTreeMixin:
     async def _diffTree_commonChildren(
         self,
-        children: Iterable[tuple[Walkable, Walkable]],
+        children: Iterable[tuple[Entry, Entry]],
         result: list[delta.Operation],
     ) -> list[delta.Operation]:
         for a, b in children:
@@ -101,7 +104,7 @@ class DiffTreeMixin:
         return result
 
     async def _diffTree_addedChildren(
-        self, children: Iterable[Walkable], result: list[delta.Operation]
+        self, children: Iterable[Entry], result: list[delta.Operation]
     ) -> list[delta.Operation]:
         for child in children:
             entries = await child.subtree()
@@ -111,7 +114,7 @@ class DiffTreeMixin:
         return result
 
     async def _diffTree_deletedChildren(
-        self, children: Iterable[Walkable], result: list[delta.Operation]
+        self, children: Iterable[Entry], result: list[delta.Operation]
     ) -> list[delta.Operation]:
         for child in children:
             entries = await child.subtree()
@@ -123,8 +126,8 @@ class DiffTreeMixin:
 
     async def diffTree(
         self: DiffTreeHost,
-        other: Walkable,
-        result: list[delta.Operation] | None = None,
+        other: Entry,
+        result: list[Any] | None = None,
     ) -> list[delta.Operation]:
         assert (
             self.dn == other.dn
@@ -147,8 +150,8 @@ class DiffTreeMixin:
 
         def rdnToChild(
             rdn: distinguishedname.RelativeDistinguishedName,
-            l: Iterable[Walkable],
-        ) -> Walkable:
+            l: Iterable[Entry],
+        ) -> Entry:
             r = [x for x in l if x.dn.split()[0] == rdn]
             assert len(r) == 1
             return r[0]
@@ -181,13 +184,16 @@ class DiffTreeMixin:
 
 class SubtreeFromChildrenMixin:
     async def subtree(
-        self: Walkable, callback: Callable[[Walkable], object] | None = None
-    ) -> list[Walkable] | None:
+        self: Walkable, callback: Callable[[Entry], object] | None = None
+    ) -> list[Entry] | None:
         if callback is None:
-            result: list[Walkable] = []
+            result: list[Entry] = []
             await self.subtree(callback=result.append)
             return result
 
+        # self is the entry the mixin was mixed into; the callback is handed
+        # entries, so say that the host is one.
+        assert interfaces.IConnectedLDAPEntry.providedBy(self)
         callback(self)
         children = await self.children()
         assert children is not None
@@ -312,8 +318,8 @@ class SearchByTreeWalkingMixin:
         sizeLimit: int = 0,
         timeLimit: int = 0,
         typesOnly: int = 0,
-        callback: Callable[[Walkable], object] | None = None,
-    ) -> list[Walkable] | None:
+        callback: Callable[[Entry], object] | None = None,
+    ) -> list[Entry] | None:
         if filterObject is None and filterText is None:
             filterObject = pureldap.LDAPFilterMatchAll
         elif filterObject is None and filterText is not None:
@@ -332,7 +338,7 @@ class SearchByTreeWalkingMixin:
             derefAliases = pureldap.LDAP_DEREF_neverDerefAliases
 
         # choose iterator: base/children/subtree
-        iterator: Callable[..., Awaitable[list[Walkable] | None]]
+        iterator: Callable[..., Awaitable[list[Entry] | None]]
         if scope == pureldap.LDAP_SCOPE_wholeSubtree:
             iterator = self.subtree
         elif scope == pureldap.LDAP_SCOPE_singleLevel:
@@ -340,8 +346,9 @@ class SearchByTreeWalkingMixin:
         elif scope == pureldap.LDAP_SCOPE_baseObject:
 
             async def iterateSelf(
-                callback: Callable[[Walkable], object],
-            ) -> list[Walkable] | None:
+                callback: Callable[[Entry], object],
+            ) -> list[Entry] | None:
+                assert interfaces.IConnectedLDAPEntry.providedBy(self)
                 callback(self)
                 return None
 
@@ -349,15 +356,15 @@ class SearchByTreeWalkingMixin:
         else:
             raise ldaperrors.LDAPProtocolError("unknown search scope: %r" % scope)
 
-        results: list[Walkable] = []
-        matchCallback: Callable[[Walkable], object]
+        results: list[Entry] = []
+        matchCallback: Callable[[Entry], object]
         if callback is None:
             matchCallback = results.append
         else:
             matchCallback = callback
 
         # gather results, send them
-        def _tryMatch(entry: Walkable) -> None:
+        def _tryMatch(entry: Entry) -> None:
             assert filterObject is not None
             if entry.match(filterObject):
                 matchCallback(entry)

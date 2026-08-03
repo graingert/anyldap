@@ -5,7 +5,7 @@ Changes to the content of one single LDAP entry.
 changing of location in tree)
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import ClassVar, Protocol, Self
 
 from anyldap import attributeset, interfaces
@@ -18,13 +18,16 @@ class EntryToAdd(Protocol):
     """What AddOp needs of the entry it is adding.
 
     anyldap.entry imports this module, so the concrete class cannot be named
-    here.
+    here. The entry is also what gets handed to addChild as the new child's
+    attributes.
     """
 
     @property
     def dn(self) -> distinguishedname.DistinguishedName: ...
 
     def toWire(self) -> bytes: ...
+
+    def items(self) -> Iterable[tuple[str | bytes, Iterable[str | bytes]]]: ...
 
 
 def _octetString(obj: pureber.BERBase) -> pureber.BEROctetString:

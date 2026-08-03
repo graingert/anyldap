@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable, Iterable
+from typing import Any, Protocol
 
 from zope.interface import Interface
 
@@ -11,6 +12,16 @@ from anyldap.protocols.pureber import BERBase
 
 # What a method takes where it will build a DistinguishedName out of it.
 AnyDN = DistinguishedName | str | bytes
+
+
+class Attributes(Protocol):
+    """Attribute names to their values.
+
+    A plain mapping, or another entry: an entry is what a tree hands to
+    addChild when it copies one in.
+    """
+
+    def items(self) -> Iterable[tuple[str | bytes, Iterable[str | bytes]]]: ...
 
 
 class ILDAPEntry(Interface):
@@ -26,6 +37,13 @@ class ILDAPEntry(Interface):
     >>> o
     LDAPEntry(dn='cn=foo,dc=example,dc=com', attributes={'anAttribute': ['itsValue', 'secondValue'], 'onemore': ['aValue']})
     """
+
+    dn: DistinguishedName
+
+    def toWire() -> bytes:
+        """
+        The entry as LDIF, encoded.
+        """
 
     def __getitem__(key: str | bytes) -> LDAPAttributeSet[str | bytes]:
         """
@@ -229,15 +247,27 @@ class IEditableLDAPEntry(ILDAPEntry):
         """
 
 
-class IConnectedLDAPEntry(Interface):
+class IConnectedLDAPEntry(ILDAPEntry):
     """
     Interface definition for LDAP entries that are part of a bigger
     whole.
+
+    Being part of a tree does not stop it being an entry, and every
+    implementer already provided both.
     """
 
-    def namingContext() -> Awaitable["ILDAPEntry"]:
+    def diffTree(
+        other: "IConnectedLDAPEntry",
+        # Whatever the caller is accumulating the differences into. A list of
+        # a named type would not accept the caller's own list, which is
+        # invariant in its element.
+        result: list[Any] | None = None,
+    ) -> Awaitable[object]:
         """
-        Return an LDAPEntry for the naming context that contains this object.
+        Compute the differences between this subtree and another.
+
+        @return: A list of operations that would make this tree look like
+        other.
         """
 
     def fetch(*attributes: str | bytes) -> Awaitable["ILDAPEntry"]:
@@ -261,8 +291,8 @@ class IConnectedLDAPEntry(Interface):
         sizeLimit: int = 0,
         timeLimit: int = 0,
         typesOnly: int = 0,
-        callback: Callable[["ILDAPEntry"], object] | None = None,
-    ) -> Awaitable[list["ILDAPEntry"] | None]:
+        callback: Callable[["IConnectedLDAPEntry"], object] | None = None,
+    ) -> Awaitable[list["IConnectedLDAPEntry"] | None]:
         """
 
         Perform an LDAP search with this object as the base.
@@ -302,8 +332,8 @@ class IConnectedLDAPEntry(Interface):
         """
 
     def children(
-        callback: Callable[["ILDAPEntry"], object] | None = None
-    ) -> Awaitable[list["ILDAPEntry"] | None]:
+        callback: Callable[["IConnectedLDAPEntry"], object] | None = None
+    ) -> Awaitable[list["IConnectedLDAPEntry"] | None]:
         """
 
         List the direct children of this entry. Try to avoid using
@@ -321,8 +351,8 @@ class IConnectedLDAPEntry(Interface):
         """
 
     def subtree(
-        callback: Callable[["ILDAPEntry"], object] | None = None
-    ) -> Awaitable[list["ILDAPEntry"] | None]:
+        callback: Callable[["IConnectedLDAPEntry"], object] | None = None
+    ) -> Awaitable[list["IConnectedLDAPEntry"] | None]:
         """
 
         List the subtree rooted at this entry, including this
@@ -347,7 +377,7 @@ class IConnectedLDAPEntry(Interface):
         """
 
     def addChild(
-        rdn: RelativeDistinguishedName | str | bytes, attributes: object
+        rdn: RelativeDistinguishedName | str | bytes, attributes: Attributes
     ) -> "IConnectedLDAPEntry | Awaitable[IConnectedLDAPEntry]":
         """
         Add a child entry directly below this one.
@@ -370,6 +400,21 @@ class IConnectedLDAPEntry(Interface):
 
         @return: Boolean.
 
+        """
+
+
+class IServerBackedLDAPEntry(IConnectedLDAPEntry):
+    """
+    An entry whose tree lives on an LDAP server.
+
+    Asking a server what its naming contexts are is something only an entry
+    with a server to ask can do; the in-memory and LDIF backends are trees
+    unto themselves.
+    """
+
+    def namingContext() -> Awaitable["ILDAPEntry"]:
+        """
+        Return an LDAPEntry for the naming context that contains this object.
         """
 
 
