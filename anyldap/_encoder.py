@@ -4,7 +4,7 @@
 
 import warnings
 from collections.abc import Iterable
-from typing import Any, Protocol, overload
+from typing import Any, Protocol, TypeVar, overload
 
 
 class SupportsToWire(Protocol):
@@ -36,6 +36,16 @@ def to_bytes(
     return bytes(value)
 
 
+_T = TypeVar("_T")
+
+
+@overload
+def to_unicode(value: bytes) -> str: ...
+@overload
+def to_unicode(value: _T) -> _T: ...
+# The overloads say what callers see: bytes become str, and anything else is
+# handed straight back with its own type. An implementation returning both has
+# to be spelled Any.
 def to_unicode(value: Any) -> Any:
     """
     Converts string to unicode:

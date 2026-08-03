@@ -1032,6 +1032,26 @@ class TestFilterSetEquality:
 
         assert filter1 == filter2
 
+    def test_not_equal_to_other_types(self):
+        """A filter set only compares against another filter set.
+
+        It used to take len() of whatever it was handed, so comparing one
+        against a string of the same length answered the question about its
+        members instead of saying they are different things.
+        """
+        filt = pureldap.LDAPFilter_and(
+            [
+                pureldap.LDAPFilter_equalityMatch(
+                    attributeDesc=pureldap.LDAPAttributeDescription("foo"),
+                    assertionValue=pureldap.LDAPAttributeValue("1"),
+                ),
+            ]
+        )
+
+        assert not filt == "x"
+        assert not filt == 1
+        assert not filt == [pureldap.LDAPFilter_present("foo")]
+
     def test_basic_and_not_equal(self):
         filter1 = pureldap.LDAPFilter_and(
             [
@@ -2012,3 +2032,56 @@ def test_ldap_bind_response_server_sasl_creds_with_tag_repr():
     )
     expected_repr = r"LDAPBindResponse_serverSaslCreds(value=b'NTLMSSP\xbe', tag=12)"
     assert repr(sasl_creds) == expected_repr
+
+
+def _filters_for_asText():
+    """One of each filter that can render itself as text."""
+    key = pureldap.LDAPAttributeDescription("cn")
+    value = pureldap.LDAPAttributeValue("Alice")
+    equality = pureldap.LDAPFilter_equalityMatch(
+        attributeDesc=key, assertionValue=value
+    )
+    return [
+        pureldap.LDAPFilter_present("objectClass"),
+        equality,
+        pureldap.LDAPFilter_greaterOrEqual(attributeDesc=key, assertionValue=value),
+        pureldap.LDAPFilter_lessOrEqual(attributeDesc=key, assertionValue=value),
+        pureldap.LDAPFilter_approxMatch(attributeDesc=key, assertionValue=value),
+        pureldap.LDAPFilter_substrings(
+            type="cn",
+            substrings=[
+                pureldap.LDAPFilter_substrings_initial("Al"),
+                pureldap.LDAPFilter_substrings_any("ic"),
+                pureldap.LDAPFilter_substrings_final("e"),
+            ],
+        ),
+        pureldap.LDAPFilter_and([equality]),
+        pureldap.LDAPFilter_or([equality]),
+        pureldap.LDAPFilter_not(equality),
+        pureldap.LDAPFilter_extensibleMatch(
+            matchingRule="caseIgnoreMatch",
+            type="cn",
+            matchValue="Alice",
+            dnAttributes=True,
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "filt", _filters_for_asText(), ids=lambda f: type(f).__name__
+)
+def test_asText_survives_the_wire(filt):
+    """A filter renders the same text whether it was built or decoded.
+
+    Decoding leaves every value as the bytes that arrived, so asText used to
+    render b'objectClass' into the text form, or fail outright trying to
+    concatenate bytes onto str.
+    """
+    request = pureldap.LDAPSearchRequest(baseObject="dc=example,dc=com", filter=filt)
+    encoded = request.toWire()
+    decoder = pureldap.LDAPBERDecoderContext(fallback=pureber.BERDecoderContext())
+
+    decoded, used = pureber.berDecodeObject(decoder, encoded)
+
+    assert used == len(encoded)
+    assert decoded.filter.asText() == filt.asText()
