@@ -1,5 +1,5 @@
-from collections.abc import Callable, Sequence
-from typing import Any
+from collections.abc import Awaitable, Sequence
+from typing import Protocol
 
 import outcome
 
@@ -7,11 +7,24 @@ from anyldap import interfaces, numberalloc
 from anyldap.protocols.ldap import autofill, ldapsyntax
 
 
+class FreeNumberGetter(Protocol):
+    """Allocates the next free number of a given type below an entry."""
+
+    def __call__(
+        self,
+        ldapObject: interfaces.IConnectedLDAPEntry,
+        numberType: str,
+        /,
+        *,
+        min: int,
+    ) -> Awaitable[int]: ...
+
+
 class Autofill_posix:  # TODO baseclass
     def __init__(
         self,
         baseDN: interfaces.AnyDN,
-        freeNumberGetter: Callable[..., Any] = numberalloc.getFreeNumber,
+        freeNumberGetter: FreeNumberGetter = numberalloc.getFreeNumber,
     ) -> None:
         self.baseDN = baseDN
         self.freeNumberGetter = freeNumberGetter

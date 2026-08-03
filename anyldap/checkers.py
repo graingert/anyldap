@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Protocol
 
 from anyldap import config, interfaces, ldapfilter
 from anyldap.protocols import pureber
@@ -13,6 +13,12 @@ class UsernamePassword(Protocol):
     password: str | bytes
 
 
+class Binder(Protocol):
+    """What the checker binds as the person it found."""
+
+    async def bind_async(self, dn: str, password: str | bytes) -> object: ...
+
+
 class BoundEntry(Protocol):
     """The entry a successful check identifies.
 
@@ -24,7 +30,7 @@ class BoundEntry(Protocol):
     def dn(self) -> object: ...
 
     @property
-    def client(self) -> Any: ...
+    def client(self) -> Binder: ...
 
 
 class UnauthorizedLogin(Exception):

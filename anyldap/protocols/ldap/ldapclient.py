@@ -116,6 +116,18 @@ class LDAPClientLike(TypingProtocol):
     async def aclose(self) -> None: ...
 
 
+class ConnectableLDAPClient(LDAPClientLike, TypingProtocol):
+    """A client-like the connector can build and hand a stream to.
+
+    The proxies name what they build, which is more than what they later use
+    it as: a test driving a connection did not have to be built by anyone.
+    """
+
+    async def attach_stream(
+        self, stream: ByteStream, task_group: TaskGroup
+    ) -> object: ...
+
+
 @runtime_checkable
 class TLSUpgradable(LDAPClientLike, TypingProtocol):
     """A client that can raise TLS on the connection it already has."""

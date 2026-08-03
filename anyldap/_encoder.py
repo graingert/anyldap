@@ -58,6 +58,16 @@ def to_unicode(value: Any) -> Any:
     return value
 
 
+@overload
+def get_strings(value: str) -> tuple[str, bytes]: ...
+@overload
+def get_strings(value: bytes) -> tuple[bytes, str]: ...
+@overload
+def get_strings(value: str | bytes) -> tuple[str | bytes, str | bytes]: ...
+@overload
+def get_strings(value: object) -> tuple[object, ...]: ...
+# Text and bytes each come back as both spellings, and anything else as
+# itself; an implementation producing all three has to be spelled Any.
 def get_strings(value: Any) -> tuple[Any, ...]:
     """
     Getting tuple of available string values

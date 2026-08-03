@@ -6,7 +6,7 @@
 
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from functools import partial
-from typing import Any, NoReturn
+from typing import NoReturn, TypeVar, overload
 
 import anyio
 
@@ -16,11 +16,13 @@ from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldaperrors, ldapserver
 from anyldap.runtime import Protocol
 
+_T = TypeVar("_T")
+
 Controls = Iterable[pureldap.Control] | None
 
 
 class MergedLDAPServer(ldapserver.BaseLDAPServer):
-    protocol: Callable[[], ldapclient.LDAPClientLike] = ldapclient.LDAPClient
+    protocol: Callable[[], ldapclient.ConnectableLDAPClient] = ldapclient.LDAPClient
 
     def __init__(
         self,
@@ -35,8 +37,16 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         self.unbound = False
         self._connected = anyio.Event()
 
+    @overload
     async def _whenConnected(
-        self, fn: Callable[..., Any], *a: object, **kw: object
+        self, fn: Callable[..., Awaitable[_T]], *a: object, **kw: object
+    ) -> _T: ...
+    @overload
+    async def _whenConnected(
+        self, fn: Callable[..., _T | Awaitable[_T]], *a: object, **kw: object
+    ) -> _T: ...
+    async def _whenConnected(
+        self, fn: Callable[..., object], *a: object, **kw: object
     ) -> object:
         """Run `fn`, waiting first until every configured server is connected."""
         if not self.all_connected:
@@ -87,7 +97,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         controls: Controls,
         reply: ldapserver.Reply,
     ) -> None:
-        final_responses: list[Any] = []
+        final_responses: list[pureldap.LDAPResult] = []
 
         def got_response(response: pureldap.LDAPProtocolResponse) -> bool:
             final = isinstance(
@@ -95,6 +105,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
                 (pureldap.LDAPSearchResultDone, pureldap.LDAPBindResponse),
             )
             if final:
+                assert isinstance(response, pureldap.LDAPResult)
                 final_responses.append(response)
                 if len(final_responses) == len(self.clients):
                     successes = [
@@ -117,12 +128,12 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
             for client in self.clients:
                 task_group.start_soon(send, client)
 
-    def handleUnknown(  # type: ignore[override]
+    def handleUnknown(
         self,
         request: pureldap.LDAPProtocolRequest,
         controls: Controls,
         reply: ldapserver.Reply,
-    ) -> Awaitable[None]:
+    ) -> Awaitable[object]:
         return self._handleUnknown_async(request, controls, reply)
 
     async def _handleUnknown_async(
@@ -138,7 +149,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         request: pureldap.LDAPBindRequest,
         controls: Controls,
         reply: ldapserver.Reply,
-    ) -> Awaitable[None]:
+    ) -> Awaitable[object]:
         return self.handleUnknown(request, controls, reply)
 
     def handle_LDAPSearchRequest(
@@ -146,7 +157,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         request: pureldap.LDAPSearchRequest,
         controls: Controls,
         reply: ldapserver.Reply,
-    ) -> Awaitable[None]:
+    ) -> Awaitable[object]:
         return self.handleUnknown(request, controls, reply)
 
     def handle_LDAPUnbindRequest(
@@ -154,7 +165,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
         request: pureldap.LDAPUnbindRequest,
         controls: Controls,
         reply: ldapserver.Reply,
-    ) -> Awaitable[None]:
+    ) -> Awaitable[object]:
         self.unbound = True
         return self.handleUnknown(request, controls, reply)
 

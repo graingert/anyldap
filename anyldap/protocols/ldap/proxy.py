@@ -1,7 +1,7 @@
 """LDAP protocol proxy server"""
 
 from collections.abc import Awaitable, Callable, Iterable
-from typing import Any
+from typing import TypeVar, overload
 
 import anyio
 
@@ -11,11 +11,13 @@ from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapserver
 from anyldap.runtime import Protocol
 
+_T = TypeVar("_T")
+
 Controls = Iterable[pureldap.Control] | None
 
 
 class Proxy(ldapserver.BaseLDAPServer):
-    protocol: Callable[[], ldapclient.LDAPClientLike] = ldapclient.LDAPClient
+    protocol: Callable[[], ldapclient.ConnectableLDAPClient] = ldapclient.LDAPClient
 
     client: ldapclient.LDAPClientLike | None = None
     unbound = False
@@ -31,8 +33,16 @@ class Proxy(ldapserver.BaseLDAPServer):
         self.config = config
         self._connected = anyio.Event()
 
+    @overload
     async def _whenConnected(
-        self, fn: Callable[..., Any], *a: object, **kw: object
+        self, fn: Callable[..., Awaitable[_T]], *a: object, **kw: object
+    ) -> _T: ...
+    @overload
+    async def _whenConnected(
+        self, fn: Callable[..., _T | Awaitable[_T]], *a: object, **kw: object
+    ) -> _T: ...
+    async def _whenConnected(
+        self, fn: Callable[..., object], *a: object, **kw: object
     ) -> object:
         """Run `fn`, waiting first if the proxied connection is not up yet."""
         if self.client is None:
@@ -82,12 +92,12 @@ class Proxy(ldapserver.BaseLDAPServer):
         self.client = None
         ldapserver.BaseLDAPServer.connectionLost(self, reason)
 
-    def handleUnknown(  # type: ignore[override]
+    def handleUnknown(
         self,
         request: pureldap.LDAPProtocolRequest,
         controls: Controls,
         reply: ldapserver.Reply,
-    ) -> Awaitable[None]:
+    ) -> Awaitable[object]:
         return self._handleUnknown_async(request, controls, reply)
 
     async def _handleUnknown_async(
@@ -103,7 +113,7 @@ class Proxy(ldapserver.BaseLDAPServer):
         request: pureldap.LDAPUnbindRequest,
         controls: Controls,
         reply: ldapserver.Reply,
-    ) -> Awaitable[None]:
+    ) -> Awaitable[object]:
         self.unbound = True
         return self.handleUnknown(request, controls, reply)
 

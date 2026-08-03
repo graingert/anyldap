@@ -1,4 +1,5 @@
-from typing import Any, ClassVar
+from collections.abc import Callable
+from typing import ClassVar
 
 from anyldap._encoder import to_bytes
 
@@ -25,17 +26,17 @@ class LDAPExceptionCollection(type):
     the corresponding classes.
     """
 
-    # Values are the registered classes. They are not all constructed the
-    # same way -- Success takes a message, LDAPResult itself takes nothing --
-    # so this cannot be narrowed past the class object.
-    collection: ClassVar[dict[int, Any]] = {}
+    # Only classes carrying a resultCode are registered, and every one of
+    # those takes the error message, so what is stored is narrower than the
+    # class object: something that builds a result out of a message.
+    collection: ClassVar[dict[int, Callable[[str | bytes], "LDAPResult"]]] = {}
 
     def __new__(
         mcs,
         name: str,
         bases: tuple[type, ...],
-        attributes: dict[str, Any],
-    ) -> Any:
+        attributes: dict[str, object],
+    ) -> "LDAPExceptionCollection":
         cls = type.__new__(mcs, name, bases, attributes)
         code = attributes.get("resultCode")
         if code is not None:
@@ -49,8 +50,7 @@ class LDAPExceptionCollection(type):
         """Get an instance of the correct exception for this result code."""
         cls = mcs.collection.get(code)
         if cls is not None:
-            instance: LDAPResult = cls(message)
-            return instance
+            return cls(message)
         return LDAPUnknownError(code, message)
 
 

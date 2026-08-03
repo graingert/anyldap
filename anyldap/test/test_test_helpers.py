@@ -145,3 +145,15 @@ async def test_memory_stream_send_eof_closes_the_outgoing_side() -> None:
             await stream.send(b"too late")
     finally:
         await stream.aclose()
+
+
+async def test_driver_has_no_stream_to_attach() -> None:
+    """The driver answers from its script, so nothing connects it."""
+    driver = testutil.LDAPClientTestDriver()
+    stream = MemoryByteStream()
+    try:
+        async with anyio.create_task_group() as task_group:
+            with pytest.raises(AssertionError, match="no stream to attach"):
+                await driver.attach_stream(stream, task_group)
+    finally:
+        await stream.aclose()

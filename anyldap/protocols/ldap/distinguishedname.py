@@ -1,5 +1,5 @@
+from collections.abc import Iterable
 from functools import total_ordering
-from typing import Any
 
 from anyldap._encoder import TextStrAlias, to_unicode
 
@@ -173,7 +173,7 @@ class RelativeDistinguishedName(TextStrAlias):
         self,
         magic: object = None,
         stringValue: str | bytes | None = None,
-        attributeTypesAndValues: Any = None,
+        attributeTypesAndValues: Iterable[LDAPAttributeTypeAndValue] | None = None,
     ) -> None:
         if magic is not None:
             assert stringValue is None
@@ -183,6 +183,7 @@ class RelativeDistinguishedName(TextStrAlias):
             elif isinstance(magic, (bytes, str)):
                 stringValue = magic
             else:
+                assert isinstance(magic, Iterable)
                 attributeTypesAndValues = magic
 
         if stringValue is None:
@@ -249,7 +250,7 @@ class DistinguishedName(TextStrAlias):
         self,
         magic: object = None,
         stringValue: str | bytes | None = None,
-        listOfRDNs: Any = None,
+        listOfRDNs: Iterable[RelativeDistinguishedName] | None = None,
     ) -> None:
         assert magic is not None or stringValue is not None or listOfRDNs is not None
         if magic is not None:
@@ -262,6 +263,7 @@ class DistinguishedName(TextStrAlias):
                 # different encodings.
                 stringValue = magic
             else:
+                assert isinstance(magic, Iterable)
                 listOfRDNs = magic
 
         if stringValue is None:

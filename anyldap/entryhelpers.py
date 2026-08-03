@@ -47,7 +47,7 @@ class Walkable(Protocol):
     ) -> list[Entry] | None: ...
 
     async def diffTree(
-        self, other: Entry, result: list[Any] | None = None
+        self, other: Entry, result: list[delta.Operation] | None = None
     ) -> object: ...
 
     def match(self, filter: pureber.BERBase) -> bool: ...
@@ -127,7 +127,7 @@ class DiffTreeMixin:
     async def diffTree(
         self: DiffTreeHost,
         other: Entry,
-        result: list[Any] | None = None,
+        result: list[delta.Operation] | None = None,
     ) -> list[delta.Operation]:
         assert (
             self.dn == other.dn

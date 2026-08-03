@@ -1,5 +1,5 @@
 from collections.abc import Awaitable, Sequence
-from typing import Any, cast
+from typing import Any
 from unittest import mock
 
 import anyio
@@ -7,7 +7,7 @@ import pytest
 
 from anyldap import config, ldapfilter, testutil
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldapclient, ldaperrors, proxy, svcbindproxy
+from anyldap.protocols.ldap import ldaperrors, proxy, svcbindproxy
 from anyldap.test._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
@@ -210,7 +210,8 @@ def _legacy_proxy(
         services=services,
         fallback=fallback,
     )
-    server.client = cast(ldapclient.LDAPClientLike, object())
+    # Connected, so that the fallback path does not wait for one.
+    server.client = testutil.LDAPClientTestDriver()
     return server
 
 
@@ -238,7 +239,7 @@ async def test_maybe_fallback_results() -> None:
         ) -> None:
             self.forwarded = (request, controls, reply)
 
-        def handleUnknown(  # type: ignore[override]
+        def handleUnknown(
             self, request: object, controls: object, reply: object
         ) -> Awaitable[None]:
             return self._forward(request, controls, reply)
@@ -309,7 +310,7 @@ async def test_bind_handler_validation_and_anonymous_forwarding() -> None:
         async def _forward(self) -> str:
             return "forwarded"
 
-        def handleUnknown(  # type: ignore[override]
+        def handleUnknown(
             self, request: object, controls: object, reply: object
         ) -> Awaitable[str]:
             return self._forward()

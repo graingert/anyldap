@@ -1,5 +1,5 @@
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from zope.interface import Interface
 
@@ -10,12 +10,23 @@ from anyldap.protocols.ldap.distinguishedname import (
 )
 from anyldap.protocols.pureber import BERBase
 
+if TYPE_CHECKING:
+    # delta is built on these interfaces, so it can only be named in
+    # annotations here.
+    from anyldap import delta
+
 # What a method takes where it will build a DistinguishedName out of it.
 AnyDN = DistinguishedName | str | bytes
 
+class ServiceConnector(Protocol):
+    """Takes over connecting, given a way to build the protocol object."""
+
+    def __call__(self, protocol_factory: Callable[[], object], /) -> object: ...
+
+
 # Where to reach the server holding a given part of the tree, or something
 # that takes over connecting to it.
-ServiceLocation = tuple[str | None, str | int | None] | Callable[..., Any]
+ServiceLocation = tuple[str | None, str | int | None] | ServiceConnector
 
 # Mapping is invariant in its key, so accepting a DN however it is spelled
 # means naming each spelling rather than the union of them.
@@ -409,10 +420,9 @@ class IWalkableLDAPEntry(IConnectedLDAPEntry):
 
     def diffTree(
         other: "IWalkableLDAPEntry",
-        # Whatever the caller is accumulating the differences into. A list of
-        # a named type would not accept the caller's own list, which is
-        # invariant in its element.
-        result: list[Any] | None = None,
+        # What the differences are accumulated into, for the recursive walk
+        # to hand the same list down to each subtree.
+        result: "list[delta.Operation] | None" = None,
     ) -> Awaitable[object]:
         """
         Compute the differences between this subtree and another.

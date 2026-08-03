@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from typing import Any
+from unittest import mock
 
 import anyio
 import pytest
@@ -60,7 +61,9 @@ async def test_parse_tcp_endpoint_errors(endpoint: str) -> None:
 
 async def test_legacy_endpoint_connector_reports_parse_error() -> None:
     with pytest.raises(ValueError, match="Unsupported endpoint"):
-        await ldapconnector.connectToLDAPEndpoint(None, "udp:host=x:port=1", object)
+        await ldapconnector.connectToLDAPEndpoint(
+            None, "udp:host=x:port=1", ldapclient.LDAPClient
+        )
 
 
 async def test_find_override_plain_string() -> None:
@@ -170,6 +173,12 @@ async def test_connection_wrapper_and_connector_alias() -> None:
     class Client:
         marker = "client"
 
+        async def attach_stream(self, stream: object, task_group: object) -> None:
+            """Never reached: the connection is built directly."""
+
+        async def aclose(self) -> None:
+            """Never reached: closing goes through the exit stack."""
+
     stack = Stack()
     # Only closed, which is all the connection does with it.
     connection = ldapconnector.AsyncLDAPClientConnection(stack, Client())  # type: ignore[arg-type]
@@ -208,14 +217,25 @@ async def test_creator_connects_to_real_endpoint() -> None:
         task_group.cancel_scope.cancel()
 
 
+class UnbuiltClient:
+    """A client class the connector is given but never gets to build.
+
+    Every connection here comes from an override, which hands back a client
+    of its own and ignores the factory it was passed.
+    """
+
+    attach_stream = mock.AsyncMock()
+    aclose = mock.AsyncMock()
+
+    def __init__(self) -> None:
+        self.bound = False
+
+    async def bind_async(self) -> None:
+        self.bound = True
+
+
 async def test_creator_legacy_and_anonymous_overrides() -> None:
-    class Client:
-        def __init__(self) -> None:
-            self.bound = False
-
-        async def bind_async(self) -> None:
-            self.bound = True
-
+    Client = UnbuiltClient
     client = Client()
     creator = ldapconnector.LDAPClientCreator(None, Client)
     assert await creator.connect("", overrides={"": lambda factory: client}) is client
@@ -235,14 +255,16 @@ async def test_creator_legacy_and_anonymous_overrides() -> None:
     )
     assert connected is client
     assert client.bound
+    Client.attach_stream.assert_not_called()
+    Client.aclose.assert_not_called()
 
 
 async def test_creator_non_override_uses_async_implementation() -> None:
-    class Creator(ldapconnector.LDAPClientCreator):
+    class Creator(ldapconnector.LDAPClientCreator[UnbuiltClient]):
         async def connectAsync(self, *args: object, **kwargs: object) -> str:
             return "connected"
 
-    creator = Creator(None, object)
+    creator = Creator(None, UnbuiltClient)
     assert await creator.connect("dc=example,dc=com") == "connected"
 
 

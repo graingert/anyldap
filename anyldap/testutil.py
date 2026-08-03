@@ -5,7 +5,7 @@ from types import FrameType
 from typing import Any, NoReturn
 
 import anyio
-from anyio.abc import SocketAttribute, SocketListener
+from anyio.abc import ByteStream, SocketAttribute, SocketListener, TaskGroup
 
 from anyldap._encoder import to_bytes
 from anyldap.runtime import Failure
@@ -197,6 +197,10 @@ class LDAPClientTestDriver:
 
     async def aclose(self) -> None:
         self.connected = 0
+
+    async def attach_stream(self, stream: ByteStream, task_group: TaskGroup) -> NoReturn:
+        """A driver answers from its script, so nothing ever attaches it."""
+        raise AssertionError(f"{self.__class__.__name__} has no stream to attach")
 
     def unbind(self) -> None:
         assert self.connected

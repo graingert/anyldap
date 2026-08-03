@@ -51,7 +51,8 @@ The netbsd des-crypt implementation has some nice notes on how this all works -
 # core
 import struct
 from collections.abc import Iterable, Iterator
-from typing import Any, TypeVar
+from collections.abc import Sequence
+from typing import TypeVar
 
 # These convert a key without changing its representation: bytes in, bytes
 # out; int in, int out. A constrained TypeVar says exactly that.
@@ -92,12 +93,15 @@ _KS_MASK = 0xfcfcfcfcffffffff
 # static DES tables
 #=============================================================================
 
-# placeholders filled in by _load_tables(); the tables are nests of int
-# tuples whose exact shape is not worth spelling out for lookups.
-PCXROT: Any = None
-IE3264: Any = None
-SPE: Any = None
-CF6464: Any = None
+# A permutation table: one row per nibble of the input, each row giving the
+# contribution of that nibble's sixteen values.
+Permutation = Sequence[Sequence[int]]
+
+# Placeholders filled in by _load_tables().
+PCXROT: Sequence[tuple[Permutation, Permutation]] | None = None
+IE3264: Permutation | None = None
+SPE: Sequence[Sequence[int]] | None = None
+CF6464: Permutation | None = None
 
 def _load_tables() -> None:
     """delay loading tables until they are actually needed"""
@@ -587,7 +591,7 @@ def _load_tables() -> None:
 # support
 #=============================================================================
 
-def _permute(c: int, p: Any) -> int:
+def _permute(c: int, p: Permutation) -> int:
     """Returns the permutation of the given 32-bit or 64-bit code with
     the specified permutation table."""
     # NOTE: only difference between 32 & 64 bit permutations
@@ -793,6 +797,8 @@ def des_encrypt_int_block(
     global SPE, PCXROT, IE3264, CF6464
     if PCXROT is None:
         _load_tables()
+    assert PCXROT is not None and SPE is not None
+    assert IE3264 is not None and CF6464 is not None
 
     # load SPE into local vars to speed things up and remove an array access call
     SPE0, SPE1, SPE2, SPE3, SPE4, SPE5, SPE6, SPE7 = SPE

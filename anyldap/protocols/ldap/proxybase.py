@@ -153,12 +153,12 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         """
         return response
 
-    def handleUnknown(  # type: ignore[override]
+    def handleUnknown(
         self,
         request: pureldap.LDAPProtocolRequest,
         controls: Controls,
         reply: ldapserver.Reply,
-    ) -> Awaitable[None]:
+    ) -> Awaitable[object]:
         """
         Forwards requests to the proxied server.
         This handler is overridden from `anyldap.protocol.ldap.server.BaseServer`.
@@ -235,7 +235,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         request: pureldap.LDAPUnbindRequest,
         controls: Controls,
         reply: ldapserver.Reply,
-    ) -> Awaitable[None]:
+    ) -> Awaitable[object]:
         """
         The client has requested to gracefully end the connection.
         Disconnect from the proxied server.

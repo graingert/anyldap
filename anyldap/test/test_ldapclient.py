@@ -1,8 +1,7 @@
 """
 Test cases for anyldap.protocols.ldap.ldapsyntax module.
 """
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Iterable
 
 import anyio
 import pytest
@@ -36,12 +35,12 @@ async def test_async_multi_response_and_no_response_paths() -> None:
     client = ldapclient.LDAPClient()
 
     class SearchServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPSearchRequest(
+        async def handle_LDAPSearchRequest(
             self,
-            request: Any,
-            controls: Any,
-            reply: Any,
-        ) -> Any:
+            request: pureldap.LDAPSearchRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPSearchResultDone:
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
@@ -90,12 +89,12 @@ async def test_send_async_receives_response_from_stream() -> None:
     client = ldapclient.LDAPClient()
 
     class BindServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPBindRequest(
+        async def handle_LDAPBindRequest(
             self,
-            request: Any,
-            controls: Any,
-            reply: Any,
-        ) -> Any:
+            request: pureldap.LDAPBindRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPBindResponse:
             return pureldap.LDAPBindResponse(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
@@ -122,20 +121,20 @@ async def test_client_methods_use_real_socket_stream() -> None:
             closed.set()
 
     class Server(ldapserver.BaseLDAPServer):
-        def handle_LDAPBindRequest(
+        async def handle_LDAPBindRequest(
             self,
-            request: Any,
-            controls: Any,
-            reply: Any,
-        ) -> Any:
+            request: pureldap.LDAPBindRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPBindResponse:
             return pureldap.LDAPBindResponse(resultCode=0)
 
-        def handle_LDAPSearchRequest(
+        async def handle_LDAPSearchRequest(
             self,
-            request: Any,
-            controls: Any,
-            reply: Any,
-        ) -> Any:
+            request: pureldap.LDAPSearchRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPSearchResultDone:
             reply(pureldap.LDAPSearchResultEntry("cn=entry", []))
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
@@ -226,7 +225,7 @@ async def test_client_response_dispatch_and_disconnect_errors() -> None:
         pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(resultCode=0), id=0)
     )
 
-    controlled: ResultSlot[Any] = ResultSlot()
+    controlled: ResultSlot[object] = ResultSlot()
     client.onwire[1] = (controlled, True, None, (), {})
     controls = [(b"1.2.3", False, None)]
     client.handle(
@@ -240,7 +239,7 @@ async def test_client_response_dispatch_and_disconnect_errors() -> None:
     assert isinstance(response, pureldap.LDAPBindResponse)
     assert returned_controls == controls
 
-    pending: ResultSlot[Any] = ResultSlot()
+    pending: ResultSlot[object] = ResultSlot()
     client.onwire[2] = (pending, False, lambda response: False, (), {})
     client.handle(
         pureldap.LDAPMessage(pureldap.LDAPSearchResultEntry("cn=a", []), id=2)
@@ -251,7 +250,7 @@ async def test_client_response_dispatch_and_disconnect_errors() -> None:
     )
     assert isinstance(await pending.wait(), pureldap.LDAPSearchResultDone)
 
-    disconnected: ResultSlot[Any] = ResultSlot()
+    disconnected: ResultSlot[object] = ResultSlot()
     client.onwire[3] = (disconnected, False, None, None, None)
     reason = Failure(ConnectionError("closed"))
     client.connectionLost(reason)

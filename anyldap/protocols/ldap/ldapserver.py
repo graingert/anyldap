@@ -3,7 +3,6 @@
 import ssl
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import AsyncExitStack
-from typing import Any
 
 import anyio
 from anyio.abc import ByteStream, Listener, SocketAttribute, TaskGroup
@@ -37,7 +36,8 @@ class BaseLDAPServer(Protocol):
         self._anyio_reader_scope: object = None
         self._anyio_closing = False
         self._anyio_closed_event: anyio.Event | None = None
-        self._tls_upgrade: list[Any] | None = None
+        # The context to raise TLS with, once the response saying so is out.
+        self._tls_upgrade: ssl.SSLContext | None = None
 
     berdecoder = pureldap.LDAPBERDecoderContext_TopLevel(
         inherit=pureldap.LDAPBERDecoderContext_LDAPMessage(
@@ -64,7 +64,7 @@ class BaseLDAPServer(Protocol):
         port: int = 0,
         *,
         backlog: int = 65536,
-        task_status: anyio.abc.TaskStatus[Any] = anyio.TASK_STATUS_IGNORED,
+        task_status: anyio.abc.TaskStatus[object] = anyio.TASK_STATUS_IGNORED,
     ) -> None:
         """Listen for TCP clients and report the bound address when ready."""
         await listen(
@@ -125,7 +125,7 @@ class BaseLDAPServer(Protocol):
                 await self.aclose()
 
     def start_tls(self, ssl_context: ssl.SSLContext) -> None:
-        self._tls_upgrade = [ssl_context, None]
+        self._tls_upgrade = ssl_context
 
     async def _upgrade_to_tls(
         self, ssl_context: ssl.SSLContext, response: bytes
@@ -223,7 +223,7 @@ class BaseLDAPServer(Protocol):
                 await self._send_anyio_write(message.toWire())
             else:
                 self._tls_upgrade = None
-                await self._upgrade_to_tls(tls_upgrade[0], message.toWire())
+                await self._upgrade_to_tls(tls_upgrade, message.toWire())
     async def _run_reader(self) -> None:
         await self._read_from_stream()
 
@@ -239,7 +239,7 @@ class BaseLDAPServer(Protocol):
                     )
 
     # Set by whatever is serving this protocol; it holds the tree, or is it.
-    factory: Any
+    factory: object
 
     def _get_root(self) -> interfaces.IConnectedLDAPEntry:
         if hasattr(self.factory, "root"):
@@ -250,10 +250,16 @@ class BaseLDAPServer(Protocol):
 
     def handleUnknown(
         self,
-        request: object,
+        request: pureldap.LDAPProtocolRequest,
         controls: Iterable[pureldap.Control] | None,
-        callback: Reply,
-    ) -> pureldap.LDAPExtendedResponse:
+        reply: Reply,
+    ) -> object:
+        """What to answer a request with no handler of its own.
+
+        A proxying server overrides this to forward instead, which it does by
+        handing back the awaitable that forwards it; the dispatcher awaits
+        whatever a handler returns.
+        """
         logger.info("Unknown request: %r", request)
         msg = pureldap.LDAPExtendedResponse(
             resultCode=ldaperrors.LDAPProtocolError.resultCode,
@@ -297,7 +303,7 @@ async def serve_stream(
 
 
 async def serve(
-    listener: Listener[Any], protocol_factory: Callable[[], BaseLDAPServer]
+    listener: Listener[ByteStream], protocol_factory: Callable[[], BaseLDAPServer]
 ) -> None:
     async with listener:
         with suppress(anyio.ClosedResourceError):
@@ -312,7 +318,7 @@ async def listen(
     protocol_factory: Callable[[], BaseLDAPServer],
     *,
     backlog: int = 65536,
-    task_status: anyio.abc.TaskStatus[Any] = anyio.TASK_STATUS_IGNORED,
+    task_status: anyio.abc.TaskStatus[object] = anyio.TASK_STATUS_IGNORED,
 ) -> None:
     listener = await anyio.create_tcp_listener(
         local_host=host,

@@ -8,7 +8,9 @@ from typing import Any, ClassVar, Protocol
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import distinguishedname
 
-# An option's value is whatever its own handler makes of it.
+# An option's value is whatever its own handler makes of it: a string from
+# the command line, a flag, a parsed scope, a mapping of service locations.
+# Reading one back is untyped by nature, which is what Any is for.
 OptionValue = Any
 
 __all__ = [
@@ -34,7 +36,7 @@ class HasOptions(Protocol):
 
 
 class Options:
-    optParameters: ClassVar[Sequence[tuple[str, str | None, Any, str]]] = ()
+    optParameters: ClassVar[Sequence[tuple[str, str | None, object, str]]] = ()
     optFlags: ClassVar[Sequence[tuple[str, str | None, str]]] = ()
 
     def __init__(self) -> None:
@@ -53,7 +55,7 @@ class Options:
     @classmethod
     def _iter_opt_parameters(
         cls,
-    ) -> Iterator[tuple[str, str | None, Any, str]]:
+    ) -> Iterator[tuple[str, str | None, object, str]]:
         seen = set()
         for base in reversed(cls.__mro__):
             for item in getattr(base, "optParameters", ()):
@@ -199,7 +201,7 @@ class Options_service_location:
 
 
 class Options_base_optional:
-    optParameters: ClassVar[Sequence[tuple[str, str | None, Any, str]]] = (
+    optParameters: ClassVar[Sequence[tuple[str, str | None, object, str]]] = (
         ("base", None, None, "LDAP base dn"),
     )
 
@@ -212,7 +214,7 @@ class Options_base(Options_base_optional):
 
 
 class Options_scope:
-    optParameters: ClassVar[Sequence[tuple[str, str | None, Any, str]]] = (
+    optParameters: ClassVar[Sequence[tuple[str, str | None, object, str]]] = (
         ("scope", None, "sub", "LDAP search scope (one of base, one, sub)"),
     )
 
@@ -233,7 +235,7 @@ class Options_scope:
 
 
 class Options_bind:
-    optParameters: ClassVar[Sequence[tuple[str, str | None, Any, str]]] = (
+    optParameters: ClassVar[Sequence[tuple[str, str | None, object, str]]] = (
         ("binddn", None, None, "use Distinguished Name to bind to the directory"),
         ("bind-auth-fd", None, None, "read bind password from filedescriptor"),
     )

@@ -75,9 +75,10 @@ class LDAPAttributeSet(set[AttributeValue]):
         Removing key from the attributes with checking
         if it exists as byte or unicode string
         """
-        for k in get_strings(key):
-            if k in self:
-                set.remove(self, k)
+        spellings = get_strings(key)
+        for value in self:
+            if value in spellings:
+                set.remove(self, value)
                 return
 
         raise KeyError(key)
