@@ -1,4 +1,51 @@
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from typing import TYPE_CHECKING, Protocol
+
 from zope.interface import Interface
+
+from anyldap.attributeset import LDAPAttributeSet
+from anyldap.protocols.ldap.distinguishedname import (
+    DistinguishedName,
+    RelativeDistinguishedName,
+)
+from anyldap.protocols.pureber import BERBase
+
+if TYPE_CHECKING:
+    # delta is built on these interfaces, so it can only be named in
+    # annotations here.
+    from anyldap import delta
+
+# What a method takes where it will build a DistinguishedName out of it.
+AnyDN = DistinguishedName | str | bytes
+
+
+class ServiceConnector(Protocol):
+    """Takes over connecting, given a way to build the protocol object."""
+
+    def __call__(self, protocol_factory: Callable[[], object], /) -> object: ...
+
+
+# Where to reach the server holding a given part of the tree, or something
+# that takes over connecting to it.
+ServiceLocation = tuple[str | None, str | int | None] | ServiceConnector
+
+# Mapping is invariant in its key, so accepting a DN however it is spelled
+# means naming each spelling rather than the union of them.
+ServiceLocationOverrides = (
+    Mapping[DistinguishedName, ServiceLocation]
+    | Mapping[str, ServiceLocation]
+    | Mapping[bytes, ServiceLocation]
+)
+
+
+class Attributes(Protocol):
+    """Attribute names to their values.
+
+    A plain mapping, or another entry: an entry is what a tree hands to
+    addChild when it copies one in.
+    """
+
+    def items(self) -> Iterable[tuple[str | bytes, Iterable[str | bytes]]]: ...
 
 
 class ILDAPEntry(Interface):
@@ -15,7 +62,14 @@ class ILDAPEntry(Interface):
     LDAPEntry(dn='cn=foo,dc=example,dc=com', attributes={'anAttribute': ['itsValue', 'secondValue'], 'onemore': ['aValue']})
     """
 
-    def __getitem__(self, key):
+    dn: DistinguishedName
+
+    def toWire() -> bytes:
+        """
+        The entry as LDIF, encoded.
+        """
+
+    def __getitem__(key: str | bytes) -> LDAPAttributeSet[str | bytes]:
         """
 
         Get all values of an attribute.
@@ -28,7 +82,10 @@ class ILDAPEntry(Interface):
 
         """
 
-    def get(self, key, default=None):
+    def get(
+        key: str | bytes,
+        default: Iterable[str | bytes] | None = None,
+    ) -> Iterable[str | bytes] | None:
         """
 
         Get all values of an attribute.
@@ -44,19 +101,19 @@ class ILDAPEntry(Interface):
 
         """
 
-    def has_key(self, key):
+    def has_key(key: str | bytes) -> bool:
         """TODO"""
 
-    def __contains__(self, key):
+    def __contains__(key: str | bytes) -> bool:
         """TODO"""
 
-    def keys(self):
+    def keys() -> list[str | bytes]:
         """TODO"""
 
-    def items(self):
+    def items() -> list[tuple[str | bytes, list[str | bytes]]]:
         """TODO"""
 
-    def __str__(self):
+    def __str__() -> str:
         """
 
         Stringify as LDIF.
@@ -76,7 +133,7 @@ class ILDAPEntry(Interface):
 
         """
 
-    def __eq__(self, other):
+    def __eq__(other: object) -> bool:
         """
 
         Comparison. Only equality is supported.
@@ -103,20 +160,20 @@ class ILDAPEntry(Interface):
 
         """
 
-    def __ne__(self, other):
+    def __ne__(other: object) -> bool:
         """
 
         Inequality comparison. See L{__eq__}.
 
         """
 
-    def __len__(self):
+    def __len__() -> int:
         """TODO"""
 
-    def __nonzero__(self):
+    def __nonzero__() -> bool:
         """Always return True"""
 
-    def bind(self, password):
+    def bind(password: str | bytes) -> Awaitable["ILDAPEntry"]:
         """
         Try to authenticate with given secret.
 
@@ -127,10 +184,15 @@ class ILDAPEntry(Interface):
         """
 
 
-class IEditableLDAPEntry(Interface):
-    """Interface definition for editable LDAP entries."""
+class IEditableLDAPEntry(ILDAPEntry):
+    """Interface definition for editable LDAP entries.
 
-    def __setitem__(self, key, value):
+    Editing an entry means reading it too -- every modification asks what
+    the entry already holds -- so this is an ILDAPEntry as well. Every
+    implementer already provided both.
+    """
+
+    def __setitem__(key: str | bytes, value: Iterable[str | bytes]) -> None:
         """
 
         Set values of an attribute. Please use lists. Do not modify
@@ -145,7 +207,7 @@ class IEditableLDAPEntry(Interface):
 
         """
 
-    def __delitem__(self, key):
+    def __delitem__(key: str | bytes) -> None:
         """
 
         Delete all values of an attribute.
@@ -162,19 +224,20 @@ class IEditableLDAPEntry(Interface):
 
         """
 
-    def undo(self):
+    def undo() -> None:
         """
         Forget all pending changes.
         """
 
-    def commit(self):
+    def commit() -> Awaitable[object]:
         """
         Send all pending changes to the LDAP server.
 
-        @returns: True (operation succeeded) or False (operation failed).
+        @returns: The backends that hold the tree answer whether it
+        succeeded; the server-backed entry answers with itself.
         """
 
-    def move(self, newDN):
+    def move(newDN: AnyDN) -> Awaitable[object]:
         """
 
         Move the object to a new DN.
@@ -185,7 +248,7 @@ class IEditableLDAPEntry(Interface):
 
         """
 
-    def delete(self):
+    def delete() -> Awaitable[object]:
         """
 
         Delete this object from the LDAP server.
@@ -194,53 +257,47 @@ class IEditableLDAPEntry(Interface):
 
         """
 
-    def setPassword(self, newPasswd):
+    def setPassword(newPasswd: bytes) -> object | Awaitable[object]:
         """
 
         Set all applicable passwords for this object.
 
         @param newPasswd: A string containing the new password.
 
-        @return: Completes when the operation is done.
+        @return: Completes when the operation is done. An entry that stores
+        its own attributes does this synchronously; one backed by a server
+        has to await, so callers pass the result through
+        anyldap._async.await_result.
 
         """
 
 
-class IConnectedLDAPEntry(Interface):
+class IConnectedLDAPEntry(ILDAPEntry):
     """
     Interface definition for LDAP entries that are part of a bigger
     whole.
+
+    Being part of a tree does not stop it being an entry, and every
+    implementer already provided both. What every such entry can do is
+    find another by name, search below itself, and grow a child; walking
+    its own children is IWalkableLDAPEntry.
     """
 
-    def namingContext(self):
-        """
-        Return an LDAPEntry for the naming context that contains this object.
-        """
-
-    def fetch(self, *attributes):
-        """
-        Fetch the attributes of this object from the server.
-
-        @param attributes: Attributes to fetch. If none, fetch all
-        attributes. Fetched attributes are overwritten, and if
-        fetching all attributes, attributes that are not on the server
-        are removed.
-
-        @return: Completes when the operation is done.
-        """
-
     def search(
-        self,
-        filterText=None,
-        filterObject=None,
-        attributes=(),
-        scope=None,
-        derefAliases=None,
-        sizeLimit=0,
-        timeLimit=0,
-        typesOnly=0,
-        callback=None,
-    ):
+        filterText: str | None = None,
+        filterObject: BERBase | None = None,
+        attributes: Sequence[str | bytes] | None = (),
+        scope: int | None = None,
+        derefAliases: int | None = None,
+        sizeLimit: int = 0,
+        timeLimit: int = 0,
+        typesOnly: int = 0,
+        callback: Callable[["IConnectedLDAPEntry"], object] | None = None,
+        # What comes back depends on how it was called -- the results, or
+        # nothing when a callback took them, or the server's response
+        # controls -- so a caller that wants the results says so. The
+        # backends narrow this to what they actually return.
+    ) -> Awaitable[object]:
         """
 
         Perform an LDAP search with this object as the base.
@@ -279,7 +336,40 @@ class IConnectedLDAPEntry(Interface):
 
         """
 
-    def children(self, callback=None):
+    def lookup(dn: AnyDN) -> Awaitable["IConnectedLDAPEntry"]:
+        """
+        Lookup the referred to by dn.
+
+        @return: An entry from the same tree, or raises e.g. LDAPNoSuchObject.
+        """
+
+    def addChild(
+        rdn: RelativeDistinguishedName | str | bytes, attributes: Attributes
+    ) -> "IConnectedLDAPEntry | Awaitable[IConnectedLDAPEntry]":
+        """
+        Add a child entry directly below this one.
+
+        Backends that touch the filesystem have to await; the in-memory one
+        does not, so callers pass the result through
+        anyldap._async.await_result.
+
+        @return: The new child entry.
+        """
+
+
+
+class IWalkableLDAPEntry(IConnectedLDAPEntry):
+    """
+    An entry whose tree can be walked a level at a time.
+
+    The backends that hold the whole tree can list a node's children and
+    test an entry against a filter themselves. An entry backed by a server
+    asks the server to search instead.
+    """
+
+    def children(
+        callback: Callable[["IWalkableLDAPEntry"], object] | None = None
+    ) -> Awaitable[list["IWalkableLDAPEntry"] | None]:
         """
 
         List the direct children of this entry. Try to avoid using
@@ -296,7 +386,9 @@ class IConnectedLDAPEntry(Interface):
 
         """
 
-    def subtree(self, callback=None):
+    def subtree(
+        callback: Callable[["IWalkableLDAPEntry"], object] | None = None
+    ) -> Awaitable[list["IWalkableLDAPEntry"] | None]:
         """
 
         List the subtree rooted at this entry, including this
@@ -313,14 +405,7 @@ class IConnectedLDAPEntry(Interface):
 
         """
 
-    def lookup(self, dn):
-        """
-        Lookup the referred to by dn.
-
-        @return: An ILDAPEntry, or raises e.g. LDAPNoSuchObject.
-        """
-
-    def match(self, filter):
+    def match(filter: BERBase) -> bool:
         """
 
         Does entry match filter.
@@ -334,10 +419,76 @@ class IConnectedLDAPEntry(Interface):
         """
 
 
+    def diffTree(
+        other: "IWalkableLDAPEntry",
+        # What the differences are accumulated into, for the recursive walk
+        # to hand the same list down to each subtree.
+        result: "list[delta.Operation] | None" = None,
+    ) -> Awaitable[object]:
+        """
+        Compute the differences between this subtree and another.
+
+        @return: A list of operations that would make this tree look like
+        other.
+        """
+
+class IServerBackedLDAPEntry(IConnectedLDAPEntry):
+    """
+    An entry whose tree lives on an LDAP server.
+
+    Fetching an entry's attributes, and asking a server what its naming
+    contexts are, are things only an entry with a server to ask can do; the
+    in-memory and LDIF backends are trees unto themselves.
+    """
+
+    def fetch(*attributes: str | bytes) -> Awaitable["ILDAPEntry"]:
+        """
+        Fetch the attributes of this object from the server.
+
+        @param attributes: Attributes to fetch. If none, fetch all
+        attributes. Fetched attributes are overwritten, and if
+        fetching all attributes, attributes that are not on the server
+        are removed.
+
+        @return: Completes when the operation is done.
+        """
+
+    def namingContext() -> Awaitable["ILDAPEntry"]:
+        """
+        Return an LDAPEntry for the naming context that contains this object.
+        """
+
+
+class LDAPBaseConfigLike(Protocol):
+    """What something reads off a configuration to reach a directory.
+
+    ILDAPConfig is what a configuration declares itself to be; this is what
+    reading one looks like, which is what lets a test supply its own.
+    """
+
+    def getBaseDN(self) -> DistinguishedName | str: ...
+
+    def getServiceLocationOverrides(self) -> ServiceLocationOverrides: ...
+
+
+class LDAPConfigLike(Protocol):
+    """What something authenticating a person reads off a configuration.
+
+    Not the base DN: an identity lives under its own, which is what these
+    ask for.
+    """
+
+    def getIdentityBaseDN(self) -> DistinguishedName | str: ...
+
+    def getIdentitySearch(self, name: str) -> str: ...
+
+    def getServiceLocationOverrides(self) -> ServiceLocationOverrides: ...
+
+
 class ILDAPConfig(Interface):
     """Generic LDAP configuration retrieval."""
 
-    def getBaseDN(self):
+    def getBaseDN() -> DistinguishedName | str:
         """
         Get the LDAP base DN, as a DistinguishedName.
 
@@ -345,20 +496,23 @@ class ILDAPConfig(Interface):
         if configuration does not specify a base DN.
         """
 
-    def getServiceLocationOverrides(self):
+    def getServiceLocationOverrides() -> dict[DistinguishedName, ServiceLocation]:
         """
         Get the LDAP service location overrides, as a mapping of
         DistinguishedName to (host, port) tuples.
         """
 
-    def copy(self, baseDN=None, serviceLocationOverrides=None):
+    def copy(
+        baseDN: AnyDN | None = None,
+        serviceLocationOverrides: ServiceLocationOverrides | None = None,
+    ) -> "ILDAPConfig":
         """
         Make a copy of this configuration, overriding certain aspects
         of it.
         """
 
-    def getIdentityBaseDN(self):
+    def getIdentityBaseDN() -> DistinguishedName | str:
         """TODO"""
 
-    def getIdentitySearch(self, name):
+    def getIdentitySearch(name: str) -> str:
         """TODO"""

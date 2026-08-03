@@ -1,8 +1,9 @@
+from anyldap import interfaces
 from anyldap.protocols.ldap.autofill import ObjectMissingObjectClassException
 
 
 class Autofill_samba:  # TODO baseclass
-    def start(self, ldapObject):
+    def start(self, ldapObject: interfaces.IEditableLDAPEntry) -> None:
         assert "objectClass" in ldapObject
         if "sambaAccount" not in ldapObject["objectClass"]:
             raise ObjectMissingObjectClassException(ldapObject)
@@ -20,15 +21,16 @@ class Autofill_samba:  # TODO baseclass
         assert "pwdMustChange" not in ldapObject
         ldapObject["pwdMustChange"] = ["0"]
 
-    def notify(self, ldapObject, attributeType):
+    def notify(
+        self, ldapObject: interfaces.IEditableLDAPEntry, attributeType: str | bytes
+    ) -> None:
 
         # rid=2*uid+1000
         if attributeType == "uidNumber":
             assert "uidNumber" in ldapObject
             assert len(ldapObject["uidNumber"]) == 1
             (uidNumber,) = ldapObject["uidNumber"]
-            uidNumber = int(uidNumber)
-            rid = uidNumber * 2 + 1000
+            rid = int(uidNumber) * 2 + 1000
             ldapObject["rid"] = [str(rid)]
             return
 
@@ -37,7 +39,6 @@ class Autofill_samba:  # TODO baseclass
             assert "gidNumber" in ldapObject
             assert len(ldapObject["gidNumber"]) == 1
             (gidNumber,) = ldapObject["gidNumber"]
-            gidNumber = int(gidNumber)
-            primaryGroupID = gidNumber * 2 + 1001
+            primaryGroupID = int(gidNumber) * 2 + 1001
             ldapObject["primaryGroupID"] = [str(primaryGroupID)]
             return

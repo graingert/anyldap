@@ -7,8 +7,9 @@ from anyldap.runtime import Protocol
 class LDIFParseError(Exception):
     """Error parsing LDIF"""
 
-    def __str__(self):
+    def __str__(self) -> str:
         s = self.__doc__
+        assert s is not None
         if self.args:
             s = ": ".join([s] + [str(x) for x in self.args])
         return s + "."
@@ -46,10 +47,10 @@ IN_ENTRY = b"IN_ENTRY"
 class _LineReceiver(Protocol):
     delimiter = b"\n"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._buffer = b""
 
-    def dataReceived(self, data):
+    def dataReceived(self, data: bytes) -> None:
         self._buffer += data
         while True:
             index = self._buffer.find(self.delimiter)
@@ -59,27 +60,30 @@ class _LineReceiver(Protocol):
             self._buffer = self._buffer[index + len(self.delimiter) :]
             self.lineReceived(line)
 
+    def lineReceived(self, line: bytes) -> None:
+        raise NotImplementedError()
+
 
 class LDIF(_LineReceiver):
     delimiter = b"\n"
     mode = HEADER
 
-    dn = None
-    data = None
-    lastLine = None
+    dn: bytes | None = None
+    data: dict[bytes, list[bytes]] | None = None
+    lastLine: bytes | None = None
 
-    version = None
+    version: int | None = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
-    def logicalLineReceived(self, line):
+    def logicalLineReceived(self, line: bytes) -> None:
         if line.startswith(b"#"):
             # comments are allowed everywhere
             return
         getattr(self, "state_" + self.mode.decode("ascii"))(line)
 
-    def lineReceived(self, line):
+    def lineReceived(self, line: bytes) -> None:
         if line.startswith(b" "):
             if self.lastLine is None:
                 raise LDIFEntryStartsWithSpaceError()
@@ -92,7 +96,7 @@ class LDIF(_LineReceiver):
                 self.logicalLineReceived(line)
                 self.lastLine = None
 
-    def parseValue(self, val):
+    def parseValue(self, val: bytes) -> bytes:
         if val.startswith(b":"):
             return base64.decodebytes(val[1:].lstrip(b" "))
         elif val.startswith(b"<"):
@@ -100,7 +104,7 @@ class LDIF(_LineReceiver):
         else:
             return val.lstrip(b" ")
 
-    def _parseLine(self, line):
+    def _parseLine(self, line: bytes) -> tuple[bytes, bytes]:
         try:
             key, val = line.split(b":", 1)
         except ValueError:
@@ -110,7 +114,7 @@ class LDIF(_LineReceiver):
         val = self.parseValue(val)
         return key, val
 
-    def state_HEADER(self, line):
+    def state_HEADER(self, line: bytes) -> None:
         key, val = self._parseLine(line)
         self.mode = WAIT_FOR_DN
 
@@ -125,7 +129,7 @@ class LDIF(_LineReceiver):
             if version > 1:
                 raise LDIFUnsupportedVersionError(version)
 
-    def state_WAIT_FOR_DN(self, line):
+    def state_WAIT_FOR_DN(self, line: bytes) -> None:
         assert self.dn is None, "self.dn must not be set when waiting for DN"
         assert self.data is None, "self.data must not be set when waiting for DN"
         if line == b"":
@@ -141,7 +145,7 @@ class LDIF(_LineReceiver):
         self.data = {}
         self.mode = IN_ENTRY
 
-    def state_IN_ENTRY(self, line):
+    def state_IN_ENTRY(self, line: bytes) -> None:
         assert self.dn is not None, "self.dn must be set when in entry"
         assert self.data is not None, "self.data must be set when in entry"
 
@@ -161,9 +165,13 @@ class LDIF(_LineReceiver):
 
         self.data[key].append(val)
 
-    def gotEntry(self, obj):
-        pass
+    def gotEntry(self, obj: object) -> None:
+        """Called with whatever this parser produces.
 
-    def connectionLost(self, reason=Protocol.connectionDone):
+        The base parser produces entries; the delta parser produces
+        operations.
+        """
+
+    def connectionLost(self, reason: BaseException = Protocol.connectionDone) -> None:
         if self.mode != WAIT_FOR_DN:
             raise LDIFTruncatedError(reason)

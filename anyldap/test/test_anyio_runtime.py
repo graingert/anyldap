@@ -1,43 +1,45 @@
+from collections.abc import Sequence
+
 import anyio
 import pytest
-from anyio.abc import SocketAttribute
 
 from anyldap import inmemory, testutil
 from anyldap._async import ResultSlot, await_result
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapserver, ldapsyntax
 from anyldap.runtime import Failure, Protocol, unwrap_failure
+from anyldap.test._anyio_helpers import local_address
 
 pytestmark = pytest.mark.anyio
 
 
-async def test_await_result_accepts_all_result_shapes():
-    async def native():
+async def test_await_result_accepts_all_result_shapes() -> None:
+    async def native() -> str:
         return "awaitable"
 
     assert await await_result(native()) == "awaitable"
     assert await await_result("plain") == "plain"
 
 
-async def test_result_slot_replays_a_value():
-    slot = ResultSlot()
+async def test_result_slot_replays_a_value() -> None:
+    slot: ResultSlot[str] = ResultSlot()
     assert not slot.is_set
     slot.set_value("done")
     assert slot.is_set
     assert await slot.wait() == "done"
 
 
-async def test_result_slot_replays_an_exception():
-    slot = ResultSlot()
+async def test_result_slot_replays_an_exception() -> None:
+    slot: ResultSlot[str] = ResultSlot()
     slot.set_exception(ValueError("boom"))
     with pytest.raises(ValueError, match="boom"):
         await slot.wait()
 
 
-async def test_result_slot_waits_for_a_late_producer():
-    slot = ResultSlot()
+async def test_result_slot_waits_for_a_late_producer() -> None:
+    slot: ResultSlot[str] = ResultSlot()
 
-    async def produce():
+    async def produce() -> None:
         slot.set_value("late")
 
     async with anyio.create_task_group() as task_group:
@@ -45,29 +47,30 @@ async def test_result_slot_waits_for_a_late_producer():
         assert await slot.wait() == "late"
 
 
-async def test_result_slot_rejects_a_second_result():
-    slot = ResultSlot()
+async def test_result_slot_rejects_a_second_result() -> None:
+    slot: ResultSlot[int] = ResultSlot()
     slot.set_value(1)
     with pytest.raises(RuntimeError, match="result already set"):
         slot.set_value(2)
 
 
-async def test_unwrap_failure_accepts_wrapped_and_bare_reasons():
+async def test_unwrap_failure_accepts_wrapped_and_bare_reasons() -> None:
     error = ValueError("gone")
     assert unwrap_failure(Failure(error)) is error
     assert unwrap_failure(error) is error
 
 
-async def test_protocol_default_hooks():
+async def test_protocol_default_hooks() -> None:
     protocol = Protocol()
-    assert protocol.connectionMade() is None
-    assert protocol.connectionLost() is None
-    assert protocol.dataReceived(b"ignored") is None
+    # The base hooks do nothing; a protocol overrides the ones it cares about.
+    protocol.connectionMade()
+    protocol.connectionLost()
+    protocol.dataReceived(b"ignored")
 
 
-async def test_failure_handles_broken_string_and_type_matching():
+async def test_failure_handles_broken_string_and_type_matching() -> None:
     class BrokenStringError(Exception):
-        def __str__(self):
+        def __str__(self) -> str:
             raise RuntimeError("cannot stringify")
 
     error = BrokenStringError("broken")
@@ -82,16 +85,21 @@ async def test_failure_handles_broken_string_and_type_matching():
         failure.raiseException()
 
 
-async def test_ldap_client_bind_async():
+async def test_ldap_client_bind_async() -> None:
     client = ldapclient.LDAPClient()
     creds = (b"cn=foo,dc=example,dc=com", b"secret")
 
     class BindServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPBindRequest(self, request, controls, reply):
+        def handle_LDAPBindRequest(
+            self,
+            request: pureldap.LDAPBindRequest,
+            controls: object,
+            reply: object,
+        ) -> pureldap.LDAPBindResponse:
             return pureldap.LDAPBindResponse(resultCode=0, matchedDN=request.dn)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(ldapserver.serve, listener, BindServer)
         client_stream = await anyio.connect_tcp(host, port)
@@ -101,7 +109,7 @@ async def test_ldap_client_bind_async():
         await listener.aclose()
 
 
-async def test_ldapsyntax_commit_async():
+async def test_ldapsyntax_commit_async() -> None:
     client = testutil.LDAPClientTestDriver(
         [pureldap.LDAPModifyResponse(resultCode=0, matchedDN="", errorMessage="")]
     )
@@ -118,7 +126,7 @@ async def test_ldapsyntax_commit_async():
     assert result is entry
 
 
-async def test_ldapsyntax_search_async():
+async def test_ldapsyntax_search_async() -> None:
     client = testutil.LDAPClientTestDriver(
         [
             pureldap.LDAPSearchResultEntry(
@@ -131,10 +139,11 @@ async def test_ldapsyntax_search_async():
 
     results = await entry.search_async()
 
+    assert isinstance(results, Sequence)
     assert [item.dn.getText() for item in results] == ["cn=foo,dc=example,dc=com"]
 
 
-async def test_inmemory_lookup_async():
+async def test_inmemory_lookup_async() -> None:
     root = inmemory.ReadOnlyInMemoryLDAPEntry(
         dn="dc=example,dc=com", attributes={"dc": ["example"]}
     )

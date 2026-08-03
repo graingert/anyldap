@@ -1,23 +1,38 @@
 """
 Test cases for anyldap.protocols.pureldap module.
 """
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 import pytest
 
 from anyldap.protocols import pureber, pureldap
 
 
-def s(*l):
+def s(*l: int | bytes) -> bytes:
     """Join all members of list to a byte string. Integer members are chr()ed"""
     return b"".join([bytes((e,)) if isinstance(e, int) else e for e in l])
 
 
-def l(s):
+def l(s: bytes) -> list[int]:
     """Split a byte string to ord's of chars."""
     return [[x][0] for x in s]
 
 
+# A class, how to build one, the decoder its wire form needs, and that form.
+# The arguments in a row build that row's class and no other, which is what
+# keeps them from being narrowed.
+KnownValue = tuple[
+    type[pureber.BERBase],
+    Sequence[Any],
+    Mapping[str, Any],
+    pureber.BERDecoderContext | None,
+    Sequence[int | bytes],
+]
+
+
 class TestKnownValues:
-    knownValues = (  # class, args, kwargs, expected_result
+    knownValues: tuple[KnownValue, ...] = (  # class, args, kwargs, expected_result
         (
             pureldap.LDAPModifyRequest,
             [],
@@ -741,12 +756,10 @@ class TestKnownValues:
         ),
     )
 
-    def testToLDAP(self):
+    def testToLDAP(self) -> None:
         """LDAPClass(...).toWire() should give known result with known input"""
         for klass, args, kwargs, decoder, encoded in self.knownValues:
-            result = klass(*args, **kwargs)
-            result = result.toWire()
-            result = l(result)
+            result = l(klass(*args, **kwargs).toWire())
 
             message = "Class %s(*%r, **%r) doesn't encode properly: " "%r != %r" % (
                 klass.__name__,
@@ -757,7 +770,7 @@ class TestKnownValues:
             )
             assert encoded == result, message
 
-    def testFromLDAP(self):
+    def testFromLDAP(self) -> None:
         """LDAPClass(encoded="...") should give known result with known input"""
         for klass, args, kwargs, decoder, encoded in self.knownValues:
             if decoder is None:
@@ -769,6 +782,7 @@ class TestKnownValues:
             assert bytes == len(m)
 
             shouldBe = klass(*args, **kwargs)
+            assert result is not None
             assert (
                 result.toWire() == shouldBe.toWire()
             ), "Class %s(*%s, **%s) doesn't decode properly: " "%s != %s" % (
@@ -779,7 +793,7 @@ class TestKnownValues:
                 repr(shouldBe),
             )
 
-    def testPartial(self):
+    def testPartial(self) -> None:
         """LDAPClass(encoded="...") with too short input should throw BERExceptionInsufficientData"""
         for klass, args, kwargs, decoder, encoded in self.knownValues:
             if decoder is None:
@@ -790,7 +804,7 @@ class TestKnownValues:
                 m = s(*encoded)[:i]
                 with pytest.raises(pureber.BERExceptionInsufficientData):
                     pureber.berDecodeObject(decoder, m)
-            assert (None, 0) == pureber.berDecodeObject(decoder, "")
+            assert (None, 0) == pureber.berDecodeObject(decoder, b"")
 
 
 class TestEquality:
@@ -812,7 +826,7 @@ class TestEquality:
         (pureber.BERInteger, [0]),
     )
 
-    def testEquality(self):
+    def testEquality(self) -> None:
         """LDAP objects equal LDAP objects with same type and content"""
         for class_, args in self.valuesToTest:
             x = class_(*args)
@@ -820,7 +834,7 @@ class TestEquality:
             assert x == x
             assert x == y
 
-    def testInEquality(self):
+    def testInEquality(self) -> None:
         """LDAP objects do not equal LDAP objects with different type or content"""
         for i in range(len(self.valuesToTest)):
             for j in range(len(self.valuesToTest)):
@@ -833,7 +847,7 @@ class TestEquality:
 
 
 class TestSubstrings:
-    def test_length(self):
+    def test_length(self) -> None:
         """LDAPFilter_substrings.substrings behaves like a proper list."""
         decoder = pureldap.LDAPBERDecoderContext(fallback=pureber.BERDecoderContext())
         filt = pureldap.LDAPFilter_substrings.fromBER(
@@ -849,7 +863,7 @@ class TestSubstrings:
 
 
 class TestEscaping:
-    def test_escape(self):
+    def test_escape(self) -> None:
         s = "\\*()\0"
 
         result = pureldap.escape(s)
@@ -857,7 +871,7 @@ class TestEscaping:
 
         assert expected == result
 
-    def test_binary_escape(self):
+    def test_binary_escape(self) -> None:
         s = "HELLO"
 
         result = pureldap.binary_escape(s)
@@ -865,7 +879,7 @@ class TestEscaping:
 
         assert expected == result
 
-    def test_smart_escape_regular(self):
+    def test_smart_escape_regular(self) -> None:
         s = "HELLO"
 
         result = pureldap.smart_escape(s)
@@ -873,7 +887,7 @@ class TestEscaping:
 
         assert expected == result
 
-    def test_smart_escape_binary(self):
+    def test_smart_escape_binary(self) -> None:
         s = "\x10\x11\x12\x13\x14"
 
         result = pureldap.smart_escape(s)
@@ -881,7 +895,7 @@ class TestEscaping:
 
         assert expected == result
 
-    def test_smart_escape_threshold(self):
+    def test_smart_escape_threshold(self) -> None:
         s = "\x10\x11ABC"
 
         result = pureldap.smart_escape(s, threshold=0.10)
@@ -889,7 +903,7 @@ class TestEscaping:
 
         assert expected == result
 
-    def test_default_escaper(self):
+    def test_default_escaper(self) -> None:
         chars = "\\*()\0"
         escaped_chars = "\\5c\\2a\\28\\29\\00"
 
@@ -937,14 +951,14 @@ class TestEscaping:
         ]
 
         for filt, expected in filters:
-            result = filt.asText()
-            assert expected == result
+            assert isinstance(filt, pureldap.SupportsAsText)
+            assert expected == filt.asText()
 
-    def test_custom_escaper(self):
+    def test_custom_escaper(self) -> None:
         chars = "HELLO"
         escaped_chars = "0b10010000b10001010b10011000b10011000b1001111"
 
-        def custom_escaper(s):
+        def custom_escaper(s: str) -> str:
             return "".join(bin(ord(c)) for c in s)
 
         filters = [
@@ -999,12 +1013,12 @@ class TestEscaping:
         ]
 
         for filt, expected in filters:
-            result = filt.asText()
-            assert expected == result
+            assert isinstance(filt, pureldap.SupportsAsText)
+            assert expected == filt.asText()
 
 
 class TestFilterSetEquality:
-    def test_basic_and_equal(self):
+    def test_basic_and_equal(self) -> None:
         filter1 = pureldap.LDAPFilter_and(
             [
                 pureldap.LDAPFilter_equalityMatch(
@@ -1032,7 +1046,27 @@ class TestFilterSetEquality:
 
         assert filter1 == filter2
 
-    def test_basic_and_not_equal(self):
+    def test_not_equal_to_other_types(self) -> None:
+        """A filter set only compares against another filter set.
+
+        It used to take len() of whatever it was handed, so comparing one
+        against a string of the same length answered the question about its
+        members instead of saying they are different things.
+        """
+        filt = pureldap.LDAPFilter_and(
+            [
+                pureldap.LDAPFilter_equalityMatch(
+                    attributeDesc=pureldap.LDAPAttributeDescription("foo"),
+                    assertionValue=pureldap.LDAPAttributeValue("1"),
+                ),
+            ]
+        )
+
+        assert not filt == "x"
+        assert not filt == 1
+        assert not filt == [pureldap.LDAPFilter_present("foo")]
+
+    def test_basic_and_not_equal(self) -> None:
         filter1 = pureldap.LDAPFilter_and(
             [
                 pureldap.LDAPFilter_equalityMatch(
@@ -1060,7 +1094,7 @@ class TestFilterSetEquality:
 
         assert filter1 != filter2
 
-    def test_basic_or_equal(self):
+    def test_basic_or_equal(self) -> None:
         filter1 = pureldap.LDAPFilter_or(
             [
                 pureldap.LDAPFilter_equalityMatch(
@@ -1088,7 +1122,7 @@ class TestFilterSetEquality:
 
         assert filter1 == filter2
 
-    def test_basic_or_not_equal(self):
+    def test_basic_or_not_equal(self) -> None:
         filter1 = pureldap.LDAPFilter_or(
             [
                 pureldap.LDAPFilter_equalityMatch(
@@ -1116,7 +1150,7 @@ class TestFilterSetEquality:
 
         assert filter1 != filter2
 
-    def test_nested_equal(self):
+    def test_nested_equal(self) -> None:
         filter1 = pureldap.LDAPFilter_or(
             [
                 pureldap.LDAPFilter_equalityMatch(
@@ -1168,7 +1202,7 @@ class TestFilterSetEquality:
 
         assert filter1 == filter2
 
-    def test_escape_and_equal(self):
+    def test_escape_and_equal(self) -> None:
 
         filter1 = pureldap.LDAPFilter_and(
             [
@@ -1199,7 +1233,7 @@ class TestFilterSetEquality:
 
 
 class TestMessageRepresentation:
-    def test_message_repr(self):
+    def test_message_repr(self) -> None:
         page_size = 10
         cookie = "xyzzy"
         control_value = pureber.BERSequence(
@@ -1208,12 +1242,16 @@ class TestMessageRepresentation:
                 pureber.BEROctetString(cookie),
             ]
         )
-        controls = [("1.2.840.113556.1.4.319", None, control_value)]
+        # A control's value goes on the wire encoded, which is how it comes
+        # back off it and so how a message shows it.
+        controls: list[pureldap.Control] = [
+            ("1.2.840.113556.1.4.319", None, control_value.toWire())
+        ]
         search_request = pureldap.LDAPSearchRequest("cn=foo,ou=baz,dc=example,dc=org")
         ldap_msg = pureldap.LDAPMessage(
             id=1, value=search_request, controls=controls, tag=1
         )
-        expected_value = "LDAPMessage(id=1, value=LDAPSearchRequest(baseObject='cn=foo,ou=baz,dc=example,dc=org', scope=2, derefAliases=0, sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_present(value='objectClass'), attributes=[]), controls=[('1.2.840.113556.1.4.319', None, BERSequence(value=[BERInteger(value=10), BEROctetString(value='xyzzy')]))], tag=1)"
+        expected_value = "LDAPMessage(id=1, value=LDAPSearchRequest(baseObject='cn=foo,ou=baz,dc=example,dc=org', scope=2, derefAliases=0, sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_present(value='objectClass'), attributes=[]), controls=[('1.2.840.113556.1.4.319', None, b'0\\n\\x02\\x01\\n\\x04\\x05xyzzy')], tag=1)"
         assert expected_value == repr(ldap_msg)
 
 
@@ -1222,14 +1260,14 @@ class TestRepresentations:
     Test representations of common LDAP opbjects.
     """
 
-    def test_bind_request_repr(self):
+    def test_bind_request_repr(self) -> None:
         """LDAPBindRequest.__repr__"""
         assert repr(pureldap.LDAPBindRequest(dn=b"uid=user,ou=users,dc=example,dc=org")) == ("LDAPBindRequest(version=3, dn=b'uid=user,ou=users,dc=example,dc=org', "
                 "auth='', sasl=False)")
         assert repr(pureldap.LDAPBindRequest(dn="uid=user,ou=users,dc=example,dc=org")) == ("LDAPBindRequest(version=3, dn='uid=user,ou=users,dc=example,dc=org', "
                 "auth='', sasl=False)")
 
-    def test_bind_request_with_tag_repr(self):
+    def test_bind_request_with_tag_repr(self) -> None:
         """LDAPBindRequest.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPBindRequest(
@@ -1244,7 +1282,7 @@ class TestRepresentations:
             )) == ("LDAPBindRequest(version=3, dn='uid=user,ou=users,dc=example,dc=org', "
                 "auth='****', tag=42, sasl=False)")
 
-    def test_bind_response_repr(self):
+    def test_bind_response_repr(self) -> None:
         """LDAPBindResponse.__repr__"""
         assert (repr(
                 pureldap.LDAPBindResponse(
@@ -1257,7 +1295,7 @@ class TestRepresentations:
                 )
             )) == "LDAPBindResponse(resultCode=0, matchedDN='uid=user,ou=users,dc=example,dc=org')"
 
-    def test_result_with_matched_dn_repr(self):
+    def test_result_with_matched_dn_repr(self) -> None:
         """LDAPResult.__repr__ with matchedDN attribute"""
         assert (repr(
                 pureldap.LDAPResult(
@@ -1270,18 +1308,18 @@ class TestRepresentations:
                 )
             )) == "LDAPResult(resultCode=0, matchedDN='uid=user,ou=users,dc=example,dc=org')"
 
-    def test_result_with_error_message_repr(self):
+    def test_result_with_error_message_repr(self) -> None:
         """LDAPResult.__repr__ with errorMessage attribute"""
         assert repr(pureldap.LDAPResult(resultCode=1, errorMessage=b"error_message")) == "LDAPResult(resultCode=1, errorMessage=b'error_message')"
         assert repr(pureldap.LDAPResult(resultCode=1, errorMessage="error_message")) == "LDAPResult(resultCode=1, errorMessage='error_message')"
 
-    def test_result_with_tag_repr(self):
+    def test_result_with_tag_repr(self) -> None:
         """LDAPResult.__repr__ with custom tag attribute"""
         res = pureldap.LDAPResult(resultCode=0, tag=42)
         res_repr = "LDAPResult(resultCode=0, tag=42)"
         assert repr(res) == res_repr
 
-    def test_search_request_repr(self):
+    def test_search_request_repr(self) -> None:
         """LDAPSearchRequest.__repr__"""
         assert (repr(
                 pureldap.LDAPSearchRequest(
@@ -1308,7 +1346,7 @@ class TestRepresentations:
                 "attributeDesc=BEROctetString(value='key'), assertionValue=BEROctetString(value='value')), "
                 "attributes=[])")
 
-    def test_search_request_with_tag_repr(self):
+    def test_search_request_with_tag_repr(self) -> None:
         """LDAPSearchRequest.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPSearchRequest(
@@ -1337,7 +1375,7 @@ class TestRepresentations:
                 "attributeDesc=BEROctetString(value='key'), assertionValue=BEROctetString(value='value')), "
                 "attributes=[], tag=42)")
 
-    def test_search_result_entry_repr(self):
+    def test_search_result_entry_repr(self) -> None:
         """LDAPSearchResultEntry.__repr__"""
         assert (repr(
                 pureldap.LDAPSearchResultEntry(
@@ -1354,7 +1392,7 @@ class TestRepresentations:
             )) == ("LDAPSearchResultEntry(objectName='uid=mohamed,ou=people,dc=example,dc=fr', "
                 "attributes=[('uid', ['mohamed'])])")
 
-    def test_search_result_entry_with_tag_repr(self):
+    def test_search_result_entry_with_tag_repr(self) -> None:
         """LDAPSearchResultEntry.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPSearchResultEntry(
@@ -1373,51 +1411,53 @@ class TestRepresentations:
             )) == ("LDAPSearchResultEntry(objectName='uid=mohamed,ou=people,dc=example,dc=fr', "
                 "attributes=[('uid', ['mohamed'])], tag=42)")
 
-    def test_search_result_reference_repr(self):
+    def test_search_result_reference_repr(self) -> None:
         """LDAPSearchResultReference.__repr__"""
         assert (repr(
                 pureldap.LDAPSearchResultReference(
+                    # Referrals arrive as LDAPString, whichever spelling the
+                    # wire or the caller used.
                     uris=[
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",
+                        pureldap.LDAPString(b"ldap://example.com/dc=foo,dc=example,dc=com"),
+                        pureldap.LDAPString(b"ldap://example.com/dc=foo,dc=example,dc=com"),
                     ]
                 )
-            )) == ("LDAPSearchResultReference(uris=[b'ldap://example.com/dc=foo,dc=example,dc=com', "
-            "b'ldap://example.com/dc=foo,dc=example,dc=com'])")
+            )) == ("LDAPSearchResultReference(uris=[LDAPString(value=b'ldap://example.com/dc=foo,dc=example,dc=com'), "
+            "LDAPString(value=b'ldap://example.com/dc=foo,dc=example,dc=com')])")
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        "ldap://example.com/dc=foo,dc=example,dc=com",
-                        "ldap://example.com/dc=foo,dc=example,dc=com",
+                        pureldap.LDAPString("ldap://example.com/dc=foo,dc=example,dc=com"),
+                        pureldap.LDAPString("ldap://example.com/dc=foo,dc=example,dc=com"),
                     ]
                 )
-            )) == ("LDAPSearchResultReference(uris=['ldap://example.com/dc=foo,dc=example,dc=com', "
-            "'ldap://example.com/dc=foo,dc=example,dc=com'])")
+            )) == ("LDAPSearchResultReference(uris=[LDAPString(value='ldap://example.com/dc=foo,dc=example,dc=com'), "
+            "LDAPString(value='ldap://example.com/dc=foo,dc=example,dc=com')])")
 
-    def test_search_result_reference_with_tag_repr(self):
+    def test_search_result_reference_with_tag_repr(self) -> None:
         """LDAPSearchResultReference.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",
+                        pureldap.LDAPString(b"ldap://example.com/dc=foo,dc=example,dc=com"),
+                        pureldap.LDAPString(b"ldap://example.com/dc=foo,dc=example,dc=com"),
                     ],
                     tag=42,
                 )
-            )) == ("LDAPSearchResultReference(uris=[b'ldap://example.com/dc=foo,dc=example,dc=com', "
-            "b'ldap://example.com/dc=foo,dc=example,dc=com'], tag=42)")
+            )) == ("LDAPSearchResultReference(uris=[LDAPString(value=b'ldap://example.com/dc=foo,dc=example,dc=com'), "
+            "LDAPString(value=b'ldap://example.com/dc=foo,dc=example,dc=com')], tag=42)")
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        "ldap://example.com/dc=foo,dc=example,dc=com",
-                        "ldap://example.com/dc=foo,dc=example,dc=com",
+                        pureldap.LDAPString("ldap://example.com/dc=foo,dc=example,dc=com"),
+                        pureldap.LDAPString("ldap://example.com/dc=foo,dc=example,dc=com"),
                     ],
                     tag=42,
                 )
-            )) == ("LDAPSearchResultReference(uris=['ldap://example.com/dc=foo,dc=example,dc=com', "
-            "'ldap://example.com/dc=foo,dc=example,dc=com'], tag=42)")
+            )) == ("LDAPSearchResultReference(uris=[LDAPString(value='ldap://example.com/dc=foo,dc=example,dc=com'), "
+            "LDAPString(value='ldap://example.com/dc=foo,dc=example,dc=com')], tag=42)")
 
-    def test_modify_request_repr(self):
+    def test_modify_request_repr(self) -> None:
         """LDAPModifyRequest.__repr__"""
         assert (repr(
                 pureldap.LDAPModifyRequest(
@@ -1458,7 +1498,7 @@ class TestRepresentations:
                 "BERSequence(value=[LDAPAttributeDescription(value='key'), "
                 "BERSet(value=[LDAPString(value='value')])])]))")
 
-    def test_modify_request_with_tag_repr(self):
+    def test_modify_request_with_tag_repr(self) -> None:
         """LDAPModifyRequest.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPModifyRequest(
@@ -1501,7 +1541,7 @@ class TestRepresentations:
                 "BERSequence(value=[LDAPAttributeDescription(value='key'), "
                 "BERSet(value=[LDAPString(value='value')])])]), tag=42)")
 
-    def test_add_request_repr(self):
+    def test_add_request_repr(self) -> None:
         """LDAPAddRequest.__repr__"""
         assert (repr(
                 pureldap.LDAPAddRequest(
@@ -1530,7 +1570,7 @@ class TestRepresentations:
                 "attributes=[(LDAPAttributeDescription(value='key'), "
                 "BERSet(value=[LDAPAttributeValue(value='value')]))])")
 
-    def test_add_request_with_tag_repr(self):
+    def test_add_request_with_tag_repr(self) -> None:
         """LDAPAddRequest.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPAddRequest(
@@ -1561,12 +1601,12 @@ class TestRepresentations:
                 "attributes=[(LDAPAttributeDescription(value='key'), "
                 "BERSet(value=[LDAPAttributeValue(value='value')]))], tag=42)")
 
-    def test_del_request_repr(self):
+    def test_del_request_repr(self) -> None:
         """LDAPDelRequest.__repr__"""
         assert repr(pureldap.LDAPDelRequest(entry=b"uid=user,ou=users,dc=example,dc=org")) == "LDAPDelRequest(entry=b'uid=user,ou=users,dc=example,dc=org')"
         assert repr(pureldap.LDAPDelRequest(entry="uid=user,ou=users,dc=example,dc=org")) == "LDAPDelRequest(entry='uid=user,ou=users,dc=example,dc=org')"
 
-    def test_del_request_with_tag_repr(self):
+    def test_del_request_with_tag_repr(self) -> None:
         """LDAPDelRequest.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPDelRequest(
@@ -1579,7 +1619,7 @@ class TestRepresentations:
                 )
             )) == "LDAPDelRequest(entry='uid=user,ou=users,dc=example,dc=org', tag=42)"
 
-    def test_modify_dn_request_repr(self):
+    def test_modify_dn_request_repr(self) -> None:
         """LDAPModifyDNRequest.__repr__"""
         assert (repr(
                 pureldap.LDAPModifyDNRequest(
@@ -1598,7 +1638,7 @@ class TestRepresentations:
             )) == ("LDAPModifyDNRequest(entry='uid=user,ou=users,dc=example,dc=org', "
                 "newrdn='uid=newuser', deleteoldrdn=True)")
 
-    def test_modify_dn_request_with_new_superior_repr(self):
+    def test_modify_dn_request_with_new_superior_repr(self) -> None:
         """LDAPModifyDNRequest.__repr__ with newSuperior attribute"""
         assert (repr(
                 pureldap.LDAPModifyDNRequest(
@@ -1621,7 +1661,7 @@ class TestRepresentations:
                 "newrdn='uid=newuser', deleteoldrdn=False, "
                 "newSuperior='ou=newusers,dc=example,dc=org')")
 
-    def test_modify_dn_request_with_tag_repr(self):
+    def test_modify_dn_request_with_tag_repr(self) -> None:
         """LDAPModifyDNRequest.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPModifyDNRequest(
@@ -1642,7 +1682,7 @@ class TestRepresentations:
             )) == ("LDAPModifyDNRequest(entry='uid=user,ou=users,dc=example,dc=org', "
                 "newrdn='uid=newuser', deleteoldrdn=True, tag=42)")
 
-    def test_compare_request_repr(self):
+    def test_compare_request_repr(self) -> None:
         """LDAPCompareRequest.__repr__"""
         assert (repr(
                 pureldap.LDAPCompareRequest(
@@ -1667,19 +1707,19 @@ class TestRepresentations:
                 "ava=LDAPAttributeValueAssertion(attributeDesc=BEROctetString(value='key'), "
                 "assertionValue=BEROctetString(value='value')))")
 
-    def test_abandon_request_repr(self):
+    def test_abandon_request_repr(self) -> None:
         """LDAPAbandonRequest.__repr__"""
         ar = pureldap.LDAPAbandonRequest(1)
         ar_repr = "LDAPAbandonRequest(id=1)"
         assert repr(ar) == ar_repr
 
-    def test_abandon_request_with_tag_repr(self):
+    def test_abandon_request_with_tag_repr(self) -> None:
         """LDAPAbandonRequest.__repr__ with custom tag attribute"""
         ar = pureldap.LDAPAbandonRequest(1, tag=42)
         ar_repr = "LDAPAbandonRequest(id=1, tag=42)"
         assert repr(ar) == ar_repr
 
-    def test_password_modify_request_repr(self):
+    def test_password_modify_request_repr(self) -> None:
         """LDAPPasswordModifyRequest.__repr__"""
         assert (repr(
                 pureldap.LDAPPasswordModifyRequest(
@@ -1702,7 +1742,7 @@ class TestRepresentations:
                 "oldPasswd=LDAPPasswordModifyRequest_oldPasswd(value='******'), "
                 "newPasswd=LDAPPasswordModifyRequest_newPasswd(value='******'))")
 
-    def test_password_modify_request_with_tag_repr(self):
+    def test_password_modify_request_with_tag_repr(self) -> None:
         """LDAPPasswordModifyRequest.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPPasswordModifyRequest(
@@ -1727,31 +1767,31 @@ class TestRepresentations:
                 "oldPasswd=LDAPPasswordModifyRequest_oldPasswd(value='******'), "
                 "newPasswd=LDAPPasswordModifyRequest_newPasswd(value='******'), tag=42)")
 
-    def test_starttls_request_repr(self):
+    def test_starttls_request_repr(self) -> None:
         """LDAPStartTLSRequest.__repr__"""
         req = pureldap.LDAPStartTLSRequest()
         req_repr = "LDAPStartTLSRequest()"
         assert repr(req) == req_repr
 
-    def test_starttls_request_with_tag_repr(self):
+    def test_starttls_request_with_tag_repr(self) -> None:
         """LDAPStartTLSRequest.__repr__ with custom tag attribute"""
         ar = pureldap.LDAPStartTLSRequest(tag=42)
         ar_repr = "LDAPStartTLSRequest(tag=42)"
         assert repr(ar) == ar_repr
 
-    def test_starttls_response_repr(self):
+    def test_starttls_response_repr(self) -> None:
         """LDAPStartTLSResponse.__repr__"""
         resp = pureldap.LDAPStartTLSResponse(resultCode=0)
         resp_repr = "LDAPStartTLSResponse()"
         assert repr(resp) == resp_repr
 
-    def test_starttls_response_with_tag_repr(self):
+    def test_starttls_response_with_tag_repr(self) -> None:
         """LDAPStartTLSResponse.__repr__ with custom tag attribute"""
         resp = pureldap.LDAPStartTLSResponse(resultCode=0, tag=42)
         resp_repr = "LDAPStartTLSResponse(tag=42)"
         assert repr(resp) == resp_repr
 
-    def test_attribute_value_assertion_repr(self):
+    def test_attribute_value_assertion_repr(self) -> None:
         """LDAPAttributeValueAssertion.__repr__"""
         assert (repr(
                 pureldap.LDAPAttributeValueAssertion(
@@ -1768,7 +1808,7 @@ class TestRepresentations:
             )) == ("LDAPAttributeValueAssertion(attributeDesc=BEROctetString(value='key'), "
                 "assertionValue=BEROctetString(value='value'))")
 
-    def test_attribute_value_assertion_with_tag_repr(self):
+    def test_attribute_value_assertion_with_tag_repr(self) -> None:
         """LDAPAttributeValueAssertion.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPAttributeValueAssertion(
@@ -1787,17 +1827,17 @@ class TestRepresentations:
             )) == ("LDAPAttributeValueAssertion(attributeDesc=BEROctetString(value='key'), "
                 "assertionValue=BEROctetString(value='value'), tag=42)")
 
-    def test_ldapfilter_not_repr(self):
+    def test_ldapfilter_not_repr(self) -> None:
         """LDAPFilter_not.__repr__"""
         assert repr(pureldap.LDAPFilter_not(pureber.BEROctetString(b"value"))) == "LDAPFilter_not(value=BEROctetString(value=b'value'))"
         assert repr(pureldap.LDAPFilter_not(pureber.BEROctetString("value"))) == "LDAPFilter_not(value=BEROctetString(value='value'))"
 
-    def test_ldapfilter_not_with_tag_repr(self):
+    def test_ldapfilter_not_with_tag_repr(self) -> None:
         """LDAPFilter_not.__repr__ with custom tag attribute"""
         assert repr(pureldap.LDAPFilter_not(pureber.BEROctetString(b"value"), tag=42)) == "LDAPFilter_not(value=BEROctetString(value=b'value'), tag=42)"
         assert repr(pureldap.LDAPFilter_not(pureber.BEROctetString("value"), tag=42)) == "LDAPFilter_not(value=BEROctetString(value='value'), tag=42)"
 
-    def test_ldapfilter_substrings_repr(self):
+    def test_ldapfilter_substrings_repr(self) -> None:
         """LDAPFilter_substrings.__repr__"""
         assert (repr(
                 pureldap.LDAPFilter_substrings(
@@ -1814,7 +1854,7 @@ class TestRepresentations:
             )) == ("LDAPFilter_substrings(type='cn', "
                 "substrings=[LDAPFilter_substrings_initial(value='value')])")
 
-    def test_ldapfilter_substrings_with_tag_repr(self):
+    def test_ldapfilter_substrings_with_tag_repr(self) -> None:
         """LDAPFilter_substrings.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPFilter_substrings(
@@ -1833,7 +1873,7 @@ class TestRepresentations:
             )) == ("LDAPFilter_substrings(type='cn', "
                 "substrings=[LDAPFilter_substrings_initial(value='value')], tag=42)")
 
-    def test_matching_rule_assertion_repr(self):
+    def test_matching_rule_assertion_repr(self) -> None:
         """LDAPMatchingRuleAssertion.__repr__"""
         assert repr(pureldap.LDAPMatchingRuleAssertion(b"rule", b"type", b"value")) == ("LDAPMatchingRuleAssertion(matchingRule=LDAPMatchingRuleAssertion_matchingRule("
                 "value=b'rule'), type=LDAPMatchingRuleAssertion_type(value=b'type'), matchValue="
@@ -1842,7 +1882,7 @@ class TestRepresentations:
                 "value='rule'), type=LDAPMatchingRuleAssertion_type(value='type'), matchValue="
                 "LDAPMatchingRuleAssertion_matchValue(value='value'), dnAttributes=None)")
 
-    def test_matching_rule_assertion_with_tag_repr(self):
+    def test_matching_rule_assertion_with_tag_repr(self) -> None:
         """LDAPMatchingRuleAssertion.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPMatchingRuleAssertion(b"rule", b"type", b"value", tag=42)
@@ -1853,7 +1893,7 @@ class TestRepresentations:
                 "value='rule'), type=LDAPMatchingRuleAssertion_type(value='type'), matchValue="
                 "LDAPMatchingRuleAssertion_matchValue(value='value'), dnAttributes=None, tag=42)")
 
-    def test_ldap_bind_response_server_sasl_creds_repr(self):
+    def test_ldap_bind_response_server_sasl_creds_repr(self) -> None:
         """ServerSaslCreds will often have binary data. A custom repr is needed because
         it cannot be turned into a unicode string like most BEROctetString objects.
         """
@@ -1864,7 +1904,7 @@ class TestRepresentations:
         assert actual_repr == expected_repr
 
 
-def test_protocol_and_filter_edge_paths():
+def test_protocol_and_filter_edge_paths() -> None:
     with pytest.raises(NotImplementedError):
         pureldap.LDAPProtocolOp().toWire()
 
@@ -1881,7 +1921,7 @@ def test_protocol_and_filter_edge_paths():
         unsupported.asText()
 
 
-def test_optional_modify_and_password_request_paths():
+def test_optional_modify_and_password_request_paths() -> None:
     request = pureldap.LDAPModifyRequest(object="dc=example", modification=None)
     assert request.toWire()
 
@@ -1891,8 +1931,8 @@ def test_optional_modify_and_password_request_paths():
     [("caseIgnoreMatch", "cn", True), (None, None, None)],
 )
 def test_extensible_match_decodes_real_wire_fields(
-    matching_rule, attribute_type, dn_attributes
-):
+    matching_rule: str | None, attribute_type: str | None, dn_attributes: bool | None
+) -> None:
     expected = pureldap.LDAPFilter_extensibleMatch(
         matchingRule=matching_rule,
         type=attribute_type,
@@ -1915,7 +1955,7 @@ def test_extensible_match_decodes_real_wire_fields(
     assert decoded.toWire() == expected.toWire()
 
 
-def test_extensible_match_rejects_fields_before_match_value():
+def test_extensible_match_rejects_fields_before_match_value() -> None:
     content = b"".join(
         value.toWire()
         for value in (
@@ -1931,7 +1971,7 @@ def test_extensible_match_rejects_fields_before_match_value():
         )
 
 
-def test_bind_request_with_unknown_authentication_decodes_as_empty_auth():
+def test_bind_request_with_unknown_authentication_decodes_as_empty_auth() -> None:
     content = b"".join(
         value.toWire()
         for value in (
@@ -1946,7 +1986,7 @@ def test_bind_request_with_unknown_authentication_decodes_as_empty_auth():
     assert decoded.auth == ""
 
 
-def test_result_optional_wire_fields_and_unrecognized_fields():
+def test_result_optional_wire_fields_and_unrecognized_fields() -> None:
     referral = pureldap.LDAPReferral([pureber.BEROctetString("ldap://example")])
     result_content = b"".join(
         value.toWire()
@@ -1983,7 +2023,7 @@ def test_result_optional_wire_fields_and_unrecognized_fields():
         )
 
 
-def test_control_with_unknown_second_field_uses_defaults():
+def test_control_with_unknown_second_field_uses_defaults() -> None:
     content = pureber.BEROctetString("1.2.3").toWire() + pureber.BERInteger(1).toWire()
     control = pureldap.LDAPControl.fromBER(
         pureldap.LDAPControl.tag, content, pureber.BERDecoderContext()
@@ -2005,10 +2045,66 @@ def test_control_with_unknown_second_field_uses_defaults():
 
 
 
-def test_ldap_bind_response_server_sasl_creds_with_tag_repr():
+def test_ldap_bind_response_server_sasl_creds_with_tag_repr() -> None:
     """A non-standard tag is included in the representation."""
     sasl_creds = pureldap.LDAPBindResponse_serverSaslCreds(
         value=b"NTLMSSP\xbe", tag=12
     )
     expected_repr = r"LDAPBindResponse_serverSaslCreds(value=b'NTLMSSP\xbe', tag=12)"
     assert repr(sasl_creds) == expected_repr
+
+
+def _filters_for_asText() -> list[pureber.BERBase]:
+    """One of each filter that can render itself as text."""
+    key = pureldap.LDAPAttributeDescription("cn")
+    value = pureldap.LDAPAttributeValue("Alice")
+    equality = pureldap.LDAPFilter_equalityMatch(
+        attributeDesc=key, assertionValue=value
+    )
+    return [
+        pureldap.LDAPFilter_present("objectClass"),
+        equality,
+        pureldap.LDAPFilter_greaterOrEqual(attributeDesc=key, assertionValue=value),
+        pureldap.LDAPFilter_lessOrEqual(attributeDesc=key, assertionValue=value),
+        pureldap.LDAPFilter_approxMatch(attributeDesc=key, assertionValue=value),
+        pureldap.LDAPFilter_substrings(
+            type="cn",
+            substrings=[
+                pureldap.LDAPFilter_substrings_initial("Al"),
+                pureldap.LDAPFilter_substrings_any("ic"),
+                pureldap.LDAPFilter_substrings_final("e"),
+            ],
+        ),
+        pureldap.LDAPFilter_and([equality]),
+        pureldap.LDAPFilter_or([equality]),
+        pureldap.LDAPFilter_not(equality),
+        pureldap.LDAPFilter_extensibleMatch(
+            matchingRule="caseIgnoreMatch",
+            type="cn",
+            matchValue="Alice",
+            dnAttributes=True,
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    "filt", _filters_for_asText(), ids=lambda f: type(f).__name__
+)
+def test_asText_survives_the_wire(filt: pureber.BERBase) -> None:
+    """A filter renders the same text whether it was built or decoded.
+
+    Decoding leaves every value as the bytes that arrived, so asText used to
+    render b'objectClass' into the text form, or fail outright trying to
+    concatenate bytes onto str.
+    """
+    request = pureldap.LDAPSearchRequest(baseObject="dc=example,dc=com", filter=filt)
+    encoded = request.toWire()
+    decoder = pureldap.LDAPBERDecoderContext(fallback=pureber.BERDecoderContext())
+
+    decoded, used = pureber.berDecodeObject(decoder, encoded)
+
+    assert used == len(encoded)
+    assert isinstance(decoded, pureldap.LDAPSearchRequest)
+    assert isinstance(decoded.filter, pureldap.SupportsAsText)
+    assert isinstance(filt, pureldap.SupportsAsText)
+    assert decoded.filter.asText() == filt.asText()

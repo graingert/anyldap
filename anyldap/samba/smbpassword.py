@@ -6,14 +6,13 @@ from anyldap.samba._passlib.des import des_encrypt_block
 _LM_CONSTANT = b"KGS!@#$%"
 
 
-def nthash(password=b""):
+def nthash(password: str | bytes = b"") -> bytes:
     """Generates nt md4 password hash for a given password."""
-    if isinstance(password, bytes):
-        password = password.decode("utf-8")
-    return md4(password[:128].encode("utf-16-le")).hexdigest().upper().encode("ascii")
+    text = password.decode("utf-8") if isinstance(password, bytes) else password
+    return md4(text[:128].encode("utf-16-le")).hexdigest().upper().encode("ascii")
 
 
-def lmhash_locked(password=b""):
+def lmhash_locked(password: str | bytes = b"") -> bytes:
     """
     Generates a lanman password hash that matches no password.
 
@@ -23,7 +22,7 @@ def lmhash_locked(password=b""):
     return 32 * b"X"
 
 
-def lmhash(password=b""):
+def lmhash(password: str | bytes = b"") -> bytes:
     """
     Generates lanman password hash for a given password.
 
@@ -34,9 +33,8 @@ def lmhash(password=b""):
     if not config.useLMhash():
         return lmhash_locked()
 
-    if isinstance(password, str):
-        password = password.encode("utf-8")
-    secret = password.upper()[:14].ljust(14, b"\0")
+    raw = password.encode("utf-8") if isinstance(password, str) else password
+    secret = raw.upper()[:14].ljust(14, b"\0")
     digest = b"".join(
         des_encrypt_block(secret[offset : offset + 7], _LM_CONSTANT)
         for offset in (0, 7)

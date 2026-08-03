@@ -4,14 +4,14 @@ Test cases for anyldap.protocols.ldap.delta
 
 import pytest
 
-from anyldap import attributeset, delta, entry, inmemory
+from anyldap import attributeset, delta, entry, inmemory, testutil
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldapsyntax
 
 pytestmark = pytest.mark.anyio
 
 
-async def test_delete_operation_uses_real_in_memory_entry():
+async def test_delete_operation_uses_real_in_memory_entry() -> None:
     root = inmemory.ReadOnlyInMemoryLDAPEntry("dc=example,dc=com")
     child = root.addChild("cn=foo", {"cn": ["foo"]})
     operation = delta.DeleteOp(child)
@@ -20,10 +20,36 @@ async def test_delete_operation_uses_real_in_memory_entry():
         await root.lookup(child.dn)
 
 
+def test_modify_op_survives_its_own_request() -> None:
+    """fromLDAP reads back the request asLDAP built.
+
+    Modification.asLDAP used to hand back encoded bytes while its sibling
+    ModifyOp.asLDAP handed back an object, so the request came out holding
+    pre-encoded members that fromLDAP could not unpack. It only ever worked
+    because the members were on their way to the wire, where bytes pass
+    straight through.
+    """
+    op = delta.ModifyOp(
+        "cn=foo,dc=example,dc=com",
+        [delta.Add("cn", ["bar"]), delta.Delete("sn", ["quux"])],
+    )
+
+    back = delta.ModifyOp.fromLDAP(op.asLDAP())
+
+    # The values come back as the utf-8 they were sent as, so the operations
+    # are equivalent rather than equal.
+    assert back.dn == op.dn
+    assert [type(m) for m in back.modifications] == [delta.Add, delta.Delete]
+    assert back.asLDAP().toWire() == op.asLDAP().toWire()
+
+
 class TestModifications:
-    def setup_method(self):
+    def setup_method(self) -> None:
+        self.client = testutil.LDAPClientTestDriver()
         self.foo = ldapsyntax.LDAPEntry(
-            None,
+            # These modifications are journalled, never sent, which the
+            # driver enforces: it has no responses to give.
+            self.client,
             dn="cn=foo,dc=example,dc=com",
             attributes={
                 "objectClass": ["person"],
@@ -33,76 +59,91 @@ class TestModifications:
             },
         )
 
-    def testAbstractAndInvalidOperations(self):
+    async def testAbstractOperation(self) -> None:
+        """
+        Operation.patch is awaited, like every operation that implements it.
+        """
+        with pytest.raises(NotImplementedError):
+            await delta.Operation().patch(self.foo)
+        with pytest.raises(NotImplementedError):
+            delta.Operation().asLDIF()
+
+    def testAbstractAndInvalidOperations(self) -> None:
         modification = delta.Modification("cn", ["value"])
         with pytest.raises(NotImplementedError):
             modification.patch(self.foo)
         with pytest.raises(NotImplementedError):
             modification.asLDAP()
         with pytest.raises(NotImplementedError):
-            delta.Operation().patch(self.foo)
+            modification.asLDIF()
         assert delta.ModifyOp._getClassFromOp(999) is None
         with pytest.raises(RuntimeError):
             delta.ModifyOp.fromLDAP(object())
         request = pureldap.LDAPModifyRequest(
             object="cn=foo",
             modification=[
-                (
-                    pureber.BEREnumerated(999),
-                    (
-                        pureldap.LDAPAttributeDescription("cn"),
-                        pureber.BERSet([pureldap.LDAPAttributeValue("foo")]),
-                    ),
+                pureber.BERSequence(
+                    [
+                        pureber.BEREnumerated(999),
+                        pureber.BERSequence(
+                            [
+                                pureldap.LDAPAttributeDescription("cn"),
+                                pureber.BERSet(
+                                    [pureldap.LDAPAttributeValue("foo")]
+                                ),
+                            ]
+                        ),
+                    ]
                 )
             ],
         )
         with pytest.raises(RuntimeError):
             delta.ModifyOp.fromLDAP(request)
 
-    def testAddOld(self):
+    def testAddOld(self) -> None:
         mod = delta.Add("cn", ["quux"])
         mod.patch(self.foo)
 
         assert not ("stuff" in self.foo)
         assert self.foo["cn"] == ["foo", "thud", "quux"]
 
-    def testAddNew(self):
+    def testAddNew(self) -> None:
         mod = delta.Add("stuff", ["val1", "val2"])
         mod.patch(self.foo)
 
         assert self.foo["stuff"] == ["val1", "val2"]
         assert self.foo["cn"] == ["foo", "thud"]
 
-    def testDelete(self):
+    def testDelete(self) -> None:
         mod = delta.Delete("cn", ["thud"])
         mod.patch(self.foo)
 
         assert not ("stuff" in self.foo)
         assert self.foo["cn"] == ["foo"]
 
-    def testDeleteAll(self):
+    def testDeleteAll(self) -> None:
         mod = delta.Delete("more")
         mod.patch(self.foo)
 
         assert not ("stuff" in self.foo)
         assert self.foo["cn"] == ["foo", "thud"]
 
-    def testDelete_FailOnNonExistingAttributeType_All(self):
+    def testDelete_FailOnNonExistingAttributeType_All(self) -> None:
         mod = delta.Delete("notexist", [])
         with pytest.raises(KeyError):
             mod.patch(self.foo)
 
-    def testDelete_FailOnNonExistingAttributeType_OneValue(self):
+    def testDelete_FailOnNonExistingAttributeType_OneValue(self) -> None:
         mod = delta.Delete("notexist", ["a"])
         with pytest.raises(KeyError):
             mod.patch(self.foo)
 
-    def testDelete_FailOnNonExistingAttributeValue(self):
+    def testDelete_FailOnNonExistingAttributeValue(self) -> None:
         mod = delta.Delete("cn", ["notexist"])
         with pytest.raises(LookupError):
             mod.patch(self.foo)
 
-    def testReplace_Add(self):
+    def testReplace_Add(self) -> None:
         mod = delta.Replace("stuff", ["val1", "val2"])
         mod.patch(self.foo)
 
@@ -110,7 +151,7 @@ class TestModifications:
         assert self.foo["sn"] == ["bar"]
         assert self.foo["more"] == ["junk"]
 
-    def testReplace_Modify(self):
+    def testReplace_Modify(self) -> None:
         mod = delta.Replace("sn", ["baz"])
         mod.patch(self.foo)
 
@@ -118,7 +159,7 @@ class TestModifications:
         assert self.foo["sn"] == ["baz"]
         assert self.foo["more"] == ["junk"]
 
-    def testReplace_Delete_Existing(self):
+    def testReplace_Delete_Existing(self) -> None:
         mod = delta.Replace("more", [])
         mod.patch(self.foo)
 
@@ -126,7 +167,7 @@ class TestModifications:
         assert self.foo["sn"] == ["bar"]
         assert not ("more" in self.foo)
 
-    def testReplace_Delete_NonExisting(self):
+    def testReplace_Delete_NonExisting(self) -> None:
         mod = delta.Replace("nonExisting", [])
         mod.patch(self.foo)
 
@@ -136,7 +177,7 @@ class TestModifications:
 
 
 class TestModificationOpLDIF:
-    def testAdd(self):
+    def testAdd(self) -> None:
         m = delta.Add("foo", ["bar", "baz"])
         assert m.asLDIF() == (b"""\
 add: foo
@@ -145,7 +186,7 @@ foo: baz
 -
 """)
 
-    def testDelete(self):
+    def testDelete(self) -> None:
         m = delta.Delete("foo", ["bar", "baz"])
         assert m.asLDIF() == (b"""\
 delete: foo
@@ -154,14 +195,14 @@ foo: baz
 -
 """)
 
-    def testDeleteAll(self):
+    def testDeleteAll(self) -> None:
         m = delta.Delete("foo")
         assert m.asLDIF() == (b"""\
 delete: foo
 -
 """)
 
-    def testReplace(self):
+    def testReplace(self) -> None:
         m = delta.Replace("foo", ["bar", "baz"])
         assert m.asLDIF() == (b"""\
 replace: foo
@@ -170,14 +211,14 @@ foo: baz
 -
 """)
 
-    def testReplaceAll(self):
+    def testReplaceAll(self) -> None:
         m = delta.Replace("thud")
         assert m.asLDIF() == (b"""\
 replace: thud
 -
 """)
 
-    def testAddBase64(self):
+    def testAddBase64(self) -> None:
         """
         LDIF attribute representation is base64 encoded
         if attribute value contains nonprintable characters
@@ -197,7 +238,7 @@ class TestOperationTestCase:
     Test case for operations on a LDAP tree.
     """
 
-    def getRoot(self):
+    def getRoot(self) -> inmemory.ReadOnlyInMemoryLDAPEntry:
         """
         Returns a new LDAP root for dc=example,dc=com.
         """
@@ -211,7 +252,7 @@ class TestAddOpLDIF(TestOperationTestCase):
     Unit tests for `AddOp`.
     """
 
-    def testAsLDIF(self):
+    def testAsLDIF(self) -> None:
         """
         It will return the LDIF representation of the operation.
         """
@@ -235,7 +276,7 @@ quux: thud
 
 """) == result
 
-    def testAddOpEqualitySameEntry(self):
+    def testAddOpEqualitySameEntry(self) -> None:
         """
         Objects are equal when the have the same LDAP entry.
         """
@@ -253,7 +294,7 @@ quux: thud
 
         assert first == second
 
-    def testAddOpInequalityDifferentEntry(self):
+    def testAddOpInequalityDifferentEntry(self) -> None:
         """
         Objects are not equal when the have different LDAP entries.
         """
@@ -271,7 +312,7 @@ quux: thud
 
         assert first != second
 
-    def testAddOpInequalityNoEntryObject(self):
+    def testAddOpInequalityNoEntryObject(self) -> None:
         """
         Objects is not equal with random objects.
         """
@@ -283,7 +324,7 @@ quux: thud
 
         assert sut != {"foo": ["same", "attributes"]}
 
-    def testAddOpHashSimilar(self):
+    def testAddOpHashSimilar(self) -> None:
         """
         Objects which are equal have the same hash.
         """
@@ -301,7 +342,7 @@ quux: thud
 
         assert hash(first) == hash(second)
 
-    def testAddOpHashDifferent(self):
+    def testAddOpHashDifferent(self) -> None:
         """
         Objects which are not equal have different hash.
         """
@@ -319,7 +360,7 @@ quux: thud
 
         assert hash(first) != hash(second)
 
-    async def testAddOp_DNExists(self):
+    async def testAddOp_DNExists(self) -> None:
         """
         It fails to perform the `add` operation for an existing entry.
         """
@@ -341,7 +382,7 @@ quux: thud
         with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
             await sut.patch(root)
 
-    def testRepr(self):
+    def testRepr(self) -> None:
         """
         Getting string representation
         """
@@ -364,7 +405,7 @@ class TestDeleteOpLDIF(TestOperationTestCase):
     Unit tests for DeleteOp.
     """
 
-    def testAsLDIF(self):
+    def testAsLDIF(self) -> None:
         """
         It return the LDIF representation of the delete operation.
         """
@@ -376,7 +417,7 @@ changetype: delete
 
 """) == result
 
-    def testDeleteOpEqualitySameDN(self):
+    def testDeleteOpEqualitySameDN(self) -> None:
         """
         Objects are equal when the have the same DN.
         """
@@ -388,7 +429,7 @@ changetype: delete
 
         assert first == second
 
-    def testDeleteOpEqualityEqualDN(self):
+    def testDeleteOpEqualityEqualDN(self) -> None:
         """
         DeleteOp objects are equal if their DNs are equal.
         """
@@ -405,7 +446,7 @@ changetype: delete
         assert first == second
         assert first == third
 
-    def testDeleteOpInequalityDifferentEntry(self):
+    def testDeleteOpInequalityDifferentEntry(self) -> None:
         """
         DeleteOp objects are not equal when the have different LDAP entries.
         """
@@ -417,7 +458,7 @@ changetype: delete
 
         assert first != second
 
-    def testDeleteOpInequalityNoEntryObject(self):
+    def testDeleteOpInequalityNoEntryObject(self) -> None:
         """
         DeleteOp objects is not equal with random objects.
         """
@@ -427,7 +468,7 @@ changetype: delete
 
         assert sut != "ou=Team, dc=example,dc=com"
 
-    def testDeleteOpHashSimilar(self):
+    def testDeleteOpHashSimilar(self) -> None:
         """
         Objects which are equal have the same hash.
         """
@@ -439,7 +480,7 @@ changetype: delete
 
         assert hash(first) == hash(second)
 
-    def testDeleteOpHashDifferent(self):
+    def testDeleteOpHashDifferent(self) -> None:
         """
         Objects which are not equal have different hash.
         """
@@ -451,7 +492,7 @@ changetype: delete
 
         assert hash(first) != hash(second)
 
-    async def testDeleteOp_DNNotFound(self):
+    async def testDeleteOp_DNNotFound(self) -> None:
         """
         If fail to delete when the RDN does not exists.
         """
@@ -461,14 +502,14 @@ changetype: delete
         with pytest.raises(ldaperrors.LDAPNoSuchObject):
             await sut.patch(root)
 
-    def testDeleteOpInvalidDN(self):
+    def testDeleteOpInvalidDN(self) -> None:
         """
         Invalid type of DN raises AssertionError
         """
         with pytest.raises(AssertionError):
             delta.DeleteOp(0)
 
-    def testRepr(self):
+    def testRepr(self) -> None:
         """
         Getting string representation
         """
@@ -482,7 +523,7 @@ class TestModifyOp(TestOperationTestCase):
     Unit tests for ModifyOp.
     """
 
-    def testAsLDIF(self):
+    def testAsLDIF(self) -> None:
         """
         It will return a LDIF representation of the contained operations.
         """
@@ -521,7 +562,7 @@ facsimiletelephonenumber: +1 408 555 9876
 
 """) == result
 
-    def testInequalityDiffertnDN(self):
+    def testInequalityDiffertnDN(self) -> None:
         """
         Modify operations for different DN are not equal.
         """
@@ -535,7 +576,7 @@ facsimiletelephonenumber: +1 408 555 9876
 
         assert first != second
 
-    def testInequalityDifferentModifications(self):
+    def testInequalityDifferentModifications(self) -> None:
         """
         Modify operations with different modifications are not equal
         """
@@ -547,7 +588,7 @@ facsimiletelephonenumber: +1 408 555 9876
 
         assert first != second
 
-    def testInequalityNotModifyOP(self):
+    def testInequalityNotModifyOP(self) -> None:
         """
         Modify operations are not equal with other object types.
         """
@@ -555,7 +596,7 @@ facsimiletelephonenumber: +1 408 555 9876
 
         assert "cn=john,dc=example,dc=com" != sut
 
-    def testInequalityDiffertnOperations(self):
+    def testInequalityDiffertnOperations(self) -> None:
         """
         Modify operations for same DN but different operations are not equal.
         """
@@ -568,7 +609,7 @@ facsimiletelephonenumber: +1 408 555 9876
 
         assert first != second
 
-    def testHashEquality(self):
+    def testHashEquality(self) -> None:
         """
         Modify operations can be hashed and equal objects have the same
         hash.
@@ -585,7 +626,7 @@ facsimiletelephonenumber: +1 408 555 9876
         assert first.asLDIF() == second.asLDIF(), "LDIF equality is a precondition for valid hash values"
         assert hash(first) == hash(second)
 
-    def testHashInequality(self):
+    def testHashInequality(self) -> None:
         """
         Different modify operations have different hash values.
         """
@@ -600,7 +641,7 @@ facsimiletelephonenumber: +1 408 555 9876
         assert first.asLDIF() != second.asLDIF()
         assert hash(first) != hash(second)
 
-    async def testModifyOp_DNNotFound(self):
+    async def testModifyOp_DNNotFound(self) -> None:
         """
         If fail to modify when the RDN does not exists.
         """
@@ -613,7 +654,7 @@ facsimiletelephonenumber: +1 408 555 9876
         with pytest.raises(ldaperrors.LDAPNoSuchObject):
             await sut.patch(root)
 
-    def testRepr(self):
+    def testRepr(self) -> None:
         """
         Getting string representation
         """
@@ -624,22 +665,22 @@ facsimiletelephonenumber: +1 408 555 9876
 
 
 class TestModificationComparison:
-    def testEquality_Add_True(self):
+    def testEquality_Add_True(self) -> None:
         a = delta.Add("k", ["b", "c", "d"])
         b = delta.Add("k", ["b", "c", "d"])
         assert a == b
 
-    def testEquality_AddVsDelete_False(self):
+    def testEquality_AddVsDelete_False(self) -> None:
         a = delta.Add("k", ["b", "c", "d"])
         b = delta.Delete("k", ["b", "c", "d"])
         assert a != b
 
-    def testEquality_AttributeSet_False(self):
+    def testEquality_AttributeSet_False(self) -> None:
         a = delta.Add("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         assert a != b
 
-    def testEquality_List_False(self):
+    def testEquality_List_False(self) -> None:
         a = delta.Add("k", ["b", "c", "d"])
         b = ["b", "c", "d"]
         assert a != b

@@ -1,16 +1,20 @@
 import sys
+from collections.abc import Sequence
 
 import anyio
 
-from anyldap import config, usage
+from anyldap import config, interfaces, usage
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapsyntax
 
 
-def printResults(entry):
+def printResults(entry: object) -> None:
+    """Print an entry however it renders itself."""
     sys.stdout.write(str(entry))
 
 
-async def main(cfg, filter_text, attributes):
+async def main(
+    cfg: interfaces.LDAPBaseConfigLike, filter_text: str, attributes: Sequence[str]
+) -> None:
     try:
         base_dn = cfg.getBaseDN()
     except config.MissingBaseDNError as exc:
@@ -35,12 +39,12 @@ class MyOptions(
 ):
     """Command line search utility."""
 
-    def parseArgs(self, filter, *attributes):
+    def parseArgs(self, filter: str, *attributes: str) -> None:
         self.opts["filter"] = filter
         self.opts["attributes"] = attributes
 
 
-def console_script():
+def console_script() -> None:
     try:
         opts = MyOptions()
         opts.parseOptions()

@@ -1,7 +1,7 @@
 from anyldap._collections import InsensitiveDict
 
 
-def test_insensitive_dict_preserves_keys_and_normalizes_lookup():
+def test_insensitive_dict_preserves_keys_and_normalizes_lookup() -> None:
     values = InsensitiveDict({"Content-Type": "text/plain"})
 
     assert values["content-type"] == "text/plain"
@@ -20,8 +20,8 @@ def test_insensitive_dict_preserves_keys_and_normalizes_lookup():
     assert not values
 
 
-def test_insensitive_dict_supports_non_string_keys():
-    values = InsensitiveDict()
+def test_insensitive_dict_supports_non_string_keys() -> None:
+    values: InsensitiveDict[object, str] = InsensitiveDict()
     values[1] = "one"
 
     assert values[1] == "one"

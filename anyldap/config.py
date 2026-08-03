@@ -1,5 +1,6 @@
 import configparser
 import os.path
+from collections.abc import Iterable
 
 from zope.interface import implementer
 
@@ -10,28 +11,29 @@ from anyldap.protocols.ldap import distinguishedname
 class MissingBaseDNError(Exception):
     """Configuration must specify a base DN"""
 
-    def __str__(self):
+    def __str__(self) -> str:
+        assert self.__doc__ is not None
         return self.__doc__
 
 
 @implementer(interfaces.ILDAPConfig)
 class LDAPConfig:
 
-    baseDN = None
-    identityBaseDN = None
-    identitySearch = None
+    baseDN: distinguishedname.DistinguishedName | None = None
+    identityBaseDN: distinguishedname.DistinguishedName | None = None
+    identitySearch: str | None = None
 
     def __init__(
         self,
-        baseDN=None,
-        serviceLocationOverrides=None,
-        identityBaseDN=None,
-        identitySearch=None,
-    ):
+        baseDN: interfaces.AnyDN | None = None,
+        serviceLocationOverrides: interfaces.ServiceLocationOverrides | None = None,
+        identityBaseDN: interfaces.AnyDN | None = None,
+        identitySearch: str | None = None,
+    ) -> None:
         if baseDN is not None:
             baseDN = distinguishedname.DistinguishedName(baseDN)
             self.baseDN = baseDN
-        self.serviceLocationOverrides = {}
+        self.serviceLocationOverrides: dict[distinguishedname.DistinguishedName, interfaces.ServiceLocation] = {}
         if serviceLocationOverrides is not None:
             for k, v in serviceLocationOverrides.items():
                 dn = distinguishedname.DistinguishedName(k)
@@ -42,7 +44,7 @@ class LDAPConfig:
         if identitySearch is not None:
             self.identitySearch = identitySearch
 
-    def getBaseDN(self):
+    def getBaseDN(self) -> distinguishedname.DistinguishedName | str:
         if self.baseDN is not None:
             return self.baseDN
 
@@ -52,25 +54,25 @@ class LDAPConfig:
         except (configparser.NoOptionError, configparser.NoSectionError):
             raise MissingBaseDNError()
 
-    def getServiceLocationOverrides(self):
+    def getServiceLocationOverrides(self) -> dict[distinguishedname.DistinguishedName, interfaces.ServiceLocation]:
         r = self._loadServiceLocationOverrides()
         r.update(self.serviceLocationOverrides)
         return r
 
-    def _loadServiceLocationOverrides(self):
-        serviceLocationOverride = {}
+    def _loadServiceLocationOverrides(self) -> dict[distinguishedname.DistinguishedName, interfaces.ServiceLocation]:
+        serviceLocationOverride: dict[distinguishedname.DistinguishedName, interfaces.ServiceLocation] = {}
         cfg = loadConfig()
         for section in cfg.sections():
             if section.lower().startswith("service-location "):
                 base = section[len("service-location ") :].strip()
 
-                host = None
+                host: str | None = None
                 if cfg.has_option(section, "host"):
                     host = cfg.get(section, "host")
                     if not host:
                         host = None
 
-                port = None
+                port: str | None = None
                 if cfg.has_option(section, "port"):
                     port = cfg.get(section, "port")
                     if not port:
@@ -80,19 +82,29 @@ class LDAPConfig:
                 serviceLocationOverride[dn] = (host, port)
         return serviceLocationOverride
 
-    def copy(self, **kw):
-        if "baseDN" not in kw:
-            kw["baseDN"] = self.baseDN
-        if "serviceLocationOverrides" not in kw:
-            kw["serviceLocationOverrides"] = self.serviceLocationOverrides
-        if "identityBaseDN" not in kw:
-            kw["identityBaseDN"] = self.identityBaseDN
-        if "identitySearch" not in kw:
-            kw["identitySearch"] = self.identitySearch
-        r = self.__class__(**kw)
-        return r
+    def copy(
+        self,
+        baseDN: interfaces.AnyDN | None = None,
+        serviceLocationOverrides: interfaces.ServiceLocationOverrides | None = None,
+        identityBaseDN: interfaces.AnyDN | None = None,
+        identitySearch: str | None = None,
+    ) -> "LDAPConfig":
+        return self.__class__(
+            baseDN=self.baseDN if baseDN is None else baseDN,
+            serviceLocationOverrides=(
+                self.serviceLocationOverrides
+                if serviceLocationOverrides is None
+                else serviceLocationOverrides
+            ),
+            identityBaseDN=(
+                self.identityBaseDN if identityBaseDN is None else identityBaseDN
+            ),
+            identitySearch=(
+                self.identitySearch if identitySearch is None else identitySearch
+            ),
+        )
 
-    def getIdentityBaseDN(self):
+    def getIdentityBaseDN(self) -> distinguishedname.DistinguishedName | str:
         if self.identityBaseDN is not None:
             return self.identityBaseDN
 
@@ -102,7 +114,7 @@ class LDAPConfig:
         except (configparser.NoOptionError, configparser.NoSectionError):
             return self.getBaseDN()
 
-    def getIdentitySearch(self, name):
+    def getIdentitySearch(self, name: str) -> str:
         data = {
             "name": name,
         }
@@ -127,10 +139,12 @@ CONFIG_FILES = [
     os.path.expanduser("~/.anyldap/global.cfg"),
 ]
 
-__config = None
+__config: configparser.ConfigParser | None = None
 
 
-def loadConfig(configFiles=None, reload=False):
+def loadConfig(
+    configFiles: Iterable[str] | None = None, reload: bool = False
+) -> configparser.ConfigParser:
     """
     Load configuration file.
     """
@@ -150,7 +164,7 @@ def loadConfig(configFiles=None, reload=False):
     return __config
 
 
-def useLMhash():
+def useLMhash() -> bool:
     """
     Read configuration file if necessary and return whether
     to use LanMan hashes or not.

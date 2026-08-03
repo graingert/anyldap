@@ -1,4 +1,5 @@
 import logging
+from typing import NoReturn
 
 logger = logging.getLogger("anyldap")
 
@@ -14,18 +15,18 @@ class ConnectionLost(Exception):
 class Protocol:
     connectionDone = ConnectionDone()
 
-    def connectionMade(self):
+    def connectionMade(self) -> None:
         pass
 
-    def connectionLost(self, reason=connectionDone):
+    def connectionLost(self, reason: BaseException = connectionDone) -> None:
         pass
 
-    def dataReceived(self, data):
+    def dataReceived(self, data: bytes) -> None:
         pass
 
 
 class Failure(Exception):
-    def __init__(self, value):
+    def __init__(self, value: BaseException) -> None:
         try:
             message = str(value)
         except Exception:
@@ -33,25 +34,25 @@ class Failure(Exception):
         super().__init__(message)
         self.value = value
 
-    def trap(self, *expected):
+    def trap(self, *expected: type[BaseException]) -> type[BaseException]:
         if isinstance(self.value, expected):
             return type(self.value)
         raise self.value
 
-    def check(self, *expected):
+    def check(self, *expected: type[BaseException]) -> type[BaseException] | None:
         for item in expected:
             if isinstance(self.value, item):
                 return item
         return None
 
-    def getErrorMessage(self):
+    def getErrorMessage(self) -> str:
         return str(self.value)
 
-    def raiseException(self):
+    def raiseException(self) -> NoReturn:
         raise self.value
 
 
-def unwrap_failure(reason):
+def unwrap_failure(reason: BaseException) -> BaseException:
     """Return the exception ``reason`` describes.
 
     Connection-lost reasons reach us either as a bare exception or wrapped in

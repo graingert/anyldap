@@ -1,21 +1,39 @@
 """Utilities for writing unit tests and debugging."""
 
-import anyio
-from anyio.abc import SocketAttribute
+from collections.abc import Callable, Iterable
+from types import FrameType
+from typing import TYPE_CHECKING, NoReturn
 
-from anyldap._encoder import to_bytes
+import anyio
+from anyio.abc import ByteStream, SocketAttribute, SocketListener, TaskGroup
+
+from anyldap._encoder import SupportsToWire, to_bytes
 from anyldap.runtime import Failure
 from anyldap.test import util
 
+if TYPE_CHECKING:
+    from anyldap.protocols.ldap import ldapserver
 
-async def exchange_async(protocol, wire_data):
-    chunks = []
+# What a driver is sent: an LDAP message, or the marker standing in for the
+# unbind response it fakes.
+Sent = SupportsToWire | str
+
+
+async def exchange_async(
+    protocol: "ldapserver.BaseLDAPServer", wire_data: bytes
+) -> bytes:
+    chunks: list[bytes] = []
     from anyldap.protocols.ldap import ldapserver
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    address = listener.extra(SocketAttribute.local_address)
+    assert isinstance(address, tuple)
+    host, port = address
+    assert isinstance(port, int)
     client_stream = await anyio.connect_tcp(host, port)
-    server_stream = await listener.listeners[0].accept()
+    inner = listener.listeners[0]
+    assert isinstance(inner, SocketListener)
+    server_stream = await inner.accept()
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(ldapserver.serve_stream, server_stream, lambda: protocol)
         await client_stream.send(wire_data)
@@ -31,11 +49,11 @@ async def exchange_async(protocol, wire_data):
     return b"".join(chunks)
 
 
-def mustRaise(dummy):
+def mustRaise(dummy: object) -> NoReturn:
     raise util.FailTest("Should have raised an exception.")
 
 
-def _print_func_name(frame, event, arg):
+def _print_func_name(frame: FrameType, event: str, arg: object) -> None:
     print(
         "|%s: %s:%d:%s"
         % (
@@ -47,7 +65,7 @@ def _print_func_name(frame, event, arg):
     )
 
 
-def calltrace():
+def calltrace() -> None:
     """Print out all function calls. For debug use only."""
 
     import sys
@@ -72,12 +90,13 @@ class LDAPClientTestDriver:
 
     fakeUnbindResponse = "fake-unbind-by-LDAPClientTestDriver"
 
-    def __init__(self, *responses):
-        self.sent = []
+    def __init__(self, *responses: Iterable[object] | Failure) -> None:
+        # A response is whatever the test wrote; the driver only hands it on.
+        self.sent: list[Sent] = []
         self.responses = list(responses)
-        self.connected = None
+        self.connected: int | None = None
 
-    async def send(self, op):
+    async def send(self, op: Sent) -> object:
         self.sent.append(op)
         resps = self._response()
         assert len(resps) == 1, "got %d responses for a .send()" % len(resps)
@@ -89,8 +108,14 @@ class LDAPClientTestDriver:
     send_async = send
 
     async def send_multiResponse_(
-        self, op, controls, return_controls, handler, *args, **kwargs
-    ):
+        self,
+        op: Sent,
+        controls: object,
+        return_controls: bool,
+        handler: Callable[..., object] | None,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
         self.sent.append(op)
         responses = self._response()
         response_controls = None
@@ -98,6 +123,7 @@ class LDAPClientTestDriver:
             r = responses.pop(0)
             if isinstance(r, Failure):
                 r.raiseException()
+            assert handler is not None
             if return_controls:
                 ret = handler(r, response_controls, *args, **kwargs)
             else:
@@ -115,17 +141,26 @@ class LDAPClientTestDriver:
                 )
                 assert ret, msg
 
-    async def send_multiResponse(self, op, handler, *args, **kwargs):
+    async def send_multiResponse(
+        self, op: Sent, handler: Callable[..., object], *args: object, **kwargs: object
+    ) -> None:
         await self.send_multiResponse_(op, None, False, handler, *args, **kwargs)
 
     send_multiResponse_async = send_multiResponse
 
-    async def send_multiResponse_ex(self, op, controls, handler, *args, **kwargs):
+    async def send_multiResponse_ex(
+        self,
+        op: Sent,
+        controls: object = None,
+        handler: Callable[..., object] | None = None,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
         await self.send_multiResponse_(op, controls, True, handler, *args, **kwargs)
 
     send_multiResponse_ex_async = send_multiResponse_ex
 
-    def send_noResponse(self, op):
+    def send_noResponse(self, op: Sent) -> None:
         if len(self.responses) == 0:
             msg = "Ran out of responses"
             assert op == self.fakeUnbindResponse, msg
@@ -133,32 +168,33 @@ class LDAPClientTestDriver:
             self.responses.pop(0)
         self.sent.append(op)
 
-    async def send_noResponse_async(self, op):
+    async def send_noResponse_async(self, op: Sent) -> None:
         self.send_noResponse(op)
 
-    def _response(self):
+    def _response(self) -> list[object]:
         assert self.responses, "Ran out of responses"
         responses = self.responses.pop(0)
-        return responses
+        assert not isinstance(responses, Failure)
+        return list(responses)
 
-    def assertNothingSent(self):
+    def assertNothingSent(self) -> None:
         # just a bit more explicit
         self.assertSent()
 
-    def assertSent(self, *shouldBeSent):
-        shouldBeSent = list(shouldBeSent)
-        msg = f"{self.__class__.__name__} expected to send {shouldBeSent!r} but sent {self.sent!r}"
-        assert self.sent == shouldBeSent, msg
+    def assertSent(self, *shouldBeSent: Sent) -> None:
+        expected = list(shouldBeSent)
+        msg = f"{self.__class__.__name__} expected to send {expected!r} but sent {self.sent!r}"
+        assert self.sent == expected, msg
         sentStr = b"".join([to_bytes(x) for x in self.sent])
-        shouldBeSentStr = b"".join([to_bytes(x) for x in shouldBeSent])
+        shouldBeSentStr = b"".join([to_bytes(x) for x in expected])
         msg = f"{self.__class__.__name__} expected to send data {shouldBeSentStr!r} but sent {sentStr!r}"
         assert sentStr == shouldBeSentStr, msg
 
-    def connectionMade(self):
+    def connectionMade(self) -> None:
         """TCP connection has opened"""
         self.connected = 1
 
-    def connectionLost(self, reason=None):
+    def connectionLost(self, reason: BaseException | None = None) -> None:
         """
         Called when TCP connection has been lost
         """
@@ -169,10 +205,14 @@ class LDAPClientTestDriver:
         assert not self.responses, msg
         self.connected = 0
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         self.connected = 0
 
-    def unbind(self):
+    async def attach_stream(self, stream: ByteStream, task_group: TaskGroup) -> NoReturn:
+        """A driver answers from its script, so nothing ever attaches it."""
+        raise AssertionError(f"{self.__class__.__name__} has no stream to attach")
+
+    def unbind(self) -> None:
         assert self.connected
         r = self.fakeUnbindResponse
         self.send_noResponse(r)

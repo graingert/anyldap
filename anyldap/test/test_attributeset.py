@@ -13,7 +13,7 @@ class TestLDAPAttributeSet:
     Unit tests for LDAPAttributeSet.
     """
 
-    def testEquality_True_Set(self):
+    def testEquality_True_Set(self) -> None:
         """
         Attributes are equal when the have the same key and value.
         """
@@ -21,7 +21,7 @@ class TestLDAPAttributeSet:
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         assert a == b
 
-    def testEquality_True_Set_Ordering(self):
+    def testEquality_True_Set_Ordering(self) -> None:
         """
         The order of the element in the value doesn't matter for
         equality.
@@ -30,7 +30,7 @@ class TestLDAPAttributeSet:
         b = attributeset.LDAPAttributeSet("k", ["b", "d", "c"])
         assert a == b
 
-    def testEquality_True_List(self):
+    def testEquality_True_List(self) -> None:
         """
         It can be compared with a list and in this case the key is
         ignored.
@@ -39,7 +39,7 @@ class TestLDAPAttributeSet:
         b = ["b", "c", "d"]
         assert a == b
 
-    def testEquality_True_List_Ordering(self):
+    def testEquality_True_List_Ordering(self) -> None:
         """
         For list comparison the order of the element don't matter.
         """
@@ -47,7 +47,16 @@ class TestLDAPAttributeSet:
         b = ["b", "d", "c"]
         assert a == b
 
-    def testEquality_False_Value(self):
+    def testEquality_False_NotIterable(self) -> None:
+        """
+        Comparing against something that is not a set of values at all
+        answers no, rather than failing to iterate it.
+        """
+        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
+        assert not a == 3
+        assert a != 3
+
+    def testEquality_False_Value(self) -> None:
         """
         LDAPAttributeSet objects are not equal when they have
         different values.
@@ -56,7 +65,7 @@ class TestLDAPAttributeSet:
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "e"])
         assert a != b
 
-    def testEquality_False_Key(self):
+    def testEquality_False_Key(self) -> None:
         """
         Equality fails if attributes have different keys.
         """
@@ -64,7 +73,7 @@ class TestLDAPAttributeSet:
         b = attributeset.LDAPAttributeSet("l", ["b", "c", "d"])
         assert a != b
 
-    def testDifference(self):
+    def testDifference(self) -> None:
         """
         Different operation will ignore the attribute's key and will
         perform the operation onlyb based on the attribute's value.
@@ -76,7 +85,7 @@ class TestLDAPAttributeSet:
 
         assert {"d"} == result
 
-    def testAddNewValue(self):
+    def testAddNewValue(self) -> None:
         """
         Adding new value
         """
@@ -85,11 +94,13 @@ class TestLDAPAttributeSet:
 
         assert a == {"b", "c", "d", "e"}
 
-    def testAddExistingValue(self):
+    def testAddExistingValue(self) -> None:
         """
         Adding existing value as a byte or unicode string
         """
-        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
+        a: attributeset.LDAPAttributeSet[str | bytes] = attributeset.LDAPAttributeSet(
+            "k", ["b", "c", "d"]
+        )
 
         a.add(b"b")
         assert a == {"b", "c", "d"}
@@ -97,17 +108,19 @@ class TestLDAPAttributeSet:
         a.add("b")
         assert a == {"b", "c", "d"}
 
-    def testRemoveExistingValue(self):
+    def testRemoveExistingValue(self) -> None:
         """
         Removing existing value as a byte or unicode string
         """
-        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
+        a: attributeset.LDAPAttributeSet[str | bytes] = attributeset.LDAPAttributeSet(
+            "k", ["b", "c", "d"]
+        )
         a.remove(b"b")
         a.remove("c")
 
         assert a == {"d"}
 
-    def testRemoveNonexistingValue(self):
+    def testRemoveNonexistingValue(self) -> None:
         """
         Removing non-existing value
         """
@@ -116,33 +129,35 @@ class TestLDAPAttributeSet:
         with pytest.raises(KeyError):
             a.remove("e")
 
-    def testUnion(self):
+    def testUnion(self) -> None:
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "e"])
         assert a | b == {"b", "c", "d", "e"}
 
-    def testIntersection(self):
+    def testIntersection(self) -> None:
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "e"])
         assert a & b == {"b", "c"}
 
-    def testSymmetricDifference(self):
+    def testSymmetricDifference(self) -> None:
         a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
         b = attributeset.LDAPAttributeSet("k", ["b", "c", "e"])
         assert a ^ b == {"d", "e"}
 
-    def testCopy(self):
+    def testCopy(self) -> None:
         class Magic:
-            def __lt__(self, other):
+            def __lt__(self, other: object) -> bool:
                 return False
 
-            def __gt__(self, other):
+            def __gt__(self, other: object) -> bool:
                 return True
 
         m1 = Magic()
         assert not (m1 < object())
         assert m1 > object()
-        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d", m1])
+        # Not an attribute value: the point is that copying keeps whatever
+        # objects the set was given, by identity.
+        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d", m1])  # type: ignore[type-var]
         b = a.__copy__()
         assert a == b
         assert a is not b
@@ -156,20 +171,20 @@ class TestLDAPAttributeSet:
         assert a == {"b", "c", "d", m1, "x"}
         assert b == {"b", "c", "d", m1}
 
-    def testDeepCopy(self):
+    def testDeepCopy(self) -> None:
         @total_ordering
         class Magic:
-            def __eq__(self, other):
+            def __eq__(self, other: object) -> bool:
                 return isinstance(other, self.__class__)
 
-            def __hash__(self):
+            def __hash__(self) -> int:
                 return 42
 
-            def __lt__(self, other):
+            def __lt__(self, other: object) -> bool:
                 return False
 
         m1 = Magic()
-        a = attributeset.LDAPAttributeSet("k", ["a", m1])
+        a = attributeset.LDAPAttributeSet("k", ["a", m1])  # type: ignore[type-var]
         b = a.__deepcopy__({})
         assert a == b
         assert a is not b

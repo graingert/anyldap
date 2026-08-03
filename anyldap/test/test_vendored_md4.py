@@ -40,14 +40,14 @@ class TestMD4:
         ),
     ]
 
-    def test_attrs(self):
+    def test_attrs(self) -> None:
         """informational attributes"""
         h = md4()
         assert h.name == "md4"
         assert h.digest_size == 16
         assert h.block_size == 64
 
-    def test_md4_update(self):
+    def test_md4_update(self) -> None:
         """update() method"""
         h = md4(b"")
         assert h.hexdigest() == "31d6cfe0d16ae931b73c59d7e0c089c0"
@@ -61,20 +61,20 @@ class TestMD4:
         # reject unicode, hash should return digest of b''
         h = md4()
         with pytest.raises(TypeError):
-            h.update("a")
+            h.update("a")  # type: ignore[arg-type]
         assert h.hexdigest() == "31d6cfe0d16ae931b73c59d7e0c089c0"
 
-    def test_md4_hexdigest(self):
+    def test_md4_hexdigest(self) -> None:
         """hexdigest() method"""
         for input, hex in self.vectors:
             assert md4(input).hexdigest() == hex
 
-    def test_md4_digest(self):
+    def test_md4_digest(self) -> None:
         """digest() method"""
         for input, hex in self.vectors:
             assert hexlify(md4(input).digest()).decode("ascii") == hex
 
-    def test_md4_copy(self):
+    def test_md4_copy(self) -> None:
         """copy() method"""
         h = md4(b"abc")
 

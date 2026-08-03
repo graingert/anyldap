@@ -1,3 +1,5 @@
+from collections.abc import Callable, Sequence
+
 import anyio
 import pytest
 
@@ -29,7 +31,7 @@ from anyldap.test._anyio_helpers import AsyncLDAPClientDriver
 pytestmark = pytest.mark.anyio
 
 
-def _entries(*dns):
+def _entries(*dns: str) -> bytes:
     """Wire bytes for the search result entries one upstream server returns."""
     attributes = {"cn=bar,dc=example,dc=com": ("b", ["c"]), "cn=bar2,dc=example,dc=com": ("b", ["c"])}
     return b"".join(
@@ -40,7 +42,7 @@ def _entries(*dns):
     )
 
 
-async def test_waiting_request_runs_when_real_client_connects():
+async def test_waiting_request_runs_when_real_client_connects() -> None:
     server = MergedLDAPServer([config.LDAPConfig()], [False])
     client = AsyncLDAPClientDriver([])
     async with anyio.create_task_group() as task_group:
@@ -48,24 +50,26 @@ async def test_waiting_request_runs_when_real_client_connects():
         assert await server._whenConnected(lambda value: value, "connected") == "connected"
 
 
-async def _connect_later(server, client):
+async def _connect_later(
+    server: MergedLDAPServer, client: ldapclient.LDAPClientLike
+) -> None:
     await anyio.lowlevel.checkpoint()
     server._cbConnectionMade(client)
 
 
-async def test_async_client_queue_uses_async_client_interface():
+async def test_async_client_queue_uses_async_client_interface() -> None:
     client = testutil.LDAPClientTestDriver([LDAPBindResponse(resultCode=0)], [])
     client.connectionMade()
     server = MergedLDAPServer([], [])
     server.clients = [client]
-    replies = []
+    replies: list[object] = []
     await server._clientQueue_async(LDAPBindRequest(), None, replies.append)
     await server._clientQueue_async(LDAPUnbindRequest(), None, replies.append)
     assert replies == [LDAPBindResponse(resultCode=0)]
     client.assertSent(LDAPBindRequest(), LDAPUnbindRequest())
 
 
-def test_connection_lost_skips_an_already_disconnected_client():
+def test_connection_lost_skips_an_already_disconnected_client() -> None:
     client = ldapclient.LDAPClient()
     server = MergedLDAPServer([], [])
     server.clients = [client]
@@ -76,7 +80,7 @@ def test_connection_lost_skips_an_already_disconnected_client():
     assert server.clients == []
 
 
-def test_connection_lost_without_task_group_clears_connected_client():
+def test_connection_lost_without_task_group_clears_connected_client() -> None:
     client = testutil.LDAPClientTestDriver()
     client.connectionMade()
     server = MergedLDAPServer([], [])
@@ -85,7 +89,7 @@ def test_connection_lost_without_task_group_clears_connected_client():
     assert server.clients == []
 
 
-async def test_connection_lost_closes_connected_client():
+async def test_connection_lost_closes_connected_client() -> None:
     client = AsyncLDAPClientDriver([])
     server = MergedLDAPServer([], [])
     server.clients = [client]
@@ -97,7 +101,9 @@ async def test_connection_lost_closes_connected_client():
 
 
 class TestMergedLDAPServerTest:
-    def createMergedServer(self, *responses):
+    def createMergedServer(
+        self, *responses: Sequence[Sequence[object]]
+    ) -> MergedLDAPServer:
         """
         Create an MergedLDAP server for testing. Initialize with
         len(responses) clients.
@@ -106,12 +112,14 @@ class TestMergedLDAPServerTest:
         :return the server, ready to connect
         """
 
-        def createClient(factory):
-            proto = factory()
+        def createClient(
+            factory: Callable[[], object]
+        ) -> testutil.LDAPClientTestDriver:
+            proto = clients.pop()
             proto.connectionMade()
             return proto
 
-        clients = []
+        clients: list[testutil.LDAPClientTestDriver] = []
         for r in responses:
             clients.append(testutil.LDAPClientTestDriver(*r))
 
@@ -121,12 +129,12 @@ class TestMergedLDAPServerTest:
         server.protocol = lambda: clients.pop()
         return server
 
-    async def test_bind_both_success(self):
+    async def test_bind_both_success(self) -> None:
         server = self.createMergedServer(
             [[LDAPBindResponse(resultCode=0)]], [[LDAPBindResponse(resultCode=0)]]
         )
 
-        async def test_f(server):
+        async def test_f(server: MergedLDAPServer) -> None:
             response = await testutil.exchange_async(
                 server, LDAPMessage(LDAPBindRequest(), id=4).toWire()
             )
@@ -135,7 +143,7 @@ class TestMergedLDAPServerTest:
 
         await test_f(server)
 
-    async def test_bind_one_invalid(self):
+    async def test_bind_one_invalid(self) -> None:
         server = self.createMergedServer(
             [
                 [
@@ -147,7 +155,7 @@ class TestMergedLDAPServerTest:
             [[LDAPBindResponse(resultCode=0)]],
         )
 
-        async def test_f(server):
+        async def test_f(server: MergedLDAPServer) -> None:
             response = await testutil.exchange_async(
                 server, LDAPMessage(LDAPBindRequest(), id=4).toWire()
             )
@@ -155,7 +163,7 @@ class TestMergedLDAPServerTest:
 
         await test_f(server)
 
-    async def test_bind_both_invalid(self):
+    async def test_bind_both_invalid(self) -> None:
         server = self.createMergedServer(
             [
                 [
@@ -173,7 +181,7 @@ class TestMergedLDAPServerTest:
             ],
         )
 
-        async def test_f(server):
+        async def test_f(server: MergedLDAPServer) -> None:
             response = await testutil.exchange_async(
                 server, LDAPMessage(LDAPBindRequest(), id=4).toWire()
             )
@@ -186,7 +194,7 @@ class TestMergedLDAPServerTest:
 
         await test_f(server)
 
-    async def test_search_merged(self):
+    async def test_search_merged(self) -> None:
         server = self.createMergedServer(
             [
                 [
@@ -204,7 +212,7 @@ class TestMergedLDAPServerTest:
             ],
         )
 
-        async def test_f(server):
+        async def test_f(server: MergedLDAPServer) -> None:
             response = await testutil.exchange_async(
                 server, LDAPMessage(LDAPSearchRequest(), id=3).toWire()
             )
@@ -220,7 +228,7 @@ class TestMergedLDAPServerTest:
 
         await test_f(server)
 
-    async def test_search_one_invalid(self):
+    async def test_search_one_invalid(self) -> None:
         server = self.createMergedServer(
             [
                 [
@@ -238,7 +246,7 @@ class TestMergedLDAPServerTest:
             ],
         )
 
-        async def test_f(server):
+        async def test_f(server: MergedLDAPServer) -> None:
             response = await testutil.exchange_async(
                 server, LDAPMessage(LDAPSearchRequest(), id=3).toWire()
             )
@@ -256,10 +264,10 @@ class TestMergedLDAPServerTest:
 
         await test_f(server)
 
-    async def test_unbind_clientUnbinds(self):
+    async def test_unbind_clientUnbinds(self) -> None:
         server = self.createMergedServer([[]], [[]])
 
-        async def test_f(server):
+        async def test_f(server: MergedLDAPServer) -> None:
             response = await testutil.exchange_async(
                 server, LDAPMessage(LDAPUnbindRequest(), id=3).toWire()
             )
@@ -268,23 +276,23 @@ class TestMergedLDAPServerTest:
 
         await test_f(server)
 
-    async def test_unbind_clientEOF(self):
+    async def test_unbind_clientEOF(self) -> None:
         """
         No connection is done when client has nothing to say.
         """
         server = self.createMergedServer([[]], [[]])
 
-        async def test_f(server):
+        async def test_f(server: MergedLDAPServer) -> None:
             server.connectionLost(ConnectionDone())
 
             assert [] == server.clients, "A connection should not be done."
 
         await test_f(server)
 
-    async def test_unwilling_to_perform(self):
+    async def test_unwilling_to_perform(self) -> None:
         server = self.createMergedServer([[]], [[]])
 
-        async def test_f(server):
+        async def test_f(server: MergedLDAPServer) -> None:
             requests = (
                 LDAPMessage(LDAPAddRequest(entry="", attributes=[]), id=3).toWire()
                 + LDAPMessage(LDAPDelRequest(entry=""), id=4).toWire()

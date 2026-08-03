@@ -1,7 +1,12 @@
+from collections.abc import Sequence
+
 from anyldap._encoder import WireStrAlias, to_bytes
 
+# Schema descriptions are parsed and rendered as the bytes they arrive as.
+Wire = str | bytes
 
-def extractWord(text):
+
+def extractWord(text: bytes) -> tuple[bytes, bytes]:
     if not text:
         return b"", b""
     l = text.split(None, 1)
@@ -13,14 +18,14 @@ def extractWord(text):
     return word, text
 
 
-def peekWord(text):
+def peekWord(text: bytes) -> bytes | None:
     if not text:
         return None
     return text.split(None, 1)[0]
 
 
 class ASN1ParserThingie:
-    def _to_list(self, text):
+    def _to_list(self, text: bytes) -> tuple[bytes, ...]:
         """Split text into $-separated list."""
         r = []
         for x in text.split(b"$"):
@@ -29,7 +34,7 @@ class ASN1ParserThingie:
             r.append(x)
         return tuple(r)
 
-    def _strings_to_list(self, text):
+    def _strings_to_list(self, text: bytes) -> tuple[bytes, ...]:
         """Split ''-quoted strings into list."""
         r = []
         while text:
@@ -45,19 +50,19 @@ class ASN1ParserThingie:
             text = text[end + 1 :]
         return tuple(r)
 
-    def _str_list(self, l):
+    def _str_list(self, l: Sequence[bytes]) -> bytes:
         s = b" ".join([self._str(x) for x in l])
         if len(l) > 1:
             s = b"( %s )" % s
         return s
 
-    def _list(self, l):
+    def _list(self, l: Sequence[bytes]) -> bytes:
         s = b" $ ".join([x for x in l])
         if len(l) > 1:
             s = b"( %s )" % s
         return s
 
-    def _str(self, s):
+    def _str(self, s: bytes) -> bytes:
         return b"'%s'" % s
 
 
@@ -111,20 +116,20 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
                 whsp ")"
     """
 
-    def __init__(self, text):
-        self.oid = None
-        self.name = None
-        self.desc = None
-        self.obsolete = 0
-        self.sup = []
-        self.type = None
-        self.must = []
-        self.may = []
+    def __init__(self, text: Wire | None) -> None:
+        self.oid: bytes | None = None
+        self.name: tuple[bytes, ...] | None = None
+        self.desc: bytes | None = None
+        self.obsolete: int = 0
+        self.sup: Sequence[bytes] = []
+        self.type: bytes | None = None
+        self.must: list[bytes] = []
+        self.may: list[bytes] = []
 
         if text is not None:
             self._parse(to_bytes(text))
 
-    def _parse(self, text):
+    def _parse(self, text: bytes) -> None:
         assert text[:1] == b"(", "Text %s must be in parentheses." % repr(text)
         assert text[-1:] == b")", "Text %s must be in parentheses." % repr(text)
         text = text[1:-1]
@@ -248,7 +253,7 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
         assert self.name is None or self.name
         assert self.type in (b"ABSTRACT", b"STRUCTURAL", b"AUXILIARY")
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         nice = {}
         for k, v in self.__dict__.items():
             nice[k] = repr(v)
@@ -262,7 +267,7 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
             % nice
         )
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         r = []
         if self.name is not None:
             r.append(b"NAME %s" % self._str_list(self.name))
@@ -279,29 +284,33 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
             r.append(b"MAY %s" % self._list(self.may))
         return b"( %s " % self.oid + b"\n        ".join(r) + b" )"
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         if not isinstance(other, ObjectClassDescription):
             raise NotImplementedError()
         if self.name is not None and other.name is not None:
             return self.name[0].upper() < other.name[0].upper()
         else:
+            # A description that has been parsed always has an oid; _parse
+            # asserts it before returning.
+            assert self.oid is not None and other.oid is not None
             return self.oid < other.oid
 
-    def __gt__(self, other):
+    def __gt__(self, other: object) -> bool:
         if not isinstance(other, ObjectClassDescription):
             raise NotImplementedError()
         if self.name is not None and other.name is not None:
             return self.name[0].upper() > other.name[0].upper()
         else:
+            assert self.oid is not None and other.oid is not None
             return self.oid > other.oid
 
-    def __le__(self, other):
+    def __le__(self, other: object) -> bool:
         return self == other or self < other
 
-    def __ge__(self, other):
+    def __ge__(self, other: object) -> bool:
         return self == other or self > other
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, ObjectClassDescription):
             raise NotImplementedError()
         return (
@@ -315,7 +324,7 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
             and self.may == other.may
         )
 
-    def __ne__(self, other):
+    def __ne__(self, other: object) -> bool:
         return not (self == other)
 
 
@@ -350,29 +359,30 @@ class AttributeTypeDescription(ASN1ParserThingie, WireStrAlias):
         len     = numericstring
     """
 
-    def __init__(self, text):
-        self.oid = None
-        self.name = None
-        self.desc = None
-        self.obsolete = 0
-        self.sup = None
-        self.equality = None
-        self.ordering = None
-        self.substr = None
-        self.syntax = None
-        self.single_value = None
-        self.collective = None
-        self.no_user_modification = None
-        self.usage = None
+    def __init__(self, text: Wire | None) -> None:
+        self.oid: bytes | None = None
+        self.name: tuple[bytes, ...] | None = None
+        self.desc: bytes | None = None
+        self.obsolete: int = 0
+        self.sup: bytes | None = None
+        self.equality: bytes | None = None
+        self.ordering: bytes | None = None
+        self.substr: bytes | None = None
+        self.syntax: bytes | None = None
+        self.single_value: int | None = None
+        self.collective: int | None = None
+        self.no_user_modification: int | None = None
+        self.usage: bytes | None = None
 
         # storage for experimental terms ("X-SOMETHING"), so we can
         # output them when stringifying.
-        self.x_attrs = []
+        # An experimental term's value is a string, or a list of them.
+        self.x_attrs: list[tuple[bytes, bytes | tuple[bytes, ...]]] = []
 
         if text is not None:
             self._parse(to_bytes(text))
 
-    def _parse(self, text):
+    def _parse(self, text: bytes) -> None:
         assert text[:1] == b"(", "Text %s must be in parentheses." % repr(text)
         assert text[-1:] == b")", "Text %s must be in parentheses." % repr(text)
         text = text[1:-1]
@@ -489,6 +499,7 @@ class AttributeTypeDescription(ASN1ParserThingie, WireStrAlias):
                 break
 
             if word.startswith(b"X-"):
+                value: bytes | tuple[bytes, ...]
                 text = text[len(word + b" ") :]
                 text = text.lstrip()
                 if text[:1] == b"'":
@@ -531,7 +542,7 @@ class AttributeTypeDescription(ASN1ParserThingie, WireStrAlias):
             b"dSAOperation",
         )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         nice = {}
         for k, v in self.__dict__.items():
             nice[k] = repr(v)
@@ -550,7 +561,7 @@ class AttributeTypeDescription(ASN1ParserThingie, WireStrAlias):
             % nice
         )
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         r = []
         if self.name is not None:
             r.append(b"NAME %s" % self._str_list(self.name))
@@ -600,16 +611,16 @@ class SyntaxDescription(ASN1ParserThingie, WireStrAlias):
                 whsp ")"
     """
 
-    def __init__(self, text):
-        self.oid = None
-        self.desc = None
-        self.binary_transfer_required = False
-        self.human_readable = True
+    def __init__(self, text: Wire | None) -> None:
+        self.oid: bytes | None = None
+        self.desc: bytes | None = None
+        self.binary_transfer_required: bool | None = False
+        self.human_readable: bool | None = True
 
         if text is not None:
             self._parse(to_bytes(text))
 
-    def _parse(self, text):
+    def _parse(self, text: bytes) -> None:
 
         assert text[:1] == b"("
         assert text[-1:] == b")"
@@ -652,7 +663,8 @@ class SyntaxDescription(ASN1ParserThingie, WireStrAlias):
         for c in self.oid:
             assert c in b"0123456789."
 
-    def toWire(self):
+    def toWire(self) -> bytes:
+        assert self.oid is not None
         r = [self.oid]
 
         if self.desc is not None:
@@ -664,7 +676,7 @@ class SyntaxDescription(ASN1ParserThingie, WireStrAlias):
 
         return b"( " + b" ".join(r) + b" )"
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         nice = {}
         for k, v in self.__dict__.items():
             nice[k] = repr(v)
@@ -687,17 +699,17 @@ class MatchingRuleDescription(ASN1ParserThingie, WireStrAlias):
                 whsp ")"
     """
 
-    def __init__(self, text):
-        self.oid = None
-        self.name = None
-        self.desc = None
-        self.obsolete = None
-        self.syntax = None
+    def __init__(self, text: Wire | None) -> None:
+        self.oid: bytes | None = None
+        self.name: tuple[bytes, ...] | None = None
+        self.desc: bytes | None = None
+        self.obsolete: int | None = None
+        self.syntax: bytes | None = None
 
         if text is not None:
             self._parse(to_bytes(text))
 
-    def _parse(self, text):
+    def _parse(self, text: bytes) -> None:
 
         assert text[:1] == b"("
         assert text[-1:] == b")"
@@ -761,7 +773,8 @@ class MatchingRuleDescription(ASN1ParserThingie, WireStrAlias):
             assert c in b"0123456789."
         assert self.syntax
 
-    def toWire(self):
+    def toWire(self) -> bytes:
+        assert self.oid is not None
         r = [self.oid]
 
         if self.name is not None:
@@ -774,7 +787,7 @@ class MatchingRuleDescription(ASN1ParserThingie, WireStrAlias):
 
         return b"( " + b" ".join(r) + b" )"
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         nice = {}
         for k, v in self.__dict__.items():
             nice[k] = repr(v)

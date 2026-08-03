@@ -1,5 +1,7 @@
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
+from unittest import mock
 
 import anyio
 import anyio.lowlevel
@@ -7,7 +9,7 @@ import pytest
 
 from anyldap import config
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldaperrors, proxy
+from anyldap.protocols.ldap import ldapclient, ldaperrors, proxy
 from anyldap.test._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
@@ -21,38 +23,44 @@ pytestmark = pytest.mark.anyio
 class StubClient:
     connected = True
 
-    def __init__(self):
-        self.calls = []
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
 
-    async def send_multiResponse_async(self, request, callback, reply):
-        self.calls.append(("multi", request, callback, reply))
+    async def send_multiResponse_async(
+        self,
+        op: pureldap.LDAPProtocolRequest,
+        handler: Callable[..., bool],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        self.calls.append(("multi", op, handler, *args))
 
-    async def send_noResponse_async(self, request):
-        self.calls.append(("none", request))
+    async def send_noResponse_async(self, op: pureldap.LDAPProtocolRequest) -> None:
+        self.calls.append(("none", op))
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         self.connected = False
 
 
-async def test_stub_client_close_uses_async_interface():
+async def test_stub_client_close_uses_async_interface() -> None:
     client = StubClient()
     await client.aclose()
     assert not client.connected
 
 
-def _legacy_server(client=None):
+def _legacy_server(client: ldapclient.LDAPClientLike | None = None) -> proxy.Proxy:
     server = proxy.Proxy(config.LDAPConfig(serviceLocationOverrides={}))
     server.client = client
     return server
 
 
-async def _connect_after_checkpoint(server):
+async def _connect_after_checkpoint(server: proxy.Proxy) -> None:
     """Let the waiter block first, then complete the connection."""
     await anyio.lowlevel.checkpoint()
     server._cbConnectionMade(StubClient())
 
 
-async def test_waits_for_connection_and_forwards_result():
+async def test_waits_for_connection_and_forwards_result() -> None:
     server = _legacy_server()
     results = []
 
@@ -63,10 +71,10 @@ async def test_waits_for_connection_and_forwards_result():
     assert results == [5]
 
 
-async def test_waits_for_connection_and_forwards_failure():
+async def test_waits_for_connection_and_forwards_failure() -> None:
     server = _legacy_server()
 
-    def broken():
+    def broken() -> None:
         raise ValueError("broken")
 
     async with anyio.create_task_group() as task_group:
@@ -75,7 +83,7 @@ async def test_waits_for_connection_and_forwards_failure():
             await server._whenConnected(broken)
 
 
-async def test_async_queue_uses_client_async_interface():
+async def test_async_queue_uses_client_async_interface() -> None:
     client = StubClient()
     server = _legacy_server(client)
     await server._clientQueue_async(pureldap.LDAPBindRequest(), None, lambda response: None)
@@ -83,40 +91,55 @@ async def test_async_queue_uses_client_async_interface():
     assert [call[0] for call in client.calls] == ["multi", "none"]
 
 
-async def test_async_queue_uses_async_client_methods():
+async def test_async_queue_uses_async_client_methods() -> None:
     class AsyncClient:
-        def __init__(self):
-            self.calls = []
+        connected = True
 
-        async def send_multiResponse_async(self, request, callback, reply):
-            self.calls.append(("multi", request, callback, reply))
+        # Queueing sends; the proxy has no reason to close this one.
+        aclose = mock.AsyncMock()
 
-        async def send_noResponse_async(self, request):
-            self.calls.append(("none", request))
+        def __init__(self) -> None:
+            self.calls: list[tuple[object, ...]] = []
+
+        async def send_multiResponse_async(
+            self,
+            op: pureldap.LDAPProtocolRequest,
+            handler: Callable[..., bool],
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            self.calls.append(("multi", op, handler, *args))
+
+        async def send_noResponse_async(
+            self, op: pureldap.LDAPProtocolRequest
+        ) -> None:
+            self.calls.append(("none", op))
 
     client = AsyncClient()
     server = _legacy_server(client)
     await server._clientQueue_async(pureldap.LDAPBindRequest(), None, lambda response: None)
     await server._clientQueue_async(pureldap.LDAPUnbindRequest(), None, lambda response: None)
     assert [call[0] for call in client.calls] == ["multi", "none"]
+    AsyncClient.aclose.assert_not_called()
 
 
-async def test_async_unknown_handler_waits_for_connection():
-    server = _legacy_server(StubClient())
+async def test_async_unknown_handler_waits_for_connection() -> None:
+    client = StubClient()
+    server = _legacy_server(client)
     await server._handleUnknown_async(
         pureldap.LDAPBindRequest(), None, lambda response: None
     )
-    assert server.client.calls[0][0] == "multi"
+    assert client.calls[0][0] == "multi"
 
 
-async def test_connection_lost_without_task_group_detaches_client():
+async def test_connection_lost_without_task_group_detaches_client() -> None:
     client = StubClient()
     server = _legacy_server(client)
     server.connectionLost(Exception("closed"))
     assert server.client is None
 
 
-async def test_connection_lost_ignores_disconnected_client():
+async def test_connection_lost_ignores_disconnected_client() -> None:
     client = StubClient()
     client.connected = False
     server = _legacy_server(client)
@@ -125,7 +148,7 @@ async def test_connection_lost_ignores_disconnected_client():
     assert server._failConnection(ValueError("no server")).args == ("no server",)
 
 
-async def test_async_connection_made_uses_configured_override():
+async def test_async_connection_made_uses_configured_override() -> None:
     client = StubClient()
     configured = config.LDAPConfig(serviceLocationOverrides={"": lambda factory: client})
     server = proxy.Proxy(configured)
@@ -134,8 +157,8 @@ async def test_async_connection_made_uses_configured_override():
     assert server.connected == 1
 
 
-async def test_async_connection_made_handles_override_failure():
-    def fail_to_connect(factory):
+async def test_async_connection_made_handles_override_failure() -> None:
+    def fail_to_connect(factory: object) -> None:
         raise OSError("unreachable")
 
     configured = config.LDAPConfig(serviceLocationOverrides={"": fail_to_connect})
@@ -145,14 +168,18 @@ async def test_async_connection_made_handles_override_failure():
     assert server.connected == 1
 
 
-async def test_connection_lost_schedules_async_close_paths():
+async def test_connection_lost_schedules_async_close_paths() -> None:
     class AsyncCloseClient:
         connected = True
 
-        def __init__(self):
+        # Losing the connection closes the client; it sends nothing.
+        send_multiResponse_async = mock.AsyncMock()
+        send_noResponse_async = mock.AsyncMock()
+
+        def __init__(self) -> None:
             self.closed = False
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             self.closed = True
 
     first_client = AsyncCloseClient()
@@ -169,12 +196,16 @@ async def test_connection_lost_schedules_async_close_paths():
 
     assert first_client.closed
     assert second_client.closed
+    AsyncCloseClient.send_multiResponse_async.assert_not_called()
+    AsyncCloseClient.send_noResponse_async.assert_not_called()
 
 
-async def test_connection_lost_without_task_group_cannot_schedule_async_close():
+async def test_connection_lost_without_task_group_cannot_schedule_async_close() -> None:
     class AsyncCloseClient:
         connected = True
         aclose = anyio.lowlevel.checkpoint
+        send_multiResponse_async = mock.AsyncMock()
+        send_noResponse_async = mock.AsyncMock()
 
     server = _legacy_server(AsyncCloseClient())
     server.connectionLost(Exception("closed"))
@@ -184,9 +215,11 @@ async def test_connection_lost_without_task_group_cannot_schedule_async_close():
     server.unbound = True
     server.connectionLost(Exception("closed"))
     assert server.client is None
+    AsyncCloseClient.send_multiResponse_async.assert_not_called()
+    AsyncCloseClient.send_noResponse_async.assert_not_called()
 
 
-async def test_proxy_module_is_not_a_legacy_entrypoint():
+async def test_proxy_module_is_not_a_legacy_entrypoint() -> None:
     result = subprocess.run(
         [sys.executable, "-m", proxy.__name__],
         check=False,
@@ -197,7 +230,9 @@ async def test_proxy_module_is_not_a_legacy_entrypoint():
     assert "AnyIO server entrypoints" in result.stderr
 
 
-async def _create_server(monkeypatch, *responses):
+async def _create_server(
+    monkeypatch: pytest.MonkeyPatch, *responses: Sequence[object]
+) -> tuple[proxy.Proxy, MemoryByteStream, AsyncLDAPClientDriver]:
     client = AsyncLDAPClientDriver(*responses)
     patch_client_creator(monkeypatch, proxy, client)
     server = proxy.Proxy(config.LDAPConfig(serviceLocationOverrides={}))
@@ -205,7 +240,7 @@ async def _create_server(monkeypatch, *responses):
     return server, stream, client
 
 
-async def test_bind(monkeypatch):
+async def test_bind(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         [pureldap.LDAPBindResponse(resultCode=0)],
@@ -217,13 +252,15 @@ async def test_bind(monkeypatch):
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=4).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == 0
         assert response.id == 4
         client.assert_sent(pureldap.LDAPBindRequest())
         await server.aclose()
 
 
-async def test_bind_sasl_no_credentials(monkeypatch):
+async def test_bind_sasl_no_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         [pureldap.LDAPBindResponse(resultCode=14, serverSaslCreds="test123")],
@@ -237,6 +274,8 @@ async def test_bind_sasl_no_credentials(monkeypatch):
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response, pureldap.LDAPMessage)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == 14
         assert response.value.serverSaslCreds == b"test123"
         assert response.id == 4
@@ -246,7 +285,7 @@ async def test_bind_sasl_no_credentials(monkeypatch):
         await server.aclose()
 
 
-async def test_search(monkeypatch):
+async def test_search(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         [pureldap.LDAPBindResponse(resultCode=0)],
@@ -267,13 +306,21 @@ async def test_search(monkeypatch):
             pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=3).toWire(),
         )
         bind_response = decode_message(await stream.next_write())
+        assert isinstance(bind_response, pureldap.LDAPMessage)
         entry1 = decode_message(await stream.next_write())
+        assert isinstance(entry1, pureldap.LDAPMessage)
         entry2 = decode_message(await stream.next_write())
+        assert isinstance(entry2, pureldap.LDAPMessage)
         done = decode_message(await stream.next_write())
+        assert isinstance(done, pureldap.LDAPMessage)
 
+        assert isinstance(bind_response.value, pureldap.LDAPResult)
         assert bind_response.value.resultCode == 0
+        assert isinstance(entry1.value, pureldap.LDAPSearchResultEntry)
         assert entry1.value.objectName == b"cn=foo,dc=example,dc=com"
+        assert isinstance(entry2.value, pureldap.LDAPSearchResultEntry)
         assert entry2.value.objectName == b"cn=bar,dc=example,dc=com"
+        assert isinstance(done.value, pureldap.LDAPResult)
         assert done.value.resultCode == ldaperrors.Success.resultCode
         client.assert_sent(
             pureldap.LDAPBindRequest(),
@@ -282,7 +329,7 @@ async def test_search(monkeypatch):
         await server.aclose()
 
 
-async def test_unbind_client_unbinds(monkeypatch):
+async def test_unbind_client_unbinds(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         [pureldap.LDAPBindResponse(resultCode=0)],
@@ -303,7 +350,7 @@ async def test_unbind_client_unbinds(monkeypatch):
         client.assert_sent(pureldap.LDAPBindRequest(), pureldap.LDAPUnbindRequest())
 
 
-async def test_eof_closes_upstream_client(monkeypatch):
+async def test_eof_closes_upstream_client(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         [pureldap.LDAPBindResponse(resultCode=0)],

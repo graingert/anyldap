@@ -1,5 +1,6 @@
 import logging
 import sys
+from collections.abc import Callable
 
 import anyio
 import pytest
@@ -13,7 +14,7 @@ from anyldap.test._testing import Clock, capture_logs
 pytestmark = pytest.mark.anyio
 
 
-async def test_memory_byte_stream_all_operations():
+async def test_memory_byte_stream_all_operations() -> None:
     stream = MemoryByteStream()
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(stream.feed, b"incoming")
@@ -25,7 +26,7 @@ async def test_memory_byte_stream_all_operations():
     assert stream.closed
 
 
-async def test_async_client_driver_response_paths():
+async def test_async_client_driver_response_paths() -> None:
     request = pureldap.LDAPBindRequest()
     response = pureldap.LDAPBindResponse(resultCode=0)
     driver = AsyncLDAPClientDriver([response], [ValueError("bad")])
@@ -35,7 +36,7 @@ async def test_async_client_driver_response_paths():
     driver.assert_sent(request, request)
 
 
-async def test_async_client_driver_extended_and_no_response_paths():
+async def test_async_client_driver_extended_and_no_response_paths() -> None:
     request = pureldap.LDAPBindRequest()
     response = pureldap.LDAPBindResponse(resultCode=0)
     received = []
@@ -53,19 +54,19 @@ async def test_async_client_driver_extended_and_no_response_paths():
     assert driver.closed
 
 
-async def test_async_client_driver_extended_handler_error():
+async def test_async_client_driver_extended_handler_error() -> None:
     driver = AsyncLDAPClientDriver([pureldap.LDAPBindResponse(resultCode=0)])
 
-    def broken(*args):
+    def broken(*args: object) -> None:
         raise RuntimeError("handler failed")
 
     with pytest.raises(RuntimeError, match="handler failed"):
         await driver.send_multiResponse_ex(pureldap.LDAPBindRequest(), None, broken)
 
 
-def test_clock_cancel_and_order():
+def test_clock_cancel_and_order() -> None:
     clock = Clock()
-    calls = []
+    calls: list[str] = []
     cancelled = clock.callLater(1, calls.append, "cancelled")
     cancelled.cancel()
     clock.callLater(2, calls.append, "second")
@@ -75,8 +76,8 @@ def test_clock_cancel_and_order():
     assert clock.seconds == 3
 
 
-def test_capture_logs_restores_logger():
-    cleanups = []
+def test_capture_logs_restores_logger() -> None:
+    cleanups: list[Callable[[], object]] = []
     logger = logging.getLogger("anyldap.helper-test")
     original_level = logger.level
     messages = capture_logs(cleanups, logger.name, logging.INFO)
@@ -87,8 +88,8 @@ def test_capture_logs_restores_logger():
     assert logger.level == original_level
 
 
-def test_capture_logs_preserves_more_verbose_logger_level():
-    cleanups = []
+def test_capture_logs_preserves_more_verbose_logger_level() -> None:
+    cleanups: list[Callable[[], object]] = []
     logger = logging.getLogger("anyldap.verbose-helper-test")
     original_level = logger.level
     logger.setLevel(logging.DEBUG)
@@ -101,7 +102,7 @@ def test_capture_logs_preserves_more_verbose_logger_level():
     logger.setLevel(original_level)
 
 
-def test_assert_permutation_ignores_order():
+def test_assert_permutation_ignores_order() -> None:
     util.assert_permutation([{"a": 1}, {"b": 2}], [{"b": 2}, {"a": 1}])
     with pytest.raises(util.FailTest, match="permutation"):
         util.assert_permutation([{"a": 1}], [{"b": 2}])
@@ -109,7 +110,7 @@ def test_assert_permutation_ignores_order():
         util.assert_permutation([{"a": 1}], [{"a": 1}, {"b": 2}])
 
 
-async def test_legacy_client_driver_paths():
+async def test_legacy_client_driver_paths() -> None:
     request = pureldap.LDAPBindRequest()
     response = pureldap.LDAPBindResponse(resultCode=0)
     driver = testutil.LDAPClientTestDriver([response])
@@ -122,13 +123,37 @@ async def test_legacy_client_driver_paths():
     assert not driver.connected
 
 
-def test_must_raise():
+def test_must_raise() -> None:
     with pytest.raises(util.FailTest):
         testutil.mustRaise(None)
 
 
-def test_calltrace_profiles_calls(capsys):
+def test_calltrace_profiles_calls(capsys: pytest.CaptureFixture[str]) -> None:
     testutil._print_func_name(sys._getframe(), "call", None)
     testutil.calltrace()
     sys.setprofile(None)
     assert "call" in capsys.readouterr().out
+
+
+async def test_memory_stream_send_eof_closes_the_outgoing_side() -> None:
+    """Ending the stream is what a protocol does when it has nothing more."""
+    stream = MemoryByteStream()
+    try:
+        await stream.send_eof()
+
+        with pytest.raises(anyio.ClosedResourceError):
+            await stream.send(b"too late")
+    finally:
+        await stream.aclose()
+
+
+async def test_driver_has_no_stream_to_attach() -> None:
+    """The driver answers from its script, so nothing connects it."""
+    driver = testutil.LDAPClientTestDriver()
+    stream = MemoryByteStream()
+    try:
+        async with anyio.create_task_group() as task_group:
+            with pytest.raises(AssertionError, match="no stream to attach"):
+                await driver.attach_stream(stream, task_group)
+    finally:
+        await stream.aclose()

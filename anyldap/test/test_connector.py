@@ -1,6 +1,9 @@
+from collections.abc import Callable
+from unittest import mock
+
 import anyio
 import pytest
-from anyio.abc import SocketAttribute
+from anyio.abc import ByteStream, SocketAttribute
 
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldapclient, ldapconnector
@@ -9,37 +12,37 @@ pytestmark = pytest.mark.anyio
 
 
 class FakeStream:
-    def __init__(self, responder):
+    def __init__(self, responder: Callable[[bytes], bytes | None]) -> None:
         self._responder = responder
-        self._responses = []
+        self._responses: list[bytes] = []
         self._sent = anyio.Event()
-        self.sent = []
+        self.sent: list[bytes] = []
         self.closed = False
 
-    async def send(self, data):
+    async def send(self, data: bytes) -> None:
         self.sent.append(data)
         response = self._responder(data)
         if response is not None:
             self._responses.append(response)
         self._sent.set()
 
-    async def receive(self):
+    async def receive(self, max_bytes: int = 65536) -> bytes:
         await self._sent.wait()
         if self._responses:
             return self._responses.pop(0)
         raise anyio.EndOfStream
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         self.closed = True
 
 
-async def test_fake_stream_without_response():
+async def test_fake_stream_without_response() -> None:
     stream = FakeStream(lambda data: None)
     await stream.send(b"request")
     assert stream.sent == [b"request"]
 
 
-async def test_parse_tcp_endpoint():
+async def test_parse_tcp_endpoint() -> None:
     assert ldapconnector._parseTCPEndpoint("tcp:host=127.0.0.1:port=10389") == (
         "127.0.0.1",
         10389,
@@ -50,17 +53,19 @@ async def test_parse_tcp_endpoint():
     "endpoint",
     ["udp:host=localhost:port=389", "tcp:localhost:port=389", "tcp:host=localhost"],
 )
-async def test_parse_tcp_endpoint_errors(endpoint):
+async def test_parse_tcp_endpoint_errors(endpoint: str) -> None:
     with pytest.raises(ValueError):
         ldapconnector._parseTCPEndpoint(endpoint)
 
 
-async def test_legacy_endpoint_connector_reports_parse_error():
+async def test_legacy_endpoint_connector_reports_parse_error() -> None:
     with pytest.raises(ValueError, match="Unsupported endpoint"):
-        await ldapconnector.connectToLDAPEndpoint(None, "udp:host=x:port=1", object)
+        await ldapconnector.connectToLDAPEndpoint(
+            None, "udp:host=x:port=1", ldapclient.LDAPClient
+        )
 
 
-async def test_find_override_plain_string():
+async def test_find_override_plain_string() -> None:
     override = ldapconnector._findOverride(
         distinguishedname.DistinguishedName("cn=foo,dc=example,dc=com"),
         {"dc=example,dc=com": ("server.example.com", 1389)},
@@ -68,7 +73,7 @@ async def test_find_override_plain_string():
     assert override == ("server.example.com", 1389)
 
 
-async def test_find_override_root():
+async def test_find_override_root() -> None:
     override = ldapconnector._findOverride(
         distinguishedname.DistinguishedName("cn=foo,dc=example,dc=com"),
         {"": ("server.example.com", 1389)},
@@ -76,10 +81,10 @@ async def test_find_override_root():
     assert override == ("server.example.com", 1389)
 
 
-async def test_resolve_service_location_async_callable_override():
+async def test_resolve_service_location_async_callable_override() -> None:
     marker = object()
 
-    def override(factory):
+    def override(factory: object) -> object:
         return marker
 
     resolved = await ldapconnector._resolveServiceLocationAsync(
@@ -91,8 +96,8 @@ async def test_resolve_service_location_async_callable_override():
     assert override(None) is marker
 
 
-async def test_resolve_service_location_async_uses_srv():
-    async def resolver(name, record_type):
+async def test_resolve_service_location_async_uses_srv() -> None:
+    async def resolver(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         assert name == "_ldap._tcp.example.com"
         assert record_type == "SRV"
 
@@ -104,15 +109,15 @@ async def test_resolve_service_location_async_uses_srv():
 
         return [Record()]
 
-    host, port = await ldapconnector._resolveServiceLocationAsync(
+    resolved = await ldapconnector._resolveServiceLocationAsync(
         "dc=example,dc=com", resolver=resolver
     )
 
-    assert (host, port) == ("ldap.example.net", 1389)
+    assert resolved == ("ldap.example.net", 1389)
 
 
-async def test_resolve_service_location_async_override_host_keeps_srv_port():
-    async def resolver(name, record_type):
+async def test_resolve_service_location_async_override_host_keeps_srv_port() -> None:
+    async def resolver(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         class Record:
             priority = 0
             weight = 10
@@ -121,21 +126,21 @@ async def test_resolve_service_location_async_override_host_keeps_srv_port():
 
         return [Record()]
 
-    host, port = await ldapconnector._resolveServiceLocationAsync(
+    resolved = await ldapconnector._resolveServiceLocationAsync(
         "dc=example,dc=com",
         overrides={"dc=example,dc=com": ("override.example.net", None)},
         resolver=resolver,
     )
 
-    assert (host, port) == ("override.example.net", 1636)
+    assert resolved == ("override.example.net", 1636)
 
 
-async def test_resolve_complete_override_and_defaults():
+async def test_resolve_complete_override_and_defaults() -> None:
     assert await ldapconnector._resolveServiceLocationAsync(
         "dc=example,dc=com", overrides={"dc=example,dc=com": ("host", 123)}
     ) == ("host", 123)
 
-    async def no_records(name, record_type):
+    async def no_records(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         return []
 
     assert await ldapconnector._resolveServiceLocationAsync(
@@ -146,7 +151,7 @@ async def test_resolve_complete_override_and_defaults():
         distinguishedname.DistinguishedName(""), resolver=no_records
     ) == ("", 389)
 
-    async def one_record(name, record_type):
+    async def one_record(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         return [type("Record", (), {"priority": 0, "weight": 1, "target": "srv.", "port": 999})()]
 
     assert await ldapconnector._resolveServiceLocationAsync(
@@ -156,16 +161,22 @@ async def test_resolve_complete_override_and_defaults():
     ) == ("srv", 123)
 
 
-async def test_connection_wrapper_and_connector_alias():
+async def test_connection_wrapper_and_connector_alias() -> None:
     class Stack:
-        def __init__(self):
+        def __init__(self) -> None:
             self.closed = False
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             self.closed = True
 
     class Client:
         marker = "client"
+
+        async def attach_stream(self, stream: object, task_group: object) -> None:
+            """Never reached: the connection is built directly."""
+
+        async def aclose(self) -> None:
+            """Never reached: closing goes through the exit stack."""
 
     stack = Stack()
     connection = ldapconnector.AsyncLDAPClientConnection(stack, Client())
@@ -173,16 +184,21 @@ async def test_connection_wrapper_and_connector_alias():
     assert await connection.__aenter__() is connection.protocol
     await connection.__aexit__(None, None, None)
     assert stack.closed
-    assert ldapconnector.LDAPConnector()._findOverRide(
-        distinguishedname.DistinguishedName(""), {"": "root"}
-    ) == "root"
+    # An override is a location or a callable; this one only has to come back.
+    override: ldapconnector.Override = ("ldap.example.com", 389)
+    assert (
+        ldapconnector.LDAPConnector()._findOverRide(
+            distinguishedname.DistinguishedName(""), {"": override}
+        )
+        is override
+    )
 
 
-async def test_creator_connects_to_real_endpoint():
+async def test_creator_connects_to_real_endpoint() -> None:
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     port = listener.extra(SocketAttribute.local_port)
 
-    async def hold_open(stream):
+    async def hold_open(stream: ByteStream) -> None:
         async with stream:
             try:
                 await stream.receive()
@@ -199,14 +215,25 @@ async def test_creator_connects_to_real_endpoint():
         task_group.cancel_scope.cancel()
 
 
-async def test_creator_legacy_and_anonymous_overrides():
-    class Client:
-        def __init__(self):
-            self.bound = False
+class UnbuiltClient:
+    """A client class the connector is given but never gets to build.
 
-        async def bind_async(self):
-            self.bound = True
+    Every connection here comes from an override, which hands back a client
+    of its own and ignores the factory it was passed.
+    """
 
+    attach_stream = mock.AsyncMock()
+    aclose = mock.AsyncMock()
+
+    def __init__(self) -> None:
+        self.bound = False
+
+    async def bind_async(self) -> None:
+        self.bound = True
+
+
+async def test_creator_legacy_and_anonymous_overrides() -> None:
+    Client = UnbuiltClient
     client = Client()
     creator = ldapconnector.LDAPClientCreator(None, Client)
     assert await creator.connect("", overrides={"": lambda factory: client}) is client
@@ -215,7 +242,7 @@ async def test_creator_legacy_and_anonymous_overrides():
     ) is not None
 
     class LegacyBindClient:
-        def bind(self):
+        def bind(self) -> str:
             return "bound"
 
     assert await creator.connectAnonymously(
@@ -226,22 +253,25 @@ async def test_creator_legacy_and_anonymous_overrides():
     )
     assert connected is client
     assert client.bound
+    Client.attach_stream.assert_not_called()
+    Client.aclose.assert_not_called()
 
 
-async def test_creator_non_override_uses_async_implementation():
-    class Creator(ldapconnector.LDAPClientCreator):
-        async def connectAsync(self, *args, **kwargs):
+async def test_creator_non_override_uses_async_implementation() -> None:
+    class Creator(ldapconnector.LDAPClientCreator[UnbuiltClient]):
+        async def connectAsync(self, *args: object, **kwargs: object) -> str:
             return "connected"
 
-    creator = Creator(None, object)
+    creator = Creator(None, UnbuiltClient)
     assert await creator.connect("dc=example,dc=com") == "connected"
 
 
-async def test_connectToLDAPEndpointAsync_bind(monkeypatch):
-    def responder(request_bytes):
+async def test_connectToLDAPEndpointAsync_bind(monkeypatch: pytest.MonkeyPatch) -> None:
+    def responder(request_bytes: bytes) -> bytes:
         message, _ = pureber.berDecodeObject(
             ldapclient.LDAPClient.berdecoder, request_bytes
         )
+        assert isinstance(message, pureldap.LDAPMessage)
         response = pureldap.LDAPMessage(
             pureldap.LDAPBindResponse(
                 resultCode=0, matchedDN=b"cn=foo,dc=example,dc=com"
@@ -252,11 +282,11 @@ async def test_connectToLDAPEndpointAsync_bind(monkeypatch):
 
     stream = FakeStream(responder)
 
-    async def fake_connect_tcp(host, port, **kwargs):
+    async def fake_connect_tcp(host: str, port: int, **kwargs: object) -> FakeStream:
         assert (host, port) == ("127.0.0.1", 10389)
         return stream
 
-    monkeypatch.setattr(ldapconnector.anyio, "connect_tcp", fake_connect_tcp)
+    monkeypatch.setattr(anyio, "connect_tcp", fake_connect_tcp)
 
     async with await ldapconnector.connectToLDAPEndpointAsync(
         "tcp:host=127.0.0.1:port=10389", ldapclient.LDAPClient
@@ -267,8 +297,8 @@ async def test_connectToLDAPEndpointAsync_bind(monkeypatch):
     assert stream.closed
 
 
-async def test_connectAsync_bind_with_srv_resolver(monkeypatch):
-    async def resolver(name, record_type):
+async def test_connectAsync_bind_with_srv_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def resolver(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         return [
             type(
                 "Record",
@@ -282,10 +312,11 @@ async def test_connectAsync_bind_with_srv_resolver(monkeypatch):
             )()
         ]
 
-    def responder(request_bytes):
+    def responder(request_bytes: bytes) -> bytes:
         message, _ = pureber.berDecodeObject(
             ldapclient.LDAPClient.berdecoder, request_bytes
         )
+        assert isinstance(message, pureldap.LDAPMessage)
         response = pureldap.LDAPMessage(
             pureldap.LDAPBindResponse(resultCode=0, matchedDN=b""),
             id=message.id,
@@ -294,12 +325,12 @@ async def test_connectAsync_bind_with_srv_resolver(monkeypatch):
 
     stream = FakeStream(responder)
 
-    async def fake_connect_tcp(host, port, **kwargs):
+    async def fake_connect_tcp(host: str, port: int, **kwargs: object) -> FakeStream:
         assert (host, port) == ("127.0.0.1", 389)
         return stream
 
     creator = ldapconnector.LDAPClientCreator(None, ldapclient.LDAPClient)
-    monkeypatch.setattr(ldapconnector.anyio, "connect_tcp", fake_connect_tcp)
+    monkeypatch.setattr(anyio, "connect_tcp", fake_connect_tcp)
 
     async with await creator.connectAsync("dc=example,dc=com", resolver=resolver) as client:
         result = await client.bind_async()

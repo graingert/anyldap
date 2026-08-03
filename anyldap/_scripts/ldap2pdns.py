@@ -1,4 +1,4 @@
-def console_script():
+def console_script() -> None:
     raise SystemExit("anyldap-ldap2pdns is being rewritten for the AnyIO runtime.")
 
 

@@ -1,12 +1,14 @@
 import sys
+from collections.abc import Sequence
 
 import anyio
 
-from anyldap import config, usage
+from anyldap import config, interfaces, usage
 from anyldap.protocols.ldap import fetchschema, ldapclient, ldapconnector
 
 
-def _printResults(result):
+def _printResults(result: tuple[Sequence[object], Sequence[object]]) -> None:
+    """Print a schema, however each description renders itself."""
     attributeTypes, objectClasses = result
     something = False
     for attribute_type in attributeTypes:
@@ -18,7 +20,7 @@ def _printResults(result):
         print("objectclass", object_class)
 
 
-async def main(cfg):
+async def main(cfg: interfaces.LDAPBaseConfigLike) -> None:
     try:
         base_dn = cfg.getBaseDN()
     except config.MissingBaseDNError as exc:
@@ -40,7 +42,7 @@ class MyOptions(
     """Command line schema fetching utility."""
 
 
-def console_script():
+def console_script() -> None:
     try:
         opts = MyOptions()
         opts.parseOptions()

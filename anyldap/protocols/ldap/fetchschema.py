@@ -1,10 +1,14 @@
-from anyldap import schema
+from collections.abc import Sequence
+
+from anyldap import interfaces, schema
 from anyldap._encoder import to_bytes
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, ldapsyntax
 
 
-def _onlyResult(results):
+def _onlyResult(
+    results: Sequence[ldapsyntax.LDAPEntryWithClient],
+) -> ldapsyntax.LDAPEntryWithClient:
     if len(results) == 0:
         raise ldaperrors.LDAPOther("No such DN")
     if len(results) > 1:
@@ -12,20 +16,25 @@ def _onlyResult(results):
     return results[0]
 
 
-async def _fetchCb(subschemaSubentry, client):
+async def _fetchCb(
+    subschemaSubentry: interfaces.AnyDN, client: ldapsyntax.LDAPSender
+) -> tuple[
+    list[schema.AttributeTypeDescription], list[schema.ObjectClassDescription]
+]:
     o = ldapsyntax.LDAPEntry(client=client, dn=subschemaSubentry)
     results = await o.search(
         scope=pureldap.LDAP_SCOPE_baseObject,
         sizeLimit=1,
         attributes=["attributeTypes", "objectClasses"],
     )
+    assert isinstance(results, Sequence)
     o = _onlyResult(results)
 
     attributeTypes = []
     objectClasses = []
-    for text in o.get("attributeTypes", []):
+    for text in o.get("attributeTypes", []) or ():
         attributeTypes.append(schema.AttributeTypeDescription(to_bytes(text)))
-    for text in o.get("objectClasses", []):
+    for text in o.get("objectClasses", []) or ():
         objectClasses.append(schema.ObjectClassDescription(to_bytes(text)))
     assert attributeTypes, (
         "LDAP server doesn't give attributeTypes for subschemaSubentry dn=%s" % o.dn
@@ -33,13 +42,18 @@ async def _fetchCb(subschemaSubentry, client):
     return (attributeTypes, objectClasses)
 
 
-async def fetch(client, baseObject):
+async def fetch(
+    client: ldapsyntax.LDAPSender, baseObject: interfaces.AnyDN
+) -> tuple[
+    list[schema.AttributeTypeDescription], list[schema.ObjectClassDescription]
+]:
     o = ldapsyntax.LDAPEntry(client=client, dn=baseObject)
     results = await o.search(
         scope=pureldap.LDAP_SCOPE_baseObject,
         sizeLimit=1,
         attributes=["subschemaSubentry"],
     )
+    assert isinstance(results, Sequence)
     o = _onlyResult(results)
     assert "subschemaSubentry" in o, "No subschemaSubentry. TODO"
     subSchemas = o["subschemaSubentry"]

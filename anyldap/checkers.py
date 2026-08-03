@@ -1,13 +1,46 @@
-from anyldap import config, ldapfilter
+from collections.abc import Sequence
+from typing import Protocol
+
+from anyldap import config, interfaces, ldapfilter
+from anyldap.protocols import pureber
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldaperrors, ldapsyntax
+
+
+class UsernamePassword(Protocol):
+    """The credentials this checker knows how to validate."""
+
+    username: str
+    password: str | bytes
+
+
+class Binder(Protocol):
+    """What the checker binds as the person it found."""
+
+    async def bind_async(self, dn: str, password: str | bytes) -> object: ...
+
+
+class BoundEntry(Protocol):
+    """The entry a successful check identifies.
+
+    Read-only members, so that an entry naming its own kinds of dn and
+    client still answers to this.
+    """
+
+    @property
+    def dn(self) -> object: ...
+
+    @property
+    def client(self) -> Binder: ...
 
 
 class UnauthorizedLogin(Exception):
     pass
 
 
-def makeFilter(name, template=None):
-    filter_object = None
+def makeFilter(
+    name: str, template: str | None = None
+) -> pureber.BERBase | None:
+    filter_object: pureber.BERBase | None = None
     try:
         filter_object = ldapfilter.parseFilter(name)
     except ldapfilter.InvalidLDAPFilter:
@@ -31,10 +64,12 @@ class LDAPBindingChecker:
 
     credentialInterfaces = ("username-password",)
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: interfaces.LDAPConfigLike) -> None:
         self.config = cfg
 
-    async def requestAvatarId_async(self, credentials):
+    async def requestAvatarId_async(
+        self, credentials: UsernamePassword
+    ) -> BoundEntry:
         try:
             base_dn = self.config.getIdentityBaseDN()
         except config.MissingBaseDNError as exc:
@@ -59,11 +94,12 @@ class LDAPBindingChecker:
             sizeLimit=1,
             attributes=[""],
         )
+        assert isinstance(results, Sequence)
         if not results:
             raise UnauthorizedLogin("Invalid credentials")
         if len(results) != 1:
             raise UnauthorizedLogin("Expected a single identity match")
-        entry = results[0]
+        entry: BoundEntry = results[0]
         try:
             await entry.client.bind_async(str(entry.dn), credentials.password)
         except (

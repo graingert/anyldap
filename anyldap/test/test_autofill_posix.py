@@ -13,10 +13,10 @@ from anyldap.testutil import LDAPClientTestDriver
 pytestmark = pytest.mark.anyio
 
 
-async def test_start_reports_the_first_failed_allocation():
-    attempted = []
+async def test_start_reports_the_first_failed_allocation() -> None:
+    attempted: list[str] = []
 
-    async def allocate(baseObject, numberType, min):
+    async def allocate(baseObject: object, numberType: str, min: int) -> int:
         attempted.append(numberType)
         if numberType == "uidNumber":
             raise ValueError("allocation failed")
@@ -37,22 +37,27 @@ async def test_start_reports_the_first_failed_allocation():
     assert attempted == ["uidNumber", "gidNumber"]
 
 
-def test_got_numbers_re_raises_failed_allocations_and_notify_is_noop():
+def test_got_numbers_re_raises_failed_allocations_and_notify_is_noop() -> None:
     autofiller = posixAccount.Autofill_posix("dc=example,dc=com")
-    entry = {}
+    entry = ldapsyntax.LDAPEntryWithAutoFill(
+        client=LDAPClientTestDriver(),
+        dn="cn=foo,dc=example,dc=com",
+    )
+
     # An Outcome may only be unwrapped once, so each case needs its own.
-    def error():
+    def error() -> outcome.Error:
         return outcome.Error(ValueError("allocation failed"))
 
     with pytest.raises(ValueError, match="allocation failed"):
         autofiller._cb_gotNumbers((error(), outcome.Value(1000)), entry)
     with pytest.raises(ValueError, match="allocation failed"):
         autofiller._cb_gotNumbers((outcome.Value(1000), error()), entry)
-    assert autofiller.notify(entry, "uidNumber") is None
+    # Nothing to do: a posix autofiller only acts when it starts.
+    autofiller.notify(entry, "uidNumber")
 
 
 class TestLDAPAutoFill_Posix:
-    async def testMustHaveObjectClass(self):
+    async def testMustHaveObjectClass(self) -> None:
         """Test that Autofill_posix fails unless object is a posixAccount."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -68,7 +73,7 @@ class TestLDAPAutoFill_Posix:
             await o.addAutofiller(autoFiller)
         client.assertNothingSent()
 
-    async def testDefaultSetting(self):
+    async def testDefaultSetting(self) -> None:
         """Test that fields get their default values."""
 
         client = LDAPClientTestDriver(

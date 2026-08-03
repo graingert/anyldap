@@ -2,13 +2,14 @@
 Test cases for anyldap.schema module.
 """
 
+
 import pytest
 
 from anyldap import schema
 from anyldap._encoder import to_bytes
 
 
-def test_schema_description_representations():
+def test_schema_description_representations() -> None:
     descriptions = [
         schema.ObjectClassDescription(b"( 1.2 STRUCTURAL )"),
         schema.AttributeTypeDescription(b"( 1.2 )"),
@@ -75,7 +76,7 @@ OBJECTCLASSES = {
 
 
 class TestAttributeType_KnownValues:
-    knownValues = [
+    knownValues: list[tuple[bytes, dict[str, object]]] = [
         (
             b"""( 2.5.4.4 NAME ( 'sn' 'surname' )
             DESC 'RFC2256: last (family) name(s) for which the entity is known by'
@@ -266,8 +267,8 @@ class TestAttributeType_KnownValues:
         ),
     ]
 
-    def testParse(self):
-        defaults = {
+    def testParse(self) -> None:
+        defaults: dict[str, object] = {
             "name": None,
             "desc": None,
             "obsolete": 0,
@@ -293,7 +294,7 @@ class TestAttributeType_KnownValues:
                 got = getattr(a, key)
                 assert got == want
 
-    def testStringification(self):
+    def testStringification(self) -> None:
         for want, values in self.knownValues:
             a = schema.AttributeTypeDescription(None)
             for key, val in values.items():
@@ -305,7 +306,7 @@ class TestAttributeType_KnownValues:
 
 
 class TestObjectClass_KnownValues:
-    knownValues = [
+    knownValues: list[tuple[bytes, dict[str, object]]] = [
         (
             OBJECTCLASSES["top"],
             {
@@ -454,8 +455,8 @@ class TestObjectClass_KnownValues:
         ),
     ]
 
-    def testParse(self):
-        defaults = {
+    def testParse(self) -> None:
+        defaults: dict[str, object] = {
             "name": None,
             "desc": None,
             "obsolete": 0,
@@ -476,7 +477,7 @@ class TestObjectClass_KnownValues:
                 got = getattr(a, key)
                 assert got == want
 
-    def testStringification(self):
+    def testStringification(self) -> None:
         for want, values in self.knownValues:
             a = schema.ObjectClassDescription(None)
             for key, val in values.items():
@@ -488,7 +489,7 @@ class TestObjectClass_KnownValues:
 
 
 class TestSyntaxDescription_KnownValues:
-    knownValues = [
+    knownValues: list[tuple[bytes, dict[str, object]]] = [
         (
             b"( 1.3.6.1.4.1.1466.115.121.1.3 DESC 'Attribute Type Description' )",
             {
@@ -528,7 +529,7 @@ class TestSyntaxDescription_KnownValues:
         ),
     ]
 
-    def testParse(self):
+    def testParse(self) -> None:
         for text, expected in self.knownValues:
             a = schema.SyntaxDescription(text)
             assert a.oid is not None
@@ -536,7 +537,7 @@ class TestSyntaxDescription_KnownValues:
                 got = getattr(a, key)
                 assert got == want
 
-    def testStringification(self):
+    def testStringification(self) -> None:
         for want, values in self.knownValues:
             a = schema.SyntaxDescription(None)
             for key, val in values.items():
@@ -548,7 +549,7 @@ class TestSyntaxDescription_KnownValues:
 
 
 class TestMatchingRuleDescription_KnownValues:
-    knownValues = [
+    knownValues: list[tuple[bytes, dict[str, object]]] = [
         (
             b"( 2.5.13.16 NAME 'bitStringMatch' SYNTAX 1.3.6.1.4.1.1466.115.121.1.6 )",
             {
@@ -602,7 +603,7 @@ class TestMatchingRuleDescription_KnownValues:
         ),
     ]
 
-    def testParse(self):
+    def testParse(self) -> None:
         for text, expected in self.knownValues:
             a = schema.MatchingRuleDescription(text)
             assert a.oid is not None
@@ -610,7 +611,7 @@ class TestMatchingRuleDescription_KnownValues:
                 got = getattr(a, key)
                 assert got == want
 
-    def testStringification(self):
+    def testStringification(self) -> None:
         for want, values in self.knownValues:
             a = schema.MatchingRuleDescription(None)
             for key, val in values.items():
@@ -629,13 +630,13 @@ class TestComparison:
         "organizationalUnit",
     ]
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         data = {}
         for oc, text in OBJECTCLASSES.items():
             data[oc] = schema.ObjectClassDescription(text)
         self.data = data
 
-    def test_eq(self):
+    def test_eq(self) -> None:
         for k1 in self.data:
             for k2 in self.data:
                 if k1 == k2:
@@ -643,14 +644,14 @@ class TestComparison:
                 else:
                     assert not (self.data[k1] == self.data[k2])
 
-    def test_invalid_eq(self):
+    def test_invalid_eq(self) -> None:
         """Object class object can be compared only to the same class object"""
         obj = schema.ObjectClassDescription(OBJECTCLASSES["top"])
         for method in (obj.__eq__, obj.__lt__, obj.__gt__):
             with pytest.raises(NotImplementedError):
                 method(b"")
 
-    def test_ne(self):
+    def test_ne(self) -> None:
         for k1 in self.data:
             for k2 in self.data:
                 if k1 == k2:
@@ -658,7 +659,7 @@ class TestComparison:
                 else:
                     assert self.data[k1] != self.data[k2]
 
-    def test_order(self):
+    def test_order(self) -> None:
         for i, base in enumerate(self.ORDER):
             assert self.data[base] <= self.data[base]
             assert self.data[base] >= self.data[base]
@@ -685,7 +686,7 @@ class TestDefaultObjectClass:
     DESC 'Object class with no type'
     STRUCTURAL )"""
 
-    def test_default(self):
+    def test_default(self) -> None:
         a = schema.ObjectClassDescription(self.a)
         b = schema.ObjectClassDescription(self.b)
         assert a == b
@@ -694,17 +695,17 @@ class TestDefaultObjectClass:
 class TestInvalidObjectClass:
     """Invalid object class definitions"""
 
-    def test_invalid_name(self):
+    def test_invalid_name(self) -> None:
         text = b"( 1.1.1 NAME invalid )"
         with pytest.raises(AssertionError):
             schema.ObjectClassDescription(text)
 
-    def test_invalid_multiple_name(self):
+    def test_invalid_multiple_name(self) -> None:
         text = b"( 1.1.1 NAME () )"
         with pytest.raises(AssertionError):
             schema.ObjectClassDescription(text)
 
-    def test_empty(self):
+    def test_empty(self) -> None:
         text = b"()"
         with pytest.raises(AssertionError):
             schema.ObjectClassDescription(text)
@@ -713,17 +714,17 @@ class TestInvalidObjectClass:
 class TestInvalidAttributeType:
     """Invalid attribute type definitions"""
 
-    def test_invalid_name(self):
+    def test_invalid_name(self) -> None:
         text = b"( 1.1.1 NAME invalid )"
         with pytest.raises(AssertionError):
             schema.AttributeTypeDescription(text)
 
-    def test_invalid_x_attribute(self):
+    def test_invalid_x_attribute(self) -> None:
         text = b"( 1.1.1 X-INVALID invalid )"
         with pytest.raises(AssertionError):
             schema.AttributeTypeDescription(text)
 
-    def test_unknown_attribute(self):
+    def test_unknown_attribute(self) -> None:
         text = b"( 1.1.1 UNKNOWN 'unknown' )"
         with pytest.raises(AssertionError):
             schema.AttributeTypeDescription(text)
@@ -732,12 +733,12 @@ class TestInvalidAttributeType:
 class TestInvalidMatchingRuleDescription:
     """Invalid matching rule description definition"""
 
-    def test_invalid_name(self):
+    def test_invalid_name(self) -> None:
         text = b"( 1.1.1 NAME invalid )"
         with pytest.raises(AssertionError):
             schema.MatchingRuleDescription(text)
 
-    def test_no_syntax(self):
+    def test_no_syntax(self) -> None:
         text = b"( 1.1.1 NAME 'no_syntax' )"
         with pytest.raises(AssertionError):
             schema.MatchingRuleDescription(text)

@@ -1,10 +1,11 @@
 import getpass
 import os
 import sys
+from collections.abc import Sequence
 
 import anyio
 
-from anyldap import generate_password, usage
+from anyldap import generate_password, interfaces, usage
 from anyldap.protocols.ldap import (
     distinguishedname,
     ldapclient,
@@ -13,13 +14,19 @@ from anyldap.protocols.ldap import (
 )
 
 
-async def _get_password(dn, generatePasswords):
+async def _get_password(dn: str, generatePasswords: bool) -> str:
     if not generatePasswords:
         return getpass.getpass(f"NEW Password for {dn}: ")
     return (await generate_password.generate_async())[0]
 
 
-async def main(binddn, bindPassword, dnlist, generatePasswords, overrides):
+async def main(
+    binddn: str,
+    bindPassword: str | None,
+    dnlist: Sequence[str],
+    generatePasswords: bool,
+    overrides: interfaces.ServiceLocationOverrides | None,
+) -> None:
     creator = ldapconnector.LDAPClientCreator(None, ldapclient.LDAPClient)
     dn = distinguishedname.DistinguishedName(stringValue=binddn)
     client = await creator.connectAsync(dn=dn, overrides=overrides)
@@ -27,7 +34,7 @@ async def main(binddn, bindPassword, dnlist, generatePasswords, overrides):
     for target_dn in dnlist:
         password = await _get_password(target_dn, generatePasswords)
         entry = ldapsyntax.LDAPEntry(client=client, dn=target_dn)
-        await entry.setPassword_async(newPasswd=password)
+        await entry.setPassword_async(newPasswd=password.encode("utf-8"))
         if generatePasswords:
             print(target_dn, password)
 
@@ -40,13 +47,11 @@ class MyOptions(
     synopsis = f"Usage: {sys.argv[0]} --binddn=DN [OPTION..] [DN..]"
     optFlags = [("generate", None, "Generate random passwords")]
 
-    def parseArgs(self, *dnlist):
-        if not dnlist:
-            dnlist = (self.opts["binddn"],)
-        self.opts["dnlist"] = dnlist
+    def parseArgs(self, *dnlist: str) -> None:
+        self.opts["dnlist"] = dnlist or (self.opts["binddn"],)
 
 
-def console_script():
+def console_script() -> None:
     try:
         options = MyOptions()
         options.parseOptions()

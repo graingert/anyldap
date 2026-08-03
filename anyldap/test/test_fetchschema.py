@@ -1,48 +1,52 @@
 """
 Test cases for anyldap.protocols.ldap.fetchschema module.
 """
+from collections.abc import Sequence
+
 import pytest
 
 from anyldap import schema
 from anyldap._encoder import to_bytes
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import fetchschema
+from anyldap.protocols.ldap import fetchschema, ldaperrors
 from anyldap.testutil import LDAPClientTestDriver
 
 pytestmark = pytest.mark.anyio
 
 
-def search_entry(dn, attributes):
+def search_entry(
+    dn: str, attributes: Sequence[tuple[str, Sequence[str]]]
+) -> pureldap.LDAPSearchResultEntry:
     return pureldap.LDAPSearchResultEntry(objectName=dn, attributes=attributes)
 
 
 search_done = pureldap.LDAPSearchResultDone(resultCode=0)
 
 
-async def test_fetch_rejects_missing_base_entry():
+async def test_fetch_rejects_missing_base_entry() -> None:
     client = LDAPClientTestDriver([search_done])
-    with pytest.raises(fetchschema.ldaperrors.LDAPOther, match="No such DN"):
+    with pytest.raises(ldaperrors.LDAPOther, match="No such DN"):
         await fetchschema.fetch(client, "dc=example,dc=com")
 
 
-async def test_fetch_rejects_multiple_base_entries():
+async def test_fetch_rejects_multiple_base_entries() -> None:
     client = LDAPClientTestDriver(
         [search_entry("dc=one", []), search_entry("dc=two", []), search_done]
     )
-    with pytest.raises(fetchschema.ldaperrors.LDAPOther, match="multiple entries"):
+    with pytest.raises(ldaperrors.LDAPOther, match="multiple entries"):
         await fetchschema.fetch(client, "dc=example,dc=com")
 
 
-async def test_fetch_rejects_missing_subschema_entry():
+async def test_fetch_rejects_missing_subschema_entry() -> None:
     client = LDAPClientTestDriver(
         [search_entry("", [("subschemaSubentry", ["cn=Subschema"])]), search_done],
         [search_done],
     )
-    with pytest.raises(fetchschema.ldaperrors.LDAPOther, match="No such DN"):
+    with pytest.raises(ldaperrors.LDAPOther, match="No such DN"):
         await fetchschema.fetch(client, "dc=example,dc=com")
 
 
-async def test_fetch_rejects_multiple_subschema_entries():
+async def test_fetch_rejects_multiple_subschema_entries() -> None:
     client = LDAPClientTestDriver(
         [search_entry("", [("subschemaSubentry", ["cn=Subschema"])]), search_done],
         [
@@ -51,7 +55,7 @@ async def test_fetch_rejects_multiple_subschema_entries():
             search_done,
         ],
     )
-    with pytest.raises(fetchschema.ldaperrors.LDAPOther, match="multiple entries"):
+    with pytest.raises(ldaperrors.LDAPOther, match="multiple entries"):
         await fetchschema.fetch(client, "dc=example,dc=com")
 
 
@@ -59,7 +63,7 @@ class TestOnWire:
     cn = """( 2.5.4.3 NAME ( 'cn' 'commonName' ) DESC 'RFC2256: common name(s) for which the entity is known by' SUP name )"""
     dcObject = """( 1.3.6.1.4.1.1466.344 NAME 'dcObject' DESC 'RFC2247: domain component object' SUP top AUXILIARY MUST dc )"""
 
-    async def testSimple(self):
+    async def testSimple(self) -> None:
         client = LDAPClientTestDriver(
             [
                 pureldap.LDAPSearchResultEntry(
@@ -90,7 +94,14 @@ class TestOnWire:
         val = await fetchschema.fetch(client, "dc=example,dc=com")
         self._cb_testSimple(val, client)
 
-    def _cb_testSimple(self, val, client):
+    def _cb_testSimple(
+        self,
+        val: tuple[
+            Sequence[schema.AttributeTypeDescription],
+            Sequence[schema.ObjectClassDescription],
+        ],
+        client: LDAPClientTestDriver,
+    ) -> None:
         client.assertSent(
             pureldap.LDAPSearchRequest(
                 baseObject="dc=example,dc=com",

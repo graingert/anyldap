@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 
+from typing import NoReturn
+
 from anyldap._encoder import to_unicode
-from anyldap.protocols import pureldap
+from anyldap.protocols import pureber, pureldap
 
 """
 
@@ -35,13 +37,13 @@ RFC2254:
 
 
 class InvalidLDAPFilter(Exception):
-    def __init__(self, msg, loc, text):
+    def __init__(self, msg: str, loc: int, text: str) -> None:
         Exception.__init__(self)
         self.msg = msg
         self.loc = loc
         self.text = text
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "Invalid LDAP filter: %s at point %d in %r" % (
             self.msg,
             self.loc,
@@ -49,7 +51,7 @@ class InvalidLDAPFilter(Exception):
         )
 
 
-def parseExtensible(attr, s):
+def parseExtensible(attr: str, s: str) -> NoReturn:
     raise NotImplementedError()
 
 
@@ -65,6 +67,7 @@ from pyparsing import (
     OneOrMore,
     Optional,
     ParseException,
+    ParseResults,
     StringEnd,
     StringStart,
     Suppress,
@@ -85,7 +88,7 @@ escaped = Suppress(Literal("\\")) + hexdigits
 escaped.set_name("escaped")
 
 
-def _p_escaped(s, l, t):
+def _p_escaped(s: str, l: int, t: ParseResults) -> object:
     text = t[0]
     return chr(int(text, 16))
 
@@ -108,7 +111,7 @@ simple.leave_whitespace()
 simple.set_name("simple")
 
 
-def _p_simple(s, l, t):
+def _p_simple(s: str, l: int, t: ParseResults) -> object:
     attr, filtertype, value = t
     return filtertype(
         attributeDesc=pureldap.LDAPAttributeDescription(attr),
@@ -135,7 +138,7 @@ substring = (
 substring.set_name("substring")
 
 
-def _p_substring(s, l, t):
+def _p_substring(s: str, l: int, t: ParseResults) -> object:
     attrtype, substrings = t
     return pureldap.LDAPFilter_substrings(type=attrtype, substrings=substrings)
 
@@ -154,7 +157,7 @@ matchingrule.set_name("matchingrule")
 extensible_dn = Optional(":dn")
 
 
-def _p_extensible_dn(s, l, t):
+def _p_extensible_dn(s: str, l: int, t: ParseResults) -> object:
     return bool(t)
 
 
@@ -163,7 +166,7 @@ extensible_dn.set_parse_action(_p_extensible_dn)
 matchingrule_or_none = Optional(Suppress(":") + matchingrule)
 
 
-def _p_matchingrule_or_none(s, l, t):
+def _p_matchingrule_or_none(s: str, l: int, t: ParseResults) -> object:
     if not t:
         return [None]
     else:
@@ -176,7 +179,7 @@ extensible_attr = attr + extensible_dn + matchingrule_or_none + Suppress(":=") +
 extensible_attr.set_name("extensible_attr")
 
 
-def _p_extensible_attr(s, l, t):
+def _p_extensible_attr(s: str, l: int, t: ParseResults) -> object:
     return list(t)
 
 
@@ -188,7 +191,7 @@ extensible_noattr = (
 extensible_noattr.set_name("extensible_noattr")
 
 
-def _p_extensible_noattr(s, l, t):
+def _p_extensible_noattr(s: str, l: int, t: ParseResults) -> object:
     return [None] + list(t)
 
 
@@ -198,7 +201,7 @@ extensible = extensible_attr | extensible_noattr
 extensible.set_name("extensible")
 
 
-def _p_extensible(s, l, t):
+def _p_extensible(s: str, l: int, t: ParseResults) -> object:
     attr, dn, matchingRule, value = t
     return pureldap.LDAPFilter_extensibleMatch(
         matchingRule=matchingRule, type=attr, matchValue=value, dnAttributes=dn
@@ -235,20 +238,22 @@ toplevel.leave_whitespace()
 toplevel.set_name("toplevel")
 
 
-def parseFilter(s):
+def parseFilter(s: str | bytes) -> pureber.BERBase:
     """
     Converting source string to pureldap.LDAPFilter
 
     Source string is converted to unicode as pyparsing cannot parse bytes
     objects with the rules declared in this module.
     """
-    s = to_unicode(s)
+    text = to_unicode(s)
     try:
-        x = toplevel.parse_string(s)
+        x = toplevel.parse_string(text)
     except ParseException as e:
         raise InvalidLDAPFilter(e.msg, e.loc, e.line)
     assert len(x) == 1
-    return x[0]
+    parsed = x[0]
+    assert isinstance(parsed, pureber.BERBase)
+    return parsed
 
 
 maybeSubString_value = Combine(OneOrMore(CharsNotIn("*\\\0") | escaped))
@@ -256,7 +261,7 @@ maybeSubString_value = Combine(OneOrMore(CharsNotIn("*\\\0") | escaped))
 maybeSubString_simple = maybeSubString_value.copy()
 
 
-def _p_maybeSubString_simple(s, l, t):
+def _p_maybeSubString_simple(s: str, l: int, t: ParseResults) -> object:
     return lambda attr: pureldap.LDAPFilter_equalityMatch(
         attributeDesc=pureldap.LDAPAttributeDescription(attr),
         assertionValue=pureldap.LDAPAssertionValue(t[0]),
@@ -268,7 +273,7 @@ maybeSubString_simple.set_parse_action(_p_maybeSubString_simple)
 maybeSubString_present = Literal("*")
 
 
-def _p_maybeSubString_present(s, l, t):
+def _p_maybeSubString_present(s: str, l: int, t: ParseResults) -> object:
     return lambda attr: pureldap.LDAPFilter_present(attr)
 
 
@@ -277,8 +282,11 @@ maybeSubString_present.set_parse_action(_p_maybeSubString_present)
 maybeSubString_substring = Optional(initial) + any + Optional(final)
 
 
-def _p_maybeSubString_substring(s, l, t):
-    return lambda attr: pureldap.LDAPFilter_substrings(type=attr, substrings=t)
+def _p_maybeSubString_substring(s: str, l: int, t: ParseResults) -> object:
+    substrings = list(t)
+    return lambda attr: pureldap.LDAPFilter_substrings(
+        type=attr, substrings=substrings
+    )
 
 
 maybeSubString_substring.set_parse_action(_p_maybeSubString_substring)
@@ -288,14 +296,16 @@ maybeSubString = (
 )
 
 
-def parseMaybeSubstring(attrType, s):
+def parseMaybeSubstring(attrType: str, s: str) -> pureber.BERBase:
     try:
         x = maybeSubString.parse_string(s)
     except ParseException as e:
         raise InvalidLDAPFilter(e.msg, e.loc, e.line)
     assert len(x) == 1
     fn = x[0]
-    return fn(attrType)
+    built = fn(attrType)
+    assert isinstance(built, pureber.BERBase)
+    return built
 
 
 if __name__ == "__main__":

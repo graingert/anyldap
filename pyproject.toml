@@ -11,7 +11,15 @@ maintainers = [{ name = "Bret Curtis", email = "psi29a@gmail.com" }]
 license = "MIT"
 license-files = ["LICENSE", "anyldap/samba/_passlib/LICENSE"]
 requires-python = ">=3.10"
-dependencies = ["anyio", "dnspython", "exceptiongroup", "outcome", "pyparsing", "zope.interface"]
+dependencies = [
+    "anyio",
+    "dnspython",
+    "exceptiongroup",
+    "outcome",
+    "pyparsing",
+    "typing_extensions>=4.0",
+    "zope.interface",
+]
 classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -84,6 +92,10 @@ ignore = [
     "docs/PULL_REQUEST_TEMPLATE.md",
 ]
 
+[tool.mypy]
+strict = true
+plugins = ["mypy_zope:plugin"]
+
 [tool.coverage.run]
 branch = true
 source_pkgs = ["anyldap"]
@@ -97,7 +109,6 @@ skip_covered = true
 
 [tool.coverage.paths]
 source = [
-    "anyldap",
     "*/site-packages/anyldap",
     '*\site-packages\anyldap',
 ]
@@ -143,6 +154,9 @@ envlist =
     py{310,311,312,313,314,py3}-test
     py312-test-dev
     py312-linters,
+    ; Type checking runs under every interpreter: what mypy concludes depends
+    ; on the version it is checking for.
+    py{310,311,312,313,314}-mypy,
     documentation,
 
 
@@ -158,6 +172,10 @@ deps =
     pytest-cov
     trustme
     trio
+    ; Type checking, on the same env as the tests so imports resolve.
+    mypy: mypy
+    mypy: mypy-zope
+    mypy: pytest
     ; Dependecies for local dev environment.
     dev: diff_cover
     ; Linters are installed both on local dev and the dedicated env.
@@ -181,6 +199,8 @@ commands =
     dev: diff-cover --fail-under 100 --html-report {toxinidir}/build/coverage-diff.html {toxinidir}/build/coverage.xml
     dev: pre-commit run --all-files --show-diff-on-failure
     linters: pre-commit {posargs:run --all-files --show-diff-on-failure}
+
+    mypy: mypy {posargs:anyldap}
 
 [testenv:documentation]
 deps = sphinx

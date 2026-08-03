@@ -3,6 +3,7 @@ Test cases for anyldap.protocols.ldap.ldapsyntax module.
 """
 
 import re
+from collections.abc import Sequence
 
 import pytest
 
@@ -15,7 +16,7 @@ from anyldap.testutil import LDAPClientTestDriver
 pytestmark = pytest.mark.anyio
 
 
-async def test_async_entry_methods_use_the_ldap_client_interface():
+async def test_async_entry_methods_use_the_ldap_client_interface() -> None:
     client = LDAPClientTestDriver(
         [pureldap.LDAPModifyResponse(resultCode=0)],
         [pureldap.LDAPModifyDNResponse(resultCode=0)],
@@ -64,10 +65,13 @@ async def test_async_entry_methods_use_the_ldap_client_interface():
     assert await entry.move_async("cn=moved,dc=example,dc=com") is entry
     child = await entry.addChild_async("cn=child", {"objectClass": ["person"]})
     assert child.dn.getText() == "cn=child,cn=moved,dc=example,dc=com"
-    assert await entry.setPassword_ExtendedOperation_async("new-secret") is entry
-    assert await entry.setPassword_Samba_async("new-secret", style="sambaSamAccount") is entry
-    assert await entry.setPasswordMaybe_Samba_async("new-secret") is entry
-    assert await entry.setPassword_async("new-secret") is entry
+    assert await entry.setPassword_ExtendedOperation_async(b"new-secret") is entry
+    assert (
+        await entry.setPassword_Samba_async(b"new-secret", style="sambaSamAccount")
+        is entry
+    )
+    assert await entry.setPasswordMaybe_Samba_async(b"new-secret") is entry
+    assert await entry.setPassword_async(b"new-secret") is entry
     context = await entry.namingContext_async()
     assert context.dn.getText() == "dc=example,dc=com"
     assert await entry.fetch_async("cn") is entry
@@ -76,13 +80,14 @@ async def test_async_entry_methods_use_the_ldap_client_interface():
         filterObject=pureldap.LDAPFilter_present("cn"),
         derefAliases=pureldap.LDAP_DEREF_neverDerefAliases,
     )
+    assert isinstance(results, Sequence)
     assert results[0].dn.getText() == "cn=user,dc=example,dc=com"
     found = await entry.lookup_async("cn=user,dc=example,dc=com")
     assert found.dn.getText() == "cn=user,dc=example,dc=com"
     assert await entry.delete_async() is entry
 
 
-async def test_async_entry_operations_surface_real_ldap_errors():
+async def test_async_entry_operations_surface_real_ldap_errors() -> None:
     client = LDAPClientTestDriver(
         [pureldap.LDAPModifyResponse(resultCode=ldaperrors.LDAPNoSuchObject.resultCode)],
         [
@@ -112,7 +117,7 @@ async def test_async_entry_operations_surface_real_ldap_errors():
         await entry.addChild_async("cn=child", {"cn": ["child"]})
 
 
-async def test_password_error_repr_and_non_ready_state():
+async def test_password_error_repr_and_non_ready_state() -> None:
     error = ldapsyntax.PasswordSetAggregateError(
         [("plugin", Failure(RuntimeError("failed")))]
     )
@@ -123,10 +128,12 @@ async def test_password_error_repr_and_non_ready_state():
         await entry.commit()
 
 
-async def test_search_accepts_reference_and_nonfatal_size_limit_responses():
+async def test_search_accepts_reference_and_nonfatal_size_limit_responses() -> None:
     client = LDAPClientTestDriver(
         [
-            pureldap.LDAPSearchResultReference(["ldap://example"]),
+            pureldap.LDAPSearchResultReference(
+                [pureldap.LDAPString("ldap://example")]
+            ),
             pureldap.LDAPSearchResultDone(
                 resultCode=ldaperrors.LDAPSizeLimitExceeded.resultCode
             ),
@@ -136,7 +143,7 @@ async def test_search_accepts_reference_and_nonfatal_size_limit_responses():
     assert await entry.search_async(sizeLimitIsNonFatal=True) == []
 
 
-async def test_search_rejects_non_search_protocol_response():
+async def test_search_rejects_non_search_protocol_response() -> None:
     client = LDAPClientTestDriver([pureldap.LDAPBindResponse(resultCode=0)])
     entry = ldapsyntax.LDAPEntry(client, "dc=example,dc=com")
     with pytest.raises(ldaperrors.LDAPProtocolError, match="bad search response"):
@@ -148,7 +155,7 @@ class TestLDAPEntryTests:
     Unit tests for LDAPEntry.
     """
 
-    def testCreation(self):
+    def testCreation(self) -> None:
         """Creating an LDAP object should succeed."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
@@ -166,7 +173,7 @@ class TestLDAPEntryTests:
         assert o["bValue"] == ["b"]
         client.assertNothingSent()
 
-    def testKeys(self):
+    def testKeys(self) -> None:
         """Iterating over the keys of an LDAP object gives expected results."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
@@ -188,7 +195,7 @@ class TestLDAPEntryTests:
             "bValue": 1,
         }
 
-    def testItems(self):
+    def testItems(self) -> None:
         """Iterating over the items of an LDAP object gives expected results."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
@@ -210,7 +217,7 @@ class TestLDAPEntryTests:
             "bValue": ["b"],
         }
 
-    def testIn(self):
+    def testIn(self) -> None:
         """Key in object gives expected results."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
@@ -227,7 +234,7 @@ class TestLDAPEntryTests:
         assert "bValue" in o
         assert "foo" not in o
         assert "" not in o
-        assert None not in o
+        assert None not in o  # type: ignore[operator]
 
         assert "a" in o["objectClass"]
         assert "b" in o["objectClass"]
@@ -240,7 +247,7 @@ class TestLDAPEntryTests:
         assert "" not in o["aValue"]
         assert None not in o["aValue"]
 
-    def testInequalityOtherObject(self):
+    def testInequalityOtherObject(self) -> None:
         """
         It is not equal with non LDAPEntry objects.
         """
@@ -252,7 +259,7 @@ class TestLDAPEntryTests:
 
         assert "dc=example,dc=com" != sut
 
-    def testInequalityDN(self):
+    def testInequalityDN(self) -> None:
         """
         Entries with different DN are not equal.
         """
@@ -268,7 +275,7 @@ class TestLDAPEntryTests:
 
         assert first != second
 
-    def testInequalityAttributes(self):
+    def testInequalityAttributes(self) -> None:
         """
         Entries with same DN but different attributes are not equal.
         """
@@ -286,7 +293,7 @@ class TestLDAPEntryTests:
 
         assert first != second
 
-    def testInequalityValues(self):
+    def testInequalityValues(self) -> None:
         """
         Entries with same DN same attributes, but different
         values for attributes are not equal.
@@ -305,7 +312,7 @@ class TestLDAPEntryTests:
 
         assert first != second
 
-    def testEquality(self):
+    def testEquality(self) -> None:
         """
         Entries with same DN, same attributes, and same values for
         attributes equal, regardless of the order of the attributes.
@@ -330,7 +337,7 @@ class TestLDAPEntryTests:
 
         assert first == second
 
-    def testHashEqual(self):
+    def testHashEqual(self) -> None:
         """
         Entries which are equal have the same hash.
         """
@@ -347,7 +354,7 @@ class TestLDAPEntryTests:
         assert first == second
         assert hash(first) == hash(second)
 
-    def testHashNotEqual(self):
+    def testHashNotEqual(self) -> None:
         """
         Entries which are not equal have different hash values.
         """
@@ -366,7 +373,7 @@ class TestLDAPEntryTests:
 
 
 class TestLDAPSyntaxAttributes:
-    def testAttributeSetting(self):
+    def testAttributeSetting(self) -> None:
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
             client=client,
@@ -387,7 +394,7 @@ class TestLDAPSyntaxAttributes:
         assert o["bValue"] == ["b"]
         assert o["cValue"] == ["thud"]
 
-    def testAttributeDelete(self):
+    def testAttributeDelete(self) -> None:
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
             client=client,
@@ -404,7 +411,7 @@ class TestLDAPSyntaxAttributes:
         assert not ("aValue" in o)
         assert not ("bValue" in o)
 
-    def testAttributeAdd(self):
+    def testAttributeAdd(self) -> None:
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
             client=client,
@@ -418,7 +425,7 @@ class TestLDAPSyntaxAttributes:
         o["aValue"].add("foo")
         assert o["aValue"] == ["a", "foo"]
 
-    def testAttributeItemDelete(self):
+    def testAttributeItemDelete(self) -> None:
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
             client=client,
@@ -432,7 +439,7 @@ class TestLDAPSyntaxAttributes:
         o["aValue"].remove("b")
         assert o["aValue"] == ["a", "c"]
 
-    def testUndo(self):
+    def testUndo(self) -> None:
         """Undo should forget the modifications."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
@@ -453,7 +460,7 @@ class TestLDAPSyntaxAttributes:
         assert o["bValue"] == ["b"]
         assert o["cValue"] == ["c"]
 
-    async def testUndoJournaling(self):
+    async def testUndoJournaling(self) -> None:
         """Journaling should still work after undo."""
         client = LDAPClientTestDriver(
             [
@@ -492,7 +499,7 @@ class TestLDAPSyntaxAttributes:
             ).asLDAP()
         )
 
-    async def testUndoAfterCommit(self):
+    async def testUndoAfterCommit(self) -> None:
         """Undo should not undo things that have been commited."""
 
         client = LDAPClientTestDriver(
@@ -526,7 +533,7 @@ class TestLDAPSyntaxAttributes:
 
 
 class TestLDAPSyntaxAttributesModificationOnWire:
-    async def testAdd(self):
+    async def testAdd(self) -> None:
         """Modify & commit should write the right data to the server."""
 
         client = LDAPClientTestDriver(
@@ -559,7 +566,7 @@ class TestLDAPSyntaxAttributesModificationOnWire:
             ).asLDAP()
         )
 
-    async def testAddSeparate(self):
+    async def testAddSeparate(self) -> None:
         """Modify & commit should write the right data to the server."""
 
         client = LDAPClientTestDriver(
@@ -594,7 +601,7 @@ class TestLDAPSyntaxAttributesModificationOnWire:
             ).asLDAP()
         )
 
-    async def testDeleteAttribute(self):
+    async def testDeleteAttribute(self) -> None:
         """Modify & commit should write the right data to the server."""
 
         client = LDAPClientTestDriver(
@@ -623,7 +630,7 @@ class TestLDAPSyntaxAttributesModificationOnWire:
             ).asLDAP()
         )
 
-    async def testDeleteAllAttribute(self):
+    async def testDeleteAllAttribute(self) -> None:
         """Modify & commit should write the right data to the server."""
 
         client = LDAPClientTestDriver(
@@ -659,7 +666,7 @@ class TestLDAPSyntaxAttributesModificationOnWire:
             ).asLDAP()
         )
 
-    async def testReplaceAttributes(self):
+    async def testReplaceAttributes(self) -> None:
         """Modify & commit should write the right data to the server."""
 
         client = LDAPClientTestDriver(
@@ -692,7 +699,7 @@ class TestLDAPSyntaxAttributesModificationOnWire:
 class TestLDAPSyntaxSearch:
     timeout = 3
 
-    async def _test_search(self, return_controls=False):
+    async def _test_search(self, return_controls: bool = False) -> None:
         """
         Create a test search.
         Return the response with no handler.
@@ -733,6 +740,7 @@ class TestLDAPSyntaxSearch:
             return_controls=return_controls,
         )
         if return_controls:
+            assert isinstance(val, tuple)
             val = val[0]
         client.assertSent(
             pureldap.LDAPSearchRequest(
@@ -749,6 +757,7 @@ class TestLDAPSyntaxSearch:
                 attributes=["foo", "bar"],
             )
         )
+        assert isinstance(val, Sequence)
         assert len(val) == 2
         assert val[0] == (ldapsyntax.LDAPEntry(
                 client=client,
@@ -767,11 +776,11 @@ class TestLDAPSyntaxSearch:
                 },
             ))
 
-    async def testSearch(self):
+    async def testSearch(self) -> None:
         """Test searches."""
         await self._test_search()
 
-    async def test_search_not_connected(self):
+    async def test_search_not_connected(self) -> None:
         client = ldapclient.LDAPClient()
         o = ldapsyntax.LDAPEntry(
             client=client,
@@ -783,10 +792,10 @@ class TestLDAPSyntaxSearch:
         with pytest.raises(ldapclient.LDAPClientConnectionLostException):
             await o.search(filterText="(foo=a)", attributes=["foo", "bar"])
 
-    async def test_search_controls_returned(self):
+    async def test_search_controls_returned(self) -> None:
         await self._test_search(return_controls=True)
 
-    async def test_search_size_limit_exceeded(self):
+    async def test_search_size_limit_exceeded(self) -> None:
         client = LDAPClientTestDriver(
             [
                 pureldap.LDAPSearchResultEntry(
@@ -817,9 +826,10 @@ class TestLDAPSyntaxSearch:
             return_controls=False,
         )
 
+        assert isinstance(results, Sequence)
         assert len(results) == 1
 
-    async def testSearch_defaultAttributes(self):
+    async def testSearch_defaultAttributes(self) -> None:
         """Search without explicit list of attributes returns all attributes."""
 
         client = LDAPClientTestDriver(
@@ -870,6 +880,7 @@ class TestLDAPSyntaxSearch:
                 attributes=[],
             )
         )
+        assert isinstance(val, Sequence)
         assert len(val) == 2
 
         assert val[0] == (ldapsyntax.LDAPEntry(
@@ -892,7 +903,7 @@ class TestLDAPSyntaxSearch:
             ))
         assert val[1].complete
 
-    async def testSearch_noAttributes(self):
+    async def testSearch_noAttributes(self) -> None:
         """Search with attributes=None returns no attributes."""
 
         client = LDAPClientTestDriver(
@@ -935,6 +946,7 @@ class TestLDAPSyntaxSearch:
                 attributes=["1.1"],
             )
         )
+        assert isinstance(val, Sequence)
         assert len(val) == 2
 
         assert val[0] == ldapsyntax.LDAPEntry(client=client, dn="cn=foo,dc=example,dc=com")
@@ -943,7 +955,7 @@ class TestLDAPSyntaxSearch:
         assert val[1] == ldapsyntax.LDAPEntry(client=client, dn="cn=bar,dc=example,dc=com")
         assert not (val[1].complete)
 
-    async def testSearch_ImmediateProcessing(self):
+    async def testSearch_ImmediateProcessing(self) -> None:
         """Test searches with the immediate processing feature."""
 
         client = LDAPClientTestDriver(
@@ -970,9 +982,9 @@ class TestLDAPSyntaxSearch:
             },
         )
 
-        seen = []
+        seen: list[ldapsyntax.LDAPEntryWithClient] = []
 
-        def process(o):
+        def process(o: ldapsyntax.LDAPEntryWithClient) -> None:
             seen.append(o)
 
 
@@ -1013,7 +1025,7 @@ class TestLDAPSyntaxSearch:
                 ),
             ])
 
-    async def testSearch_fail(self):
+    async def testSearch_fail(self) -> None:
         client = LDAPClientTestDriver(
             [
                 pureldap.LDAPSearchResultDone(
@@ -1046,7 +1058,7 @@ class TestLDAPSyntaxSearch:
             )
         )
 
-    async def testSearch_err(self):
+    async def testSearch_err(self) -> None:
         client = LDAPClientTestDriver([Failure(ConnectionLost())])
         o = ldapsyntax.LDAPEntry(client=client, dn="dc=example,dc=com")
 
@@ -1056,7 +1068,7 @@ class TestLDAPSyntaxSearch:
 
 
 class TestLDAPSyntaxDNs:
-    def testDNKeyExistenceSuccess(self):
+    def testDNKeyExistenceSuccess(self) -> None:
         client = LDAPClientTestDriver()
         ldapsyntax.LDAPEntry(
             client=client,
@@ -1068,7 +1080,7 @@ class TestLDAPSyntaxDNs:
 
 
 class TestLDAPSyntaxLDIF:
-    def testLDIFConversion(self):
+    def testLDIFConversion(self) -> None:
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
             client=client,
@@ -1090,7 +1102,7 @@ bValue: c
 
 
 class TestLDAPSyntaxDelete:
-    async def testDeleteInvalidates(self):
+    async def testDeleteInvalidates(self) -> None:
         """Deleting an LDAPEntry invalidates it."""
         client = LDAPClientTestDriver(
             [
@@ -1112,7 +1124,7 @@ class TestLDAPSyntaxDelete:
         with pytest.raises(ldapsyntax.ObjectDeletedError):
             o.get("objectClass")
 
-    async def testDeleteOnWire(self):
+    async def testDeleteOnWire(self) -> None:
         """LDAPEntry.delete should write the right data to the server."""
         client = LDAPClientTestDriver(
             [
@@ -1135,7 +1147,7 @@ class TestLDAPSyntaxDelete:
             )
         )
 
-    async def testErrorHandling(self):
+    async def testErrorHandling(self) -> None:
         """LDAPEntry.delete should raise LDAP errors to its caller."""
         client = LDAPClientTestDriver(
             [
@@ -1165,7 +1177,7 @@ class TestLDAPSyntaxDelete:
             )
         )
 
-    async def testErrorHandling_extended(self):
+    async def testErrorHandling_extended(self) -> None:
         """LDAPEntry.delete should raise even non-LDAPDelResponse errors."""
         client = LDAPClientTestDriver(
             [
@@ -1197,7 +1209,7 @@ class TestLDAPSyntaxDelete:
 
 
 class TestLDAPSyntaxAddChild:
-    async def testAddChildOnWire(self):
+    async def testAddChildOnWire(self) -> None:
         """LDAPEntry.addChild should write the right data to the server."""
         client = LDAPClientTestDriver(
             [
@@ -1250,7 +1262,7 @@ class TestLDAPSyntaxAddChild:
 
 
 class TestLDAPSyntaxContainingNamingContext:
-    def setup_method(self):
+    def setup_method(self) -> None:
         attributes = [
             (
                 "namingContexts",
@@ -1270,7 +1282,7 @@ class TestLDAPSyntaxContainingNamingContext:
             ]
         )
 
-    async def testNamingContext(self):
+    async def testNamingContext(self) -> None:
         """LDAPEntry.namingContext returns the naming context that contains this object."""
         o = ldapsyntax.LDAPEntry(
             client=self.client,
@@ -1293,7 +1305,7 @@ class TestLDAPSyntaxContainingNamingContext:
             )
         )
 
-    async def testNoContainingNamingContext(self):
+    async def testNoContainingNamingContext(self) -> None:
         """LDAPEntry.namingContext raises exception if there are no naming contexts with it"""
         o = ldapsyntax.LDAPEntry(
             client=self.client,
@@ -1305,11 +1317,11 @@ class TestLDAPSyntaxContainingNamingContext:
 
 
 class TestLDAPSyntaxPasswords:
-    def setup_method(self):
+    def setup_method(self) -> None:
         cfg = config.loadConfig()
         cfg.set("samba", "use-lmhash", "no")
 
-    async def testPasswordSetting_ExtendedOperation(self):
+    async def testPasswordSetting_ExtendedOperation(self) -> None:
         """LDAPEntry.setPassword_ExtendedOperation(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1329,7 +1341,7 @@ class TestLDAPSyntaxPasswords:
             ),
         )
 
-    async def testPasswordSetting_Samba_sambaAccount(self):
+    async def testPasswordSetting_Samba_sambaAccount(self) -> None:
         """LDAPEntry.setPassword_Samba(newPasswd=...,
         style='sambaAccount') changes the password."""
         client = LDAPClientTestDriver(
@@ -1354,7 +1366,7 @@ class TestLDAPSyntaxPasswords:
             ).asLDAP()
         )
 
-    async def testPasswordSetting_Samba_sambaSamAccount(self):
+    async def testPasswordSetting_Samba_sambaSamAccount(self) -> None:
         """LDAPEntry.setPassword_Samba(newPasswd=..., style='sambaSamAccount') changes the password."""
         client = LDAPClientTestDriver(
             [pureldap.LDAPModifyResponse(resultCode=0, matchedDN="", errorMessage="")],
@@ -1378,7 +1390,7 @@ class TestLDAPSyntaxPasswords:
             ).asLDAP()
         )
 
-    async def testPasswordSetting_Samba_defaultStyle(self):
+    async def testPasswordSetting_Samba_defaultStyle(self) -> None:
         """LDAPEntry.setPassword_Samba(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [pureldap.LDAPModifyResponse(resultCode=0, matchedDN="", errorMessage="")],
@@ -1402,7 +1414,7 @@ class TestLDAPSyntaxPasswords:
             ).asLDAP()
         )
 
-    async def testPasswordSetting_Samba_badStyle(self):
+    async def testPasswordSetting_Samba_badStyle(self) -> None:
         """LDAPEntry.setPassword_Samba(..., style='foo') fails."""
         client = LDAPClientTestDriver(
             [pureldap.LDAPModifyResponse(resultCode=0, matchedDN="", errorMessage="")],
@@ -1416,7 +1428,7 @@ class TestLDAPSyntaxPasswords:
         assert str(excinfo.value) == "Unknown samba password style 'foo'"
         client.assertNothingSent()
 
-    async def testPasswordSettingAll_noSamba(self):
+    async def testPasswordSettingAll_noSamba(self) -> None:
         """LDAPEntry.setPassword(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1443,7 +1455,7 @@ class TestLDAPSyntaxPasswords:
             ),
         )
 
-    async def testPasswordSettingAll_hasSamba(self):
+    async def testPasswordSettingAll_hasSamba(self) -> None:
         """LDAPEntry.setPassword(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1482,7 +1494,7 @@ class TestLDAPSyntaxPasswords:
             ).asLDAP(),
         )
 
-    async def testPasswordSettingAll_hasSambaSam(self):
+    async def testPasswordSettingAll_hasSambaSam(self) -> None:
         """LDAPEntry.setPassword(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1521,7 +1533,7 @@ class TestLDAPSyntaxPasswords:
             ).asLDAP(),
         )
 
-    async def testPasswordSettingAll_hasSamba_differentCase(self):
+    async def testPasswordSettingAll_hasSamba_differentCase(self) -> None:
         """LDAPEntry.setPassword(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1560,7 +1572,7 @@ class TestLDAPSyntaxPasswords:
             ).asLDAP(),
         )
 
-    async def testPasswordSettingAll_hasSambaSam_differentCase(self):
+    async def testPasswordSettingAll_hasSambaSam_differentCase(self) -> None:
         """LDAPEntry.setPassword(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1599,7 +1611,7 @@ class TestLDAPSyntaxPasswords:
             ).asLDAP(),
         )
 
-    async def testPasswordSettingAll_maybeSamba_WillFind(self):
+    async def testPasswordSettingAll_maybeSamba_WillFind(self) -> None:
         """LDAPEntry.setPassword(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1650,7 +1662,7 @@ class TestLDAPSyntaxPasswords:
             ).asLDAP(),
         )
 
-    async def testPasswordSettingAll_maybeSamba_WillNotFind(self):
+    async def testPasswordSettingAll_maybeSamba_WillNotFind(self) -> None:
         """LDAPEntry.setPassword(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1689,7 +1701,7 @@ class TestLDAPSyntaxPasswords:
             ),
         )
 
-    async def testPasswordSettingAll_maybeSamba_WillNotFindAnything(self):
+    async def testPasswordSettingAll_maybeSamba_WillNotFindAnything(self) -> None:
         """LDAPEntry.setPassword(newPasswd=...) changes the password."""
         client = LDAPClientTestDriver(
             [
@@ -1734,7 +1746,7 @@ class TestLDAPSyntaxPasswords:
             ),
         )
 
-    async def testPasswordSetting_abortsOnFirstError(self):
+    async def testPasswordSetting_abortsOnFirstError(self) -> None:
         """LDAPEntry.setPassword() aborts on first error (does not parallelize, as it used to)."""
         client = LDAPClientTestDriver(
             [
@@ -1783,7 +1795,7 @@ class TestLDAPSyntaxPasswords:
 
 
 class TestLDAPSyntaxFetch:
-    async def testFetch_WithDirtyJournal(self):
+    async def testFetch_WithDirtyJournal(self) -> None:
         """Trying to fetch attributes with a dirty journal fails."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(client=client, dn="cn=foo,dc=example,dc=com")
@@ -1792,7 +1804,7 @@ class TestLDAPSyntaxFetch:
         with pytest.raises(ldapsyntax.ObjectDirtyError):
             await o.fetch()
 
-    async def testFetch_Empty(self):
+    async def testFetch_Empty(self) -> None:
         """Fetching attributes for a newly-created object works."""
         client = LDAPClientTestDriver(
             [
@@ -1827,7 +1839,7 @@ class TestLDAPSyntaxFetch:
         assert o["foo"] == [b"a"]
         assert o["bar"] == [b"b", b"c"]
 
-    async def testFetch_Prefilled(self):
+    async def testFetch_Prefilled(self) -> None:
         """Fetching attributes for a (partially) known object overwrites the old attributes."""
         client = LDAPClientTestDriver(
             [
@@ -1866,7 +1878,7 @@ class TestLDAPSyntaxFetch:
         assert o["foo"] == [b"a"]
         assert o["bar"] == [b"b", b"c"]
 
-    async def testFetch_Partial(self):
+    async def testFetch_Partial(self) -> None:
         """Fetching only some of the attributes does not overwrite existing values of different attribute types."""
         client = LDAPClientTestDriver(
             [
@@ -1907,7 +1919,7 @@ class TestLDAPSyntaxFetch:
         assert o[b"bar"] == [b"b", b"c"]
         assert o[b"quux"] == [b"baz", b"xyzzy"]
 
-    async def testCommitAndFetch(self):
+    async def testCommitAndFetch(self) -> None:
         """Fetching after a commit works."""
 
         client = LDAPClientTestDriver(
@@ -1948,10 +1960,13 @@ class TestLDAPSyntaxFetch:
 
 
 class TestLDAPSyntaxRDNHandling:
-    def testRemovingRDNFails(self):
+    def testRemovingRDNFails(self) -> None:
         """Removing RDN fails with CannotRemoveRDNError."""
+        client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
-            client=None,
+            # Nothing is sent: the modification is refused before that, and
+            # the driver has no responses to give if it were.
+            client=client,
             dn="cn=foo,dc=example,dc=com",
             attributes={
                 "objectClass": ["someObjectClass"],
@@ -1967,38 +1982,42 @@ class TestLDAPSyntaxRDNHandling:
             )):
             o["cn"].remove("foo")
 
-        def f():
+        def delete_attribute() -> None:
             del o["cn"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(
                 "The attribute to be removed, 'cn', "
                 "is the RDN for the object and cannot be removed."
             )):
-            f()
+            delete_attribute()
 
-        def f():
+
+        def replace_attribute() -> None:
             o["cn"] = ["thud"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(
                 "The attribute to be removed, 'cn', "
                 "is the RDN for the object and cannot be removed."
             )):
-            f()
+            replace_attribute()
+
 
         # TODO maybe this should be ok, it preserves the RDN.
         # For now, disallow it.
-        def f():
+        def replace_with_rdn() -> None:
             o["cn"] = ["foo"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(
                 "The attribute to be removed, 'cn', "
                 "is the RDN for the object and cannot be removed."
             )):
-            f()
+            replace_with_rdn()
+
+        client.assertNothingSent()
 
 
 class TestLDAPSyntaxMove:
-    async def test_move(self):
+    async def test_move(self) -> None:
         client = LDAPClientTestDriver(
             [
                 pureldap.LDAPModifyDNResponse(
@@ -2032,7 +2051,7 @@ class TestLDAPSyntaxMove:
 
 
 class TestBind:
-    async def test_ok(self):
+    async def test_ok(self) -> None:
         client = LDAPClientTestDriver(
             [
                 pureldap.LDAPBindResponse(resultCode=0, matchedDN=""),
@@ -2045,7 +2064,7 @@ class TestBind:
             pureldap.LDAPBindRequest(dn="cn=foo,dc=example,dc=com", auth="s3krit")
         )
 
-    async def test_fail(self):
+    async def test_fail(self) -> None:
         client = LDAPClientTestDriver(
             [
                 pureldap.LDAPBindResponse(
@@ -2061,7 +2080,7 @@ class TestBind:
         with pytest.raises(ldaperrors.LDAPInvalidCredentials):
             await o.bind("s3krit")
 
-    async def test_err(self):
+    async def test_err(self) -> None:
         client = LDAPClientTestDriver([Failure(ConnectionLost())])
 
         o = ldapsyntax.LDAPEntry(client=client, dn="cn=foo,dc=example,dc=com")

@@ -3,9 +3,23 @@
 """
 
 import warnings
+from collections.abc import Iterable
+from typing import Any, Protocol, TypeVar, overload
 
 
-def to_bytes(value):
+class SupportsToWire(Protocol):
+    """Anything that can render itself as LDAP wire bytes."""
+
+    def toWire(self) -> bytes: ...
+
+
+@overload
+def to_bytes(value: SupportsToWire) -> bytes: ...
+@overload
+def to_bytes(value: int | str | bytes | bytearray | memoryview | Iterable[int]) -> bytes: ...
+def to_bytes(
+    value: SupportsToWire | int | str | bytes | bytearray | memoryview | Iterable[int],
+) -> bytes:
     """
     Converts value to its bytes representation:
 
@@ -22,7 +36,17 @@ def to_bytes(value):
     return bytes(value)
 
 
-def to_unicode(value):
+_T = TypeVar("_T")
+
+
+@overload
+def to_unicode(value: bytes) -> str: ...
+@overload
+def to_unicode(value: _T) -> _T: ...
+# The overloads say what callers see: bytes become str, and anything else is
+# handed straight back with its own type. An implementation returning both has
+# to be spelled Any.
+def to_unicode(value: Any) -> Any:
     """
     Converts string to unicode:
 
@@ -34,7 +58,17 @@ def to_unicode(value):
     return value
 
 
-def get_strings(value):
+@overload
+def get_strings(value: str) -> tuple[str, bytes]: ...
+@overload
+def get_strings(value: bytes) -> tuple[bytes, str]: ...
+@overload
+def get_strings(value: str | bytes) -> tuple[str | bytes, str | bytes]: ...
+@overload
+def get_strings(value: object) -> tuple[object, ...]: ...
+# Text and bytes each come back as both spellings, and anything else as
+# itself; an implementation producing all three has to be spelled Any.
+def get_strings(value: Any) -> tuple[Any, ...]:
     """
     Getting tuple of available string values
     (byte string and unicode string) for
@@ -53,7 +87,7 @@ class WireStrAlias:
     as an alias of toWire method but marks it as deprecated
     """
 
-    def __str__(self):
+    def __str__(self) -> str:
         warnings.simplefilter("always", DeprecationWarning)
         warnings.warn(
             f"{self.__class__.__name__}.__str__ method is deprecated and will not be used "
@@ -63,9 +97,11 @@ class WireStrAlias:
             stacklevel=2,
         )
         warnings.simplefilter("default", DeprecationWarning)
-        return self.toWire()
+        # Deliberately wrong: toWire returns bytes, so this raises TypeError.
+        # The method only exists to warn callers off, and is tested for it.
+        return self.toWire()  # type: ignore[return-value]
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         raise NotImplementedError("toWire method is not implemented")
 
 
@@ -75,7 +111,7 @@ class TextStrAlias:
     as an alias of getText method but marks it as deprecated
     """
 
-    def __str__(self):
+    def __str__(self) -> str:
         warnings.simplefilter("always", DeprecationWarning)
         warnings.warn(
             f"{self.__class__.__name__}.__str__ method is deprecated and will not be used "
@@ -88,5 +124,5 @@ class TextStrAlias:
         text = self.getText()
         return text
 
-    def getText(self):
+    def getText(self) -> str:
         raise NotImplementedError("getText method is not implemented")

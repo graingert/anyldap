@@ -15,7 +15,7 @@ class TestBaseLDAPEntry:
     Tests for anyldap.entry.BaseLDAPEntry.
     """
 
-    def testLengthTruthLegacyTruthAndMembership(self):
+    def testLengthTruthLegacyTruthAndMembership(self) -> None:
         value = entry.BaseLDAPEntry(
             dn="dc=foo", attributes={"member": ["cn=one"], "cn": ["foo"]}
         )
@@ -25,18 +25,24 @@ class TestBaseLDAPEntry:
         assert value.hasMember("cn=one")
         assert not (value.hasMember("cn=two"))
 
-    def testEditableAbstractOperations(self):
+    def testEditableAbstractOperations(self) -> None:
         value = entry.EditableLDAPEntry(dn="dc=foo")
-        for operation, args in [
-            (value.undo, ()),
-            (value.commit, ()),
-            (value.move, ("dc=bar",)),
-            (value.delete, ()),
-        ]:
-            with pytest.raises(NotImplementedError):
-                operation(*args)
+        with pytest.raises(NotImplementedError):
+            value.undo()
 
-    def testEqualitySameType(self):
+    async def testEditableAbstractAsyncOperations(self) -> None:
+        """
+        The operations a backend has to reach out to do are awaited.
+        """
+        value = entry.EditableLDAPEntry(dn="dc=foo")
+        with pytest.raises(NotImplementedError):
+            await value.commit()
+        with pytest.raises(NotImplementedError):
+            await value.move("dc=bar")
+        with pytest.raises(NotImplementedError):
+            await value.delete()
+
+    def testEqualitySameType(self) -> None:
         """
         It is equal if it has the same DN (case insensitive)
         and same attributes and values.
@@ -56,14 +62,14 @@ class TestBaseLDAPEntry:
 
         assert a == b
 
-    def testEqualityDifferentType(self):
+    def testEqualityDifferentType(self) -> None:
         """
         It is not equal with objects of different types.
         """
         a = entry.BaseLDAPEntry(dn="dc=foo", attributes={})
         assert not (a == object())
 
-    def testInequalityDifferentDN(self):
+    def testInequalityDifferentDN(self) -> None:
         """
         Entries are not equal if their DNs are not equal
         """
@@ -71,7 +77,7 @@ class TestBaseLDAPEntry:
         b = entry.BaseLDAPEntry(dn="dn=bar", attributes={"foo": ["bar"]})
         assert a != b
 
-    async def testBindPlainText(self):
+    async def testBindPlainText(self) -> None:
         """
         It will bind when the password for the entry is stored in plain text,
         and returns itself.
@@ -85,7 +91,7 @@ class TestBaseLDAPEntry:
 
         assert sut is await sut.bind(b"some-plain-text")
 
-    async def testBindSeededSHA(self):
+    async def testBindSeededSHA(self) -> None:
         """
         It can bind with password stored in seeded SHA.
         """
@@ -98,7 +104,7 @@ class TestBaseLDAPEntry:
 
         assert sut is await sut.bind(b"secret")
 
-    async def testBindPlainTextError(self):
+    async def testBindPlainTextError(self) -> None:
         """
         Return a LDAPInvalidCredentials failure when password don't match.
         """
@@ -112,7 +118,7 @@ class TestBaseLDAPEntry:
         with pytest.raises(LDAPInvalidCredentials):
             await sut.bind(b"other-password")
 
-    async def testBindSHAError(self):
+    async def testBindSHAError(self) -> None:
         """
         Return a LDAPInvalidCredentials failure when encoded password don't
         match.
@@ -127,7 +133,7 @@ class TestBaseLDAPEntry:
         with pytest.raises(LDAPInvalidCredentials):
             await sut.bind(b"other-password")
 
-    def testGetLDIF(self):
+    def testGetLDIF(self) -> None:
         """
         Getting human readable representation of an entry
         """
@@ -140,12 +146,12 @@ class TestBaseLDAPEntry:
         )
         assert sut.getLDIF() == "dn: dc=foo\nbar: foo\nfoo: bar\n\n"
 
-    def testNonzero(self):
+    def testNonzero(self) -> None:
         """Entry is always non-zero"""
         sut = entry.BaseLDAPEntry(dn="")
         assert bool(sut)
 
-    def testRepr(self):
+    def testRepr(self) -> None:
         """
         Getting string representation of an entry
         """
@@ -164,7 +170,7 @@ class TestDiffEntry:
     Tests for anyldap.entry.BaseLDAPEntry.diff()
     """
 
-    def testEqual(self):
+    def testEqual(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -180,7 +186,7 @@ class TestDiffEntry:
         result = a.diff(b)
         assert result is None
 
-    def testAdd_New_OneType_OneValue(self):
+    def testAdd_New_OneType_OneValue(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -202,7 +208,7 @@ class TestDiffEntry:
                 ],
             ))
 
-    def testAdd_New_OneType_ManyValues(self):
+    def testAdd_New_OneType_ManyValues(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -224,7 +230,7 @@ class TestDiffEntry:
                 ],
             ))
 
-    def testAdd_New_ManyTypes(self):
+    def testAdd_New_ManyTypes(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -248,7 +254,7 @@ class TestDiffEntry:
                 ],
             ))
 
-    def testAdd_Existing_OneType_OneValue(self):
+    def testAdd_Existing_OneType_OneValue(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -269,7 +275,7 @@ class TestDiffEntry:
                 ],
             ))
 
-    def testAdd_Existing_OneType_ManyValues(self):
+    def testAdd_Existing_OneType_ManyValues(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -290,7 +296,7 @@ class TestDiffEntry:
                 ],
             ))
 
-    def testAdd_NewAndExisting_ManyTypes(self):
+    def testAdd_NewAndExisting_ManyTypes(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -316,7 +322,7 @@ class TestDiffEntry:
                 ],
             ))
 
-    def testDelete_All_OneType(self):
+    def testDelete_All_OneType(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -338,7 +344,7 @@ class TestDiffEntry:
                 ],
             ))
 
-    def testDelete_Some_OneType(self):
+    def testDelete_Some_OneType(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="dc=foo",
             attributes={
@@ -361,7 +367,7 @@ class TestDiffEntry:
                 ],
             ))
 
-    def testComplex(self):
+    def testComplex(self) -> None:
         a = entry.BaseLDAPEntry(
             dn="cn=Paula Jensen,ou=Product Development,dc=airius,dc=com",
             attributes={

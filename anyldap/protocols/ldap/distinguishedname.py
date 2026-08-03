@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from functools import total_ordering
 
 from anyldap._encoder import TextStrAlias, to_unicode
@@ -11,7 +12,7 @@ escapedChars_leading = " #"
 escapedChars_trailing = " #"
 
 
-def escape(s):
+def escape(s: str) -> str:
     r = ""
     r_trailer = ""
 
@@ -34,7 +35,7 @@ def escape(s):
     return r + r_trailer
 
 
-def unescape(s):
+def unescape(s: str) -> str:
     r = ""
 
     while s:
@@ -52,7 +53,7 @@ def unescape(s):
     return r
 
 
-def _splitOnNotEscaped(s, separator):
+def _splitOnNotEscaped(s: str, separator: str) -> list[str]:
     if not s:
         return []
 
@@ -84,20 +85,25 @@ class InvalidRelativeDistinguishedName(Exception):
     bytes for PY2 and unicode for PY3.
     """
 
-    def __init__(self, rdn):
+    def __init__(self, rdn: object) -> None:
         Exception.__init__(self)
         self.rdn = rdn
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "Invalid relative distinguished name %s." % repr(self.rdn)
 
 
 class LDAPAttributeTypeAndValue(TextStrAlias):
     # TODO I should be used everywhere
-    attributeType = None
-    value = None
+    attributeType: str
+    value: str
 
-    def __init__(self, stringValue=None, attributeType=None, value=None):
+    def __init__(
+        self,
+        stringValue: str | bytes | None = None,
+        attributeType: str | bytes | None = None,
+        value: str | bytes | None = None,
+    ) -> None:
         if stringValue is None:
             assert attributeType is not None
             assert value is not None
@@ -107,16 +113,16 @@ class LDAPAttributeTypeAndValue(TextStrAlias):
             assert attributeType is None
             assert value is None
 
-            stringValue = to_unicode(stringValue)
+            text: str = to_unicode(stringValue)
 
-            if "=" not in stringValue:
-                raise InvalidRelativeDistinguishedName(stringValue)
-            self.attributeType, self.value = stringValue.split("=", 1)
+            if "=" not in text:
+                raise InvalidRelativeDistinguishedName(text)
+            self.attributeType, self.value = text.split("=", 1)
 
-    def getText(self):
+    def getText(self) -> str:
         return "=".join((escape(self.attributeType), escape(self.value)))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             self.__class__.__name__
             + "(attributeType="
@@ -126,10 +132,10 @@ class LDAPAttributeTypeAndValue(TextStrAlias):
             + ")"
         )
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash((self.attributeType, self.value))
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, LDAPAttributeTypeAndValue):
             return NotImplemented
         return (
@@ -137,33 +143,38 @@ class LDAPAttributeTypeAndValue(TextStrAlias):
             and self.value.lower() == other.value.lower()
         )
 
-    def __ne__(self, other):
+    def __ne__(self, other: object) -> bool:
         return not (self == other)
 
-    def __lt__(self, other):
-        if not isinstance(other, self.__class__):
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, LDAPAttributeTypeAndValue):
             return False
         if self.attributeType != other.attributeType:
             return self.attributeType < other.attributeType
         else:
             return self.value < other.value
 
-    def __gt__(self, other):
+    def __gt__(self, other: object) -> bool:
         return self != other and not self < other
 
-    def __le__(self, other):
+    def __le__(self, other: object) -> bool:
         return not self > other
 
-    def __ge__(self, other):
+    def __ge__(self, other: object) -> bool:
         return not self < other
 
 
 class RelativeDistinguishedName(TextStrAlias):
     """LDAP Relative Distinguished Name."""
 
-    attributeTypesAndValues = None
+    attributeTypesAndValues: tuple[LDAPAttributeTypeAndValue, ...]
 
-    def __init__(self, magic=None, stringValue=None, attributeTypesAndValues=None):
+    def __init__(
+        self,
+        magic: object = None,
+        stringValue: str | bytes | None = None,
+        attributeTypesAndValues: Iterable[LDAPAttributeTypeAndValue] | None = None,
+    ) -> None:
         if magic is not None:
             assert stringValue is None
             assert attributeTypesAndValues is None
@@ -172,6 +183,7 @@ class RelativeDistinguishedName(TextStrAlias):
             elif isinstance(magic, (bytes, str)):
                 stringValue = magic
             else:
+                assert isinstance(magic, Iterable)
                 attributeTypesAndValues = magic
 
         if stringValue is None:
@@ -185,13 +197,13 @@ class RelativeDistinguishedName(TextStrAlias):
                 for x in _splitOnNotEscaped(to_unicode(stringValue), "+")
             )
 
-    def split(self):
+    def split(self) -> tuple[LDAPAttributeTypeAndValue, ...]:
         return self.attributeTypesAndValues
 
-    def getText(self):
+    def getText(self) -> str:
         return "+".join([x.getText() for x in self.attributeTypesAndValues])
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             self.__class__.__name__
             + "(attributeTypesAndValues="
@@ -199,32 +211,32 @@ class RelativeDistinguishedName(TextStrAlias):
             + ")"
         )
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.attributeTypesAndValues)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, RelativeDistinguishedName):
             return NotImplemented
         return self.split() == other.split()
 
-    def __ne__(self, other):
+    def __ne__(self, other: object) -> bool:
         return not (self == other)
 
-    def __lt__(self, other):
-        if not isinstance(other, self.__class__):
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, RelativeDistinguishedName):
             return False
         return self.split() < other.split()
 
-    def __gt__(self, other):
-        return self != other and self >= other
+    def __gt__(self, other: object) -> bool:
+        return bool(self != other and self >= other)
 
-    def __le__(self, other):
+    def __le__(self, other: object) -> bool:
         return not self > other
 
-    def __ge__(self, other):
+    def __ge__(self, other: object) -> bool:
         return not self < other
 
-    def count(self):
+    def count(self) -> int:
         return len(self.attributeTypesAndValues)
 
 
@@ -232,9 +244,14 @@ class RelativeDistinguishedName(TextStrAlias):
 class DistinguishedName(TextStrAlias):
     """LDAP Distinguished Name."""
 
-    listOfRDNs = None
+    listOfRDNs: tuple[RelativeDistinguishedName, ...]
 
-    def __init__(self, magic=None, stringValue=None, listOfRDNs=None):
+    def __init__(
+        self,
+        magic: object = None,
+        stringValue: str | bytes | None = None,
+        listOfRDNs: Iterable[RelativeDistinguishedName] | None = None,
+    ) -> None:
         assert magic is not None or stringValue is not None or listOfRDNs is not None
         if magic is not None:
             assert stringValue is None
@@ -246,6 +263,7 @@ class DistinguishedName(TextStrAlias):
                 # different encodings.
                 stringValue = magic
             else:
+                assert isinstance(magic, Iterable)
                 listOfRDNs = magic
 
         if stringValue is None:
@@ -260,22 +278,22 @@ class DistinguishedName(TextStrAlias):
                 for x in _splitOnNotEscaped(to_unicode(stringValue), ",")
             )
 
-    def split(self):
+    def split(self) -> tuple[RelativeDistinguishedName, ...]:
         return self.listOfRDNs
 
-    def up(self):
+    def up(self) -> "DistinguishedName":
         return DistinguishedName(listOfRDNs=self.listOfRDNs[1:])
 
-    def getText(self):
+    def getText(self) -> str:
         return ",".join([x.getText() for x in self.listOfRDNs])
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__class__.__name__ + "(listOfRDNs=" + repr(self.listOfRDNs) + ")"
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.getText())
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, bytes):
             return self.getText().encode("utf-8") == other
         if isinstance(other, str):
@@ -284,10 +302,10 @@ class DistinguishedName(TextStrAlias):
             return NotImplemented
         return self.split() == other.split()
 
-    def __ne__(self, other):
+    def __ne__(self, other: object) -> bool:
         return not (self == other)
 
-    def __lt__(self, other):
+    def __lt__(self, other: object) -> bool:
         """
         Comparison used for determining the hierarchy.
         """
@@ -298,8 +316,8 @@ class DistinguishedName(TextStrAlias):
         # See https://github.com/graingert/anyldap/issues/94
         return self.split() < other.split()
 
-    def getDomainName(self):
-        domainParts = []
+    def getDomainName(self) -> str | None:
+        domainParts: list[str] = []
         l = list(self.listOfRDNs)
         l.reverse()
         for rdn in l:
@@ -314,7 +332,7 @@ class DistinguishedName(TextStrAlias):
         else:
             return None
 
-    def contains(self, other):
+    def contains(self, other: object) -> int:
         """Does the tree rooted at DN contain or equal the other DN."""
         if self == other:
             return 1

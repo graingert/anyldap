@@ -2,19 +2,25 @@
 Test cases for the anyldap.config module.
 """
 
+import configparser
 import os
+import pathlib
+from collections.abc import Iterator
 
 import pytest
 
 from anyldap import config
+from anyldap.protocols.ldap import distinguishedname
 
 
-def writeFile(path, content):
+def writeFile(path: str | pathlib.Path, content: bytes) -> None:
     with open(path, "wb") as f:
         f.write(content)
 
 
-def reloadFromContent(base_path, content):
+def reloadFromContent(
+    base_path: str | pathlib.Path, content: bytes
+) -> configparser.ConfigParser:
     """
     Reload the global configuration file with raw `content`.
 
@@ -30,7 +36,7 @@ def reloadFromContent(base_path, content):
 
 
 @pytest.fixture(autouse=True)
-def _reset_config():
+def _reset_config() -> Iterator[None]:
     yield
     config.loadConfig(configFiles=[], reload=True)
 
@@ -40,7 +46,7 @@ class TestLoadConfig:
     Tests for loadConfig.
     """
 
-    def testMultileConfigurationFile(self, tmp_path):
+    def testMultileConfigurationFile(self, tmp_path: pathlib.Path) -> None:
         """
         It can read configuration from multiple files, merging the
         loaded values.
@@ -79,7 +85,7 @@ class TestLDAPConfig:
     Unit tests for LDAPConfig.
     """
 
-    def testGetBaseDNOK(self, tmp_path):
+    def testGetBaseDNOK(self, tmp_path: pathlib.Path) -> None:
         """
         It will return the base DN found in the configuration in the [ldap]
         section as `base` option.
@@ -92,7 +98,7 @@ class TestLDAPConfig:
 
         assert "dc=test,dc=net" == result
 
-    def testGetBaseDNNoSection(self, tmp_path):
+    def testGetBaseDNNoSection(self, tmp_path: pathlib.Path) -> None:
         """
         It raise an exception when the the configuration has no [ldap]
         section.
@@ -104,7 +110,7 @@ class TestLDAPConfig:
         with pytest.raises(config.MissingBaseDNError):
             sut.getBaseDN()
 
-    def testGetBaseDNNoOption(self, tmp_path):
+    def testGetBaseDNNoOption(self, tmp_path: pathlib.Path) -> None:
         """
         It raise an exception when the the configuration has [ldap]
         section but no `base` option.
@@ -116,7 +122,7 @@ class TestLDAPConfig:
         with pytest.raises(config.MissingBaseDNError):
             sut.getBaseDN()
 
-    def testGetIdentityBaseDNOK(self, tmp_path):
+    def testGetIdentityBaseDNOK(self, tmp_path: pathlib.Path) -> None:
         """
         It will return the value found in the configuration in the
         [authentication] section as `identity-base` option.
@@ -130,7 +136,7 @@ class TestLDAPConfig:
 
         assert "ou=users,dc=test,dc=net" == result
 
-    def testGetIdentityBaseSectionSection(self, tmp_path):
+    def testGetIdentityBaseSectionSection(self, tmp_path: pathlib.Path) -> None:
         """
         When the configuration does not contains the
         `[authentication]` section it will return the configured Base DN.
@@ -143,7 +149,7 @@ class TestLDAPConfig:
 
         assert "dc=test,dc=net" == result
 
-    def testGetIdentityBaseNoOption(self, tmp_path):
+    def testGetIdentityBaseNoOption(self, tmp_path: pathlib.Path) -> None:
         """
         When the configuration does not contains the `identity-base` option
         inside the `[authentication]` section it will return the configured
@@ -162,7 +168,7 @@ class TestLDAPConfig:
 
         assert "dc=test,dc=net" == result
 
-    def testGetIdentitySearchOK(self, tmp_path):
+    def testGetIdentitySearchOK(self, tmp_path: pathlib.Path) -> None:
         """
         It will use the value from to configuration for its return value.
         """
@@ -178,7 +184,7 @@ identity-search = (something=%(name)s)
 
         assert "(something=foo)" == result
 
-    def testGetIdentitySearchNoSection(self):
+    def testGetIdentitySearchNoSection(self) -> None:
         """
         When the configuration file does not contains the `authentication`
         section it will use a default expression.
@@ -189,7 +195,7 @@ identity-search = (something=%(name)s)
 
         assert "(|(cn=foo)(uid=foo))" == result
 
-    def testGetIdentitySearchNoOption(self, tmp_path):
+    def testGetIdentitySearchNoOption(self, tmp_path: pathlib.Path) -> None:
         """
         When the configuration file contains the `authentication`
         section but without the identity search option,
@@ -203,7 +209,7 @@ identity-search = (something=%(name)s)
 
         assert "(|(cn=foo)(uid=foo))" == result
 
-    def testgetIdentitySearchFromInitArguments(self):
+    def testgetIdentitySearchFromInitArguments(self) -> None:
         """
         When data is provided at LDAPConfig initialization it is used
         as the backend data.
@@ -214,7 +220,7 @@ identity-search = (something=%(name)s)
 
         assert "(&(bar=thud)(quux=foo))" == result
 
-    def testCopy(self):
+    def testCopy(self) -> None:
         """
         It returns a copy of the configuration.
         """
@@ -228,20 +234,26 @@ identity-search = (something=%(name)s)
 
         assert "(&(bar=baz)(quux=foo))" == result
 
-    def testExplicitConfigurationValues(self):
+    def testExplicitConfigurationValues(self) -> None:
         sut = config.LDAPConfig(
             baseDN="dc=example,dc=com",
             identityBaseDN="ou=people,dc=example,dc=com",
             identitySearch="(mail=%(name)s)",
             serviceLocationOverrides={"dc=example,dc=com": ("explicit", 1389)},
         )
-        assert "dc=example,dc=com" == sut.getBaseDN().getText()
-        assert "ou=people,dc=example,dc=com" == sut.getIdentityBaseDN().getText()
+        # Built with DNs rather than read from a file, so they come back as
+        # DistinguishedName rather than the raw string.
+        base = sut.getBaseDN()
+        identity = sut.getIdentityBaseDN()
+        assert isinstance(base, distinguishedname.DistinguishedName)
+        assert isinstance(identity, distinguishedname.DistinguishedName)
+        assert "dc=example,dc=com" == base.getText()
+        assert "ou=people,dc=example,dc=com" == identity.getText()
         assert "(mail=alice)" == sut.getIdentitySearch("alice")
         overrides = sut.getServiceLocationOverrides()
         assert ("explicit", 1389) == next(iter(overrides.values()))
 
-    def testServiceLocationConfiguration(self, tmp_path):
+    def testServiceLocationConfiguration(self, tmp_path: pathlib.Path) -> None:
         reloadFromContent(
             tmp_path,
             b"""[service-location dc=one,dc=example]
@@ -259,13 +271,13 @@ host=ignored
         assert values["dc=one,dc=example"] == ("ldap-one.example", "1389")
         assert values["dc=two,dc=example"] == (None, None)
 
-    def testServiceLocationConfigurationWithoutHostOrPort(self, tmp_path):
+    def testServiceLocationConfigurationWithoutHostOrPort(self, tmp_path: pathlib.Path) -> None:
         reloadFromContent(
             tmp_path, b"[service-location dc=example]\n")
         overrides = config.LDAPConfig().getServiceLocationOverrides()
         assert next(iter(overrides.values())) == (None, None)
 
-    def testCopyPreservesAllDefaults(self):
+    def testCopyPreservesAllDefaults(self) -> None:
         original = config.LDAPConfig(
             baseDN="dc=example",
             identityBaseDN="ou=people,dc=example",
@@ -278,18 +290,22 @@ host=ignored
         assert copied.identitySearch == original.identitySearch
         assert copied.serviceLocationOverrides == original.serviceLocationOverrides
 
-    def testCopyAcceptsAllExplicitValues(self):
-        values = {
-            "baseDN": "dc=new",
-            "identityBaseDN": "ou=people,dc=new",
-            "identitySearch": "(mail=%(name)s)",
-            "serviceLocationOverrides": {"dc=new": ("new.example", 1389)},
-        }
-        copied = config.LDAPConfig().copy(**values)
-        for name, value in values.items():
-            assert getattr(copied, name) == value
+    def testCopyAcceptsAllExplicitValues(self) -> None:
+        overrides = {"dc=new": ("new.example", 1389)}
 
-    def testUseLMHash(self, tmp_path):
+        copied = config.LDAPConfig().copy(
+            baseDN="dc=new",
+            identityBaseDN="ou=people,dc=new",
+            identitySearch="(mail=%(name)s)",
+            serviceLocationOverrides=overrides,
+        )
+
+        assert copied.baseDN == "dc=new"
+        assert copied.identityBaseDN == "ou=people,dc=new"
+        assert copied.identitySearch == "(mail=%(name)s)"
+        assert copied.serviceLocationOverrides == overrides
+
+    def testUseLMHash(self, tmp_path: pathlib.Path) -> None:
         reloadFromContent(
             tmp_path, b"[samba]\nuse-lmhash=yes\n")
         assert config.useLMhash()

@@ -2,11 +2,11 @@ import sys
 
 import anyio
 
-from anyldap import config, numberalloc, usage
+from anyldap import config, interfaces, numberalloc, usage
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapsyntax
 
 
-async def main(cfg):
+async def main(cfg: interfaces.LDAPBaseConfigLike) -> None:
     try:
         base_dn = cfg.getBaseDN()
     except config.MissingBaseDNError as exc:
@@ -29,7 +29,7 @@ class MyOptions(
     """Command line free-number utility."""
 
 
-def console_script():
+def console_script() -> None:
     try:
         opts = MyOptions()
         opts.parseOptions()

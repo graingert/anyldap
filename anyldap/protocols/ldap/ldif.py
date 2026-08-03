@@ -13,19 +13,24 @@ TODO implement rest of syntax from RFC2849
 # RFC2849: The LDAP Data Interchange Format (LDIF) - Technical Specification
 
 import base64
+from collections.abc import Iterable
 
-from anyldap._encoder import to_bytes
+from anyldap._encoder import SupportsToWire, to_bytes
+
+# An attribute name or value is text on the way in and bytes off the wire --
+# or anything that renders itself, which is what to_bytes accepts.
+LDIFValue = str | bytes | SupportsToWire
 
 
-def base64_encode(s):
+def base64_encode(s: bytes) -> bytes:
     return b"".join(base64.encodebytes(s).split(b"\n")) + b"\n"
 
 
-def attributeAsLDIF_base64(attribute, value):
+def attributeAsLDIF_base64(attribute: bytes, value: bytes) -> bytes:
     return b"%s:: %s" % (attribute, base64_encode(value))
 
 
-def containsNonprintable(s):
+def containsNonprintable(s: bytes) -> bool:
     for i in range(len(s)):
         c = s[i : i + 1]
         if ord(c) > 127 or c == b"\0" or c == b"\n" or c == b"\r":
@@ -33,7 +38,7 @@ def containsNonprintable(s):
     return False
 
 
-def attributeAsLDIF(attribute, value):
+def attributeAsLDIF(attribute: LDIFValue, value: LDIFValue) -> bytes:
     attribute = to_bytes(attribute)
     value = to_bytes(value)
     if (
@@ -51,7 +56,9 @@ def attributeAsLDIF(attribute, value):
         return b"%s: %s\n" % (attribute, value)
 
 
-def asLDIF(dn, attributes):
+def asLDIF(
+    dn: LDIFValue, attributes: Iterable[tuple[LDIFValue, Iterable[LDIFValue]]]
+) -> bytes:
     s = b"dn: %s\n" % to_bytes(dn)
     for k, vs in attributes:
         for v in vs:
@@ -60,11 +67,13 @@ def asLDIF(dn, attributes):
     return s
 
 
-def _header():
+def _header() -> bytes:
     return b"version: 1\n\n"
 
 
-def manyAsLDIF(objects):
+def manyAsLDIF(
+    objects: Iterable[tuple[LDIFValue, Iterable[tuple[LDIFValue, Iterable[LDIFValue]]]]],
+) -> bytes:
     s = [_header()]
     for dn, attributes in objects:
         s.append(asLDIF(dn, attributes))

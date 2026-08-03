@@ -4,12 +4,21 @@ Test cases for anyldap.protocols.ldap.ldif module.
 
 import pytest
 
+from anyldap import entry
 from anyldap.protocols.ldap import distinguishedname, ldifprotocol
 
 
-def test_base_parser_accepts_entry_hook():
+def test_base_parser_accepts_entry_hook() -> None:
+    """The base parser's hook takes whatever it is handed and does nothing."""
     parser = ldifprotocol.LDIF()
-    assert parser.gotEntry(object()) is None
+    parser.gotEntry(object())
+
+
+def test_line_receiver_is_abstract() -> None:
+    """Splitting the stream into lines is all _LineReceiver does with it."""
+    receiver = ldifprotocol._LineReceiver()
+    with pytest.raises(NotImplementedError):
+        receiver.dataReceived(b"a line\n")
 
 
 class FixStringRepresentation:
@@ -17,7 +26,7 @@ class FixStringRepresentation:
     A simple object which has a fix string representation.
     """
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "Here I am!"
 
 
@@ -27,7 +36,7 @@ class TestLDIFParseError:
     LDIF errors.
     """
 
-    def testInitNoArgs(self):
+    def testInitNoArgs(self) -> None:
         """
         It can be initialized without arguments and will have the
         docstring as the string representation.
@@ -38,7 +47,7 @@ class TestLDIFParseError:
 
         assert "Error parsing LDIF." == result
 
-    def testInitWithArgs(self):
+    def testInitWithArgs(self) -> None:
         """
         When initialized with arguments it will use the docstring as
         base and include all the arguments.
@@ -51,16 +60,17 @@ class TestLDIFParseError:
 
 
 class LDIFDriver(ldifprotocol.LDIF):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.listOfCompleted = []
+        self.listOfCompleted: list[entry.BaseLDAPEntry] = []
 
-    def gotEntry(self, obj):
+    def gotEntry(self, obj: object) -> None:
+        assert isinstance(obj, entry.BaseLDAPEntry)
         self.listOfCompleted.append(obj)
 
 
 class TestLDIFParsing:
-    def testFromLDIF(self):
+    def testFromLDIF(self) -> None:
         proto = LDIFDriver()
         for line in (
             "dn: cn=foo,dc=example,dc=com",
@@ -95,7 +105,7 @@ class TestLDIFParsing:
 
         assert proto.listOfCompleted == []
 
-    def testSplitLines(self):
+    def testSplitLines(self) -> None:
         """
         Input can be split on multiple lines as long as the line starts with
         a space.
@@ -118,7 +128,7 @@ class TestLDIFParsing:
         assert o[b"objectClass"] == [b"a", b"b"]
         assert proto.listOfCompleted == []
 
-    def testCaseInsensitiveDN(self):
+    def testCaseInsensitiveDN(self) -> None:
         """
         DN is case insensitive.
         """
@@ -146,7 +156,7 @@ cn: bar
 
         assert proto.listOfCompleted == []
 
-    def testCaseInsensitiveAttributeTypes(self):
+    def testCaseInsensitiveAttributeTypes(self) -> None:
         """
         The attribute description (name/types) is case insensitive, while
         values are case sensitives.
@@ -174,7 +184,7 @@ aValUe: B
 
         assert proto.listOfCompleted == []
 
-    def testVersion1(self):
+    def testVersion1(self) -> None:
         proto = LDIFDriver()
         proto.dataReceived(
             b"""\
@@ -197,7 +207,7 @@ bValue: c
         assert o[b"aValue"] == [b"a", b"b"]
         assert o[b"bValue"] == [b"c"]
 
-    def testVersionInvalid(self):
+    def testVersionInvalid(self) -> None:
         proto = LDIFDriver()
         with pytest.raises(ldifprotocol.LDIFVersionNotANumberError):
             proto.dataReceived(b"""\
@@ -211,7 +221,7 @@ bValue: c
 
 """)
 
-    def testVersion2(self):
+    def testVersion2(self) -> None:
         proto = LDIFDriver()
         with pytest.raises(ldifprotocol.LDIFUnsupportedVersionError):
             proto.dataReceived(b"""\
@@ -225,7 +235,7 @@ bValue: c
 
 """)
 
-    def testNoSpaces(self):
+    def testNoSpaces(self) -> None:
         proto = LDIFDriver()
         proto.dataReceived(
             b"""\
@@ -249,7 +259,7 @@ aValUe:b
 
         assert proto.listOfCompleted == []
 
-    def testTruncatedFailure(self):
+    def testTruncatedFailure(self) -> None:
         proto = LDIFDriver()
         proto.dataReceived(
             b"""\
@@ -268,7 +278,7 @@ bValue: c
         with pytest.raises(ldifprotocol.LDIFTruncatedError):
             proto.connectionLost()
 
-    def testComments(self):
+    def testComments(self) -> None:
         """
         Comments can be placed anywhere.
         """
@@ -300,7 +310,7 @@ cn: bar
 
         assert proto.listOfCompleted == []
 
-    def testMoreEmptyLinesBetweenEntries(self):
+    def testMoreEmptyLinesBetweenEntries(self) -> None:
         """
         It accept multiple lines between entries.
         """
@@ -330,7 +340,7 @@ cn: bar
 
         assert proto.listOfCompleted == []
 
-    def testStartWithSpace(self):
+    def testStartWithSpace(self) -> None:
         """
         It fails to parse if a line start with a space but is not a
         continuation of a previous line.
@@ -348,7 +358,7 @@ cn: bar
 """
             )
 
-    def testEntryStartWithoutDN(self):
+    def testEntryStartWithoutDN(self) -> None:
         """
         It fails to parse the entry does not start with DN.
         """
@@ -362,7 +372,7 @@ other: foo
 """
             )
 
-    def testAttributeValueFromURL(self):
+    def testAttributeValueFromURL(self) -> None:
         """
         Getting attribute values from URL is not supported.
         """
@@ -497,7 +507,7 @@ description:: V2hhdCBhIGNhcmVmdWwgcmVhZGVyIHlvdSBhcmUhICBUaGlzIHZhbHVlIGlzIGJhc2
         ),
     ]
 
-    def testExamples(self):
+    def testExamples(self) -> None:
         for name, data, expected in self.examples:
             proto = LDIFDriver()
             proto.dataReceived(data)
