@@ -195,6 +195,8 @@ async def test_extended_request_handler_without_decoder_receives_raw_value() -> 
                 response=value,
             )
 
+    # The oid a handler answers to travels on the handler, which is the
+    # extension point subclasses use; a function does not declare it.
     ExtendedServer.extendedRequest_echo.oid = b"1.2.3.4"  # type: ignore[attr-defined]
     server = ExtendedServer()
     stream = MemoryByteStream()
@@ -699,7 +701,9 @@ async def test_proxybase_failure_and_starttls_response_paths() -> None:
     assert again.resultCode == ldaperrors.LDAPOperationsError.resultCode
 
 
-async def test_proxybase_connection_tls_disconnect_and_backlog_paths() -> None:
+async def test_proxybase_connection_tls_disconnect_and_backlog_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = testutil.LDAPClientTestDriver(
         [pureldap.LDAPBindResponse(resultCode=0)], []
     )
@@ -708,8 +712,9 @@ async def test_proxybase_connection_tls_disconnect_and_backlog_paths() -> None:
     async def start_tls() -> testutil.LDAPClientTestDriver:
         return client
 
-    # The proxy upgrades its connection before forwarding anything.
-    client.startTLS_async = start_tls  # type: ignore[attr-defined]
+    # The proxy upgrades its connection before forwarding anything, so this
+    # driver has to answer to being upgraded.
+    monkeypatch.setattr(client, "startTLS_async", start_tls, raising=False)
     server = proxybase.ProxyBase()
     server.use_tls = True
     server.clientConnector = lambda: client

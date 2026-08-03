@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from typing import Any
 from unittest import mock
 
 import anyio
@@ -98,7 +97,7 @@ async def test_resolve_service_location_async_callable_override() -> None:
 
 
 async def test_resolve_service_location_async_uses_srv() -> None:
-    async def resolver(name: str, record_type: str) -> list[Any]:
+    async def resolver(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         assert name == "_ldap._tcp.example.com"
         assert record_type == "SRV"
 
@@ -118,7 +117,7 @@ async def test_resolve_service_location_async_uses_srv() -> None:
 
 
 async def test_resolve_service_location_async_override_host_keeps_srv_port() -> None:
-    async def resolver(name: str, record_type: str) -> list[Any]:
+    async def resolver(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         class Record:
             priority = 0
             weight = 10
@@ -141,7 +140,7 @@ async def test_resolve_complete_override_and_defaults() -> None:
         "dc=example,dc=com", overrides={"dc=example,dc=com": ("host", 123)}
     ) == ("host", 123)
 
-    async def no_records(name: str, record_type: str) -> list[Any]:
+    async def no_records(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         return []
 
     assert await ldapconnector._resolveServiceLocationAsync(
@@ -152,7 +151,7 @@ async def test_resolve_complete_override_and_defaults() -> None:
         distinguishedname.DistinguishedName(""), resolver=no_records
     ) == ("", 389)
 
-    async def one_record(name: str, record_type: str) -> list[Any]:
+    async def one_record(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         return [type("Record", (), {"priority": 0, "weight": 1, "target": "srv.", "port": 999})()]
 
     assert await ldapconnector._resolveServiceLocationAsync(
@@ -180,14 +179,13 @@ async def test_connection_wrapper_and_connector_alias() -> None:
             """Never reached: closing goes through the exit stack."""
 
     stack = Stack()
-    # Only closed, which is all the connection does with it.
-    connection = ldapconnector.AsyncLDAPClientConnection(stack, Client())  # type: ignore[arg-type]
+    connection = ldapconnector.AsyncLDAPClientConnection(stack, Client())
     assert connection.marker == "client"
     assert await connection.__aenter__() is connection.protocol
     await connection.__aexit__(None, None, None)
     assert stack.closed
     # An override is a location or a callable; this one only has to come back.
-    override: Any = "root"
+    override: ldapconnector.Override = ("ldap.example.com", 389)
     assert (
         ldapconnector.LDAPConnector()._findOverRide(
             distinguishedname.DistinguishedName(""), {"": override}
@@ -300,7 +298,7 @@ async def test_connectToLDAPEndpointAsync_bind(monkeypatch: pytest.MonkeyPatch) 
 
 
 async def test_connectAsync_bind_with_srv_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def resolver(name: str, record_type: str) -> list[Any]:
+    async def resolver(name: str, record_type: str) -> list[ldapconnector.SRVRecord]:
         return [
             type(
                 "Record",

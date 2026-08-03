@@ -13,6 +13,12 @@ from anyldap._encoder import get_strings
 from anyldap.protocols.ldap import distinguishedname
 
 
+class AsyncCloseable(Protocol):
+    """Something whose only remaining job is to be closed."""
+
+    async def aclose(self) -> None: ...
+
+
 class AttachableProtocol(Protocol):
     """A protocol object the connector can hand a stream to."""
 
@@ -78,7 +84,7 @@ def _parseTCPEndpoint(endpointStr: str) -> tuple[str, int]:
 
 
 class AsyncLDAPClientConnection(Generic[_P]):
-    def __init__(self, exit_stack: AsyncExitStack, protocol: _P) -> None:
+    def __init__(self, exit_stack: AsyncCloseable, protocol: _P) -> None:
         self._exit_stack = exit_stack
         self.protocol = protocol
 

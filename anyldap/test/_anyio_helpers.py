@@ -3,7 +3,8 @@ from typing import Any
 
 import anyio
 import pytest
-from anyio.abc import ByteStream, SocketAttribute, SocketListener
+from anyio.abc import ByteStream, SocketAttribute, SocketListener, SocketStream
+from anyio.streams.stapled import MultiListener
 
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
@@ -54,14 +55,18 @@ class MemoryByteStream(ByteStream):
         await self._outgoing_recv.aclose()
 
 
-def accept_one(listener: anyio.abc.Listener[Any]) -> Awaitable[ByteStream]:
-    """The next connection to a listener these tests started."""
-    inner = listener.listeners[0]  # type: ignore[attr-defined]
+def accept_one(listener: MultiListener[SocketStream]) -> Awaitable[ByteStream]:
+    """The next connection to a listener these tests started.
+
+    create_tcp_listener binds one socket per address family, and these tests
+    ask for a single one.
+    """
+    inner = listener.listeners[0]
     assert isinstance(inner, SocketListener)
     return inner.accept()
 
 
-def local_address(listener: anyio.abc.Listener[Any]) -> tuple[str, int]:
+def local_address(listener: anyio.abc.Listener[ByteStream]) -> tuple[str, int]:
     """The host and port a listener bound to.
 
     A listener's address is only a pair for the socket families these tests
