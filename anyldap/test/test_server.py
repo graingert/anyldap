@@ -33,7 +33,7 @@ def observeCommits(entry):
 
 
 class TestLDAPServerTest:
-    def setup_method(self):
+    def setup_method(self) -> None:
         self.root = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="dc=example,dc=com", attributes={"dc": "example"}
         )
@@ -175,7 +175,7 @@ class TestLDAPServerTest:
         )
         util.assert_permutation(self._makeResultList(self.output), [msg.toWire() for msg in messages])
 
-    async def test_bind(self):
+    async def test_bind(self) -> None:
         await self._send(
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=4).toWire()
         )
@@ -183,7 +183,7 @@ class TestLDAPServerTest:
                 pureldap.LDAPBindResponse(resultCode=0), id=4
             ).toWire())
 
-    async def test_bind_success(self):
+    async def test_bind_success(self) -> None:
         self.thingie["userPassword"] = [
             "{SSHA}yVLLj62rFf3kDAbzwEU0zYAVvbWrze8="
         ]  # "secret"
@@ -202,7 +202,7 @@ class TestLDAPServerTest:
                 id=4,
             ).toWire())
 
-    async def test_bind_sasl_notSupported(self):
+    async def test_bind_sasl_notSupported(self) -> None:
         """
         A SASL bind is refused as an unsupported authentication method.
 
@@ -229,7 +229,7 @@ class TestLDAPServerTest:
                 id=4,
             ).toWire())
 
-    async def test_bind_invalidCredentials_badPassword(self):
+    async def test_bind_invalidCredentials_badPassword(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPBindRequest(
@@ -245,7 +245,7 @@ class TestLDAPServerTest:
                 id=734,
             ).toWire())
 
-    async def test_bind_invalidCredentials_nonExisting(self):
+    async def test_bind_invalidCredentials_nonExisting(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPBindRequest(
@@ -261,7 +261,7 @@ class TestLDAPServerTest:
                 id=78,
             ).toWire())
 
-    async def test_bind_badVersion_1_anonymous(self):
+    async def test_bind_badVersion_1_anonymous(self) -> None:
         await self._send(
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(version=1), id=32).toWire()
         )
@@ -273,7 +273,7 @@ class TestLDAPServerTest:
                 id=32,
             ).toWire())
 
-    async def test_bind_badVersion_2_anonymous(self):
+    async def test_bind_badVersion_2_anonymous(self) -> None:
         await self._send(
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(version=2), id=32).toWire()
         )
@@ -285,7 +285,7 @@ class TestLDAPServerTest:
                 id=32,
             ).toWire())
 
-    async def test_bind_badVersion_4_anonymous(self):
+    async def test_bind_badVersion_4_anonymous(self) -> None:
         await self._send(
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(version=4), id=32).toWire()
         )
@@ -297,7 +297,7 @@ class TestLDAPServerTest:
                 id=32,
             ).toWire())
 
-    async def test_bind_badVersion_4_nonExisting(self):
+    async def test_bind_badVersion_4_nonExisting(self) -> None:
         # TODO make a test just like this one that would pass authentication
         # if version was correct, to ensure we don't leak that info either.
         await self._send(
@@ -316,13 +316,13 @@ class TestLDAPServerTest:
                 id=11,
             ).toWire())
 
-    async def test_unbind(self):
+    async def test_unbind(self) -> None:
         await self._send(
             pureldap.LDAPMessage(pureldap.LDAPUnbindRequest(), id=7).toWire()
         )
         assert self.output == b""
 
-    async def test_compare_outOfTree(self):
+    async def test_compare_outOfTree(self) -> None:
         dn = "dc=invalid"
         attribute_desc = pureldap.LDAPString("objectClass")
         attribute_value = pureldap.LDAPString("groupOfUniqueNames")
@@ -341,7 +341,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def test_compare_inGroup(self):
+    async def test_compare_inGroup(self) -> None:
         dn = "cn=unix,ou=Groups,dc=example,dc=com"
         attribute_desc = pureldap.LDAPString("uniquemember")
         attribute_value = pureldap.LDAPString(
@@ -362,7 +362,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def test_compare_notInGroup(self):
+    async def test_compare_notInGroup(self) -> None:
         dn = "cn=unix,ou=Groups,dc=example,dc=com"
         attribute_desc = pureldap.LDAPString("uniquemember")
         attribute_value = pureldap.LDAPString("uid=bgates,ou=People,dc=example,dc=com")
@@ -381,7 +381,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def test_compare_backend_type_error_becomes_other(self):
+    async def test_compare_backend_type_error_becomes_other(self) -> None:
         self.stuff["broken"] = [object()]
         await self._send(
             pureldap.LDAPMessage(
@@ -401,12 +401,12 @@ class TestLDAPServerTest:
         assert message.value.resultCode == ldaperrors.other
         assert b"cannot convert" in message.value.errorMessage
 
-    async def test_search_outOfTree(self):
+    async def test_search_outOfTree(self) -> None:
         """Attempt to get nonexistent DN results in noSuchObject error response"""
         await self.makeSearch(baseObject="dc=invalid")
         self.assertSearchResults(resultCode=ldaperrors.LDAPNoSuchObject.resultCode)
 
-    async def test_search_backend_matching_error_becomes_other(self):
+    async def test_search_backend_matching_error_becomes_other(self) -> None:
         await self.makeSearch(
             baseObject=self.stuff.dn.getText(),
             filter=pureldap.LDAPFilter_extensibleMatch(
@@ -419,7 +419,7 @@ class TestLDAPServerTest:
         assert message.value.resultCode == ldaperrors.other
         assert b"Match type not implemented" in message.value.errorMessage
 
-    async def test_search_matchAll_oneResult(self):
+    async def test_search_matchAll_oneResult(self) -> None:
         """Searching for a single object with receiving all its attributes"""
         await self.makeSearch(baseObject="cn=thingie,ou=stuff,dc=example,dc=com")
         self.assertSearchResults(
@@ -434,7 +434,7 @@ class TestLDAPServerTest:
             ]
         )
 
-    async def test_search_matchAll_oneResult_filtered(self):
+    async def test_search_matchAll_oneResult_filtered(self) -> None:
         """Searching for a single object with receiving a specified set of its attributes"""
         await self.makeSearch(
             baseObject="cn=thingie,ou=stuff,dc=example,dc=com", attributes=["cn"]
@@ -450,7 +450,7 @@ class TestLDAPServerTest:
             ]
         )
 
-    async def test_search_matchAll_oneResult_filteredNoAttribsRemaining(self):
+    async def test_search_matchAll_oneResult_filteredNoAttribsRemaining(self) -> None:
         """
         Attempt to search an existing object with a set of nonexistent attributes
         results in a successful response with no attributes
@@ -467,7 +467,7 @@ class TestLDAPServerTest:
             ],
         )
 
-    async def test_search_matchAll_manyResults(self):
+    async def test_search_matchAll_manyResults(self) -> None:
         """Searching for a tree object with receiving it and all its children (default scope)"""
         await self.makeSearch(baseObject="ou=stuff,dc=example,dc=com")
         self.assertSearchResults(
@@ -496,7 +496,7 @@ class TestLDAPServerTest:
             ]
         )
 
-    async def test_search_scope_oneLevel(self):
+    async def test_search_scope_oneLevel(self) -> None:
         """Searching for a tree object with receiving its children but without parent itself"""
         await self.makeSearch(
             baseObject="ou=stuff,dc=example,dc=com",
@@ -521,7 +521,7 @@ class TestLDAPServerTest:
             ]
         )
 
-    async def test_search_scope_wholeSubtree(self):
+    async def test_search_scope_wholeSubtree(self) -> None:
         """
         Searching for a tree object with receiving it and all its children.
         This is a default behavior but here it is explicitly specified.
@@ -556,7 +556,7 @@ class TestLDAPServerTest:
             ]
         )
 
-    async def test_search_scope_baseObject(self):
+    async def test_search_scope_baseObject(self) -> None:
         """Searching for a tree object with receiving it without its children"""
         await self.makeSearch(
             baseObject="ou=stuff,dc=example,dc=com",
@@ -574,7 +574,7 @@ class TestLDAPServerTest:
             ]
         )
 
-    async def test_search_all_attributes(self):
+    async def test_search_all_attributes(self) -> None:
         """
         Search request with the list of attributes passed as '*'
         returns objects with all their attributes
@@ -594,7 +594,7 @@ class TestLDAPServerTest:
             ]
         )
 
-    async def test_rootDSE(self):
+    async def test_rootDSE(self) -> None:
         """Searching for a root object"""
         await self.makeSearch(
             baseObject="",
@@ -617,7 +617,7 @@ class TestLDAPServerTest:
             ]
         )
 
-    async def test_delete(self):
+    async def test_delete(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPDelRequest(self.thingie.dn.getText()), id=2
@@ -627,7 +627,7 @@ class TestLDAPServerTest:
         _result = await self.stuff.children()
         util.assert_permutation(_result, [self.another])
 
-    async def test_add_success(self):
+    async def test_add_success(self) -> None:
         dn = "cn=new,ou=stuff,dc=example,dc=com"
         await self._send(
             pureldap.LDAPMessage(
@@ -659,7 +659,7 @@ class TestLDAPServerTest:
                     ),
                 ])
 
-    async def test_add_fail_existsAlready(self):
+    async def test_add_fail_existsAlready(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPAddRequest(
@@ -689,7 +689,7 @@ class TestLDAPServerTest:
         _result = await self.stuff.children()
         util.assert_permutation(_result, [self.thingie, self.another])
 
-    async def test_modifyDN_rdnOnly_deleteOldRDN_success(self):
+    async def test_modifyDN_rdnOnly_deleteOldRDN_success(self) -> None:
         newrdn = "cn=thingamagic"
         await self._send(
             pureldap.LDAPMessage(
@@ -713,7 +713,7 @@ class TestLDAPServerTest:
                     self.another,
                 ])
 
-    async def test_modifyDN_rejects_preserving_old_rdn(self):
+    async def test_modifyDN_rejects_preserving_old_rdn(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPModifyDNRequest(
@@ -732,7 +732,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def test_modifyDN_with_new_superior(self):
+    async def test_modifyDN_with_new_superior(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPModifyDNRequest(
@@ -751,7 +751,7 @@ class TestLDAPServerTest:
         moved = await self.groups.lookup("cn=thingamagic,ou=Groups,dc=example,dc=com")
         assert moved.dn.getText() == "cn=thingamagic,ou=Groups,dc=example,dc=com"
 
-    async def test_modify(self):
+    async def test_modify(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPModifyRequest(
@@ -773,7 +773,7 @@ class TestLDAPServerTest:
                 {b"objectClass": [b"a", b"b"], b"ou": [b"stuff"], b"foo": [b"bar"]},
             ))
 
-    async def test_extendedRequest_unknown(self):
+    async def test_extendedRequest_unknown(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPExtendedRequest(
@@ -790,7 +790,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def test_passwordModify_notBound(self):
+    async def test_passwordModify_notBound(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPPasswordModifyRequest(
@@ -823,28 +823,28 @@ class TestLDAPServerTest:
         assert message.value.resultCode == ldaperrors.LDAPProtocolError.resultCode
         assert message.value.responseName == pureldap.LDAPPasswordModifyRequest.oid
 
-    async def test_passwordModify_rejects_duplicate_user_identity(self):
+    async def test_passwordModify_rejects_duplicate_user_identity(self) -> None:
         value = pureldap.LDAPPasswordModifyRequest_userIdentity("cn=thingie")
         await self._send_raw_password_modify(value, value)
         self._assert_password_modify_protocol_error()
 
-    async def test_passwordModify_rejects_duplicate_old_password(self):
+    async def test_passwordModify_rejects_duplicate_old_password(self) -> None:
         value = pureldap.LDAPPasswordModifyRequest_oldPasswd("old")
         await self._send_raw_password_modify(value, value)
         self._assert_password_modify_protocol_error()
 
-    async def test_passwordModify_rejects_duplicate_new_password(self):
+    async def test_passwordModify_rejects_duplicate_new_password(self) -> None:
         value = pureldap.LDAPPasswordModifyRequest_newPasswd("new")
         await self._send_raw_password_modify(value, value)
         self._assert_password_modify_protocol_error()
 
-    async def test_passwordModify_rejects_unknown_sequence_item(self):
+    async def test_passwordModify_rejects_unknown_sequence_item(self) -> None:
         with pytest.raises(ldaperrors.LDAPProtocolError):
             await self.server.extendedRequest_LDAPPasswordModifyRequest(
                 pureber.BERSequence([pureber.BERInteger(1)]), lambda response: None
             )
 
-    async def test_passwordModify_rejects_non_sequence_value(self):
+    async def test_passwordModify_rejects_non_sequence_value(self) -> None:
         request = pureldap.LDAPExtendedRequest(
             requestName=pureldap.LDAPPasswordModifyRequest.oid,
             requestValue=pureber.BERInteger(1).toWire(),
@@ -864,7 +864,7 @@ class TestLDAPServerTest:
         )
         self.output = b""
 
-    async def test_passwordModify_rejects_old_password_mode(self):
+    async def test_passwordModify_rejects_old_password_mode(self) -> None:
         await self._bind_thingie_for_password_change()
         await self._send_raw_password_modify(
             pureldap.LDAPPasswordModifyRequest_oldPasswd("secret"),
@@ -875,7 +875,7 @@ class TestLDAPServerTest:
         )
         assert message.value.resultCode == ldaperrors.LDAPOperationsError.resultCode
 
-    async def test_passwordModify_requires_new_password(self):
+    async def test_passwordModify_requires_new_password(self) -> None:
         await self._bind_thingie_for_password_change()
         await self._send_raw_password_modify(
             pureldap.LDAPPasswordModifyRequest_userIdentity(self.thingie.dn.getText())
@@ -885,7 +885,7 @@ class TestLDAPServerTest:
         )
         assert message.value.resultCode == ldaperrors.LDAPOperationsError.resultCode
 
-    async def test_passwordModify_simple(self):
+    async def test_passwordModify_simple(self) -> None:
         commits = observeCommits(self.thingie)
         # first bind to some entry
         self.thingie["userPassword"] = [
@@ -932,7 +932,7 @@ class TestLDAPServerTest:
             salt = raw[20:]
             assert entry.sshaDigest(b"hushhush", salt) == secret
 
-    async def test_passwordModify_someoneElse(self):
+    async def test_passwordModify_someoneElse(self) -> None:
         commits = observeCommits(self.thingie)
         # first bind to some entry
         userPassword = b"{SSHA}yVLLj62rFf3kDAbzwEU0zYAVvbWrze8="  # secret
@@ -976,7 +976,7 @@ class TestLDAPServerTest:
             ).toWire())
         assert list(self.thingie.get("userPassword", [])) == list([userPassword])
 
-    async def test_unknownRequest(self):
+    async def test_unknownRequest(self) -> None:
         # make server miss one of the handle_* attributes
         # without having to modify the LDAPServer class
         class MockServer(ldapserver.LDAPServer):
@@ -995,7 +995,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def test_control_unknown_critical(self):
+    async def test_control_unknown_critical(self) -> None:
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPBindRequest(),
@@ -1013,7 +1013,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def test_control_unknown_nonCritical(self):
+    async def test_control_unknown_nonCritical(self) -> None:
         self.thingie["userPassword"] = [
             "{SSHA}yVLLj62rFf3kDAbzwEU0zYAVvbWrze8="
         ]  # "secret"
@@ -1035,7 +1035,7 @@ class TestLDAPServerTest:
 
 
 class TestSchema:
-    def setup_method(self):
+    def setup_method(self) -> None:
         self.client = testutil.LDAPClientTestDriver(
             [
                 pureldap.LDAPSearchResultEntry(
@@ -1065,7 +1065,7 @@ class TestSchema:
             ],
         )
 
-    async def testSimple(self):
+    async def testSimple(self) -> None:
         (attributeTypes, objectClasses) = await fetchschema.fetch(
             self.client, "dc=example,dc=com"
         )

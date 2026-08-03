@@ -52,7 +52,7 @@ async def _create_server(monkeypatch, services, fallback, *responses):
     return server, stream, client
 
 
-async def test_bind_no_matching_services_found_no_fallback(monkeypatch):
+async def test_bind_no_matching_services_found_no_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         ["svc1", "svc2", "svc3"],
@@ -80,7 +80,7 @@ async def test_bind_no_matching_services_found_no_fallback(monkeypatch):
         await server.aclose()
 
 
-async def test_bind_no_matching_services_found_fallback_success(monkeypatch):
+async def test_bind_no_matching_services_found_fallback_success(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         ["svc1", "svc2", "svc3"],
@@ -110,7 +110,7 @@ async def test_bind_no_matching_services_found_fallback_success(monkeypatch):
         await server.aclose()
 
 
-async def test_bind_no_matching_services_found_fallback_bad_auth(monkeypatch):
+async def test_bind_no_matching_services_found_fallback_bad_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         ["svc1", "svc2", "svc3"],
@@ -144,7 +144,7 @@ async def test_bind_no_matching_services_found_fallback_bad_auth(monkeypatch):
         await server.aclose()
 
 
-async def test_bind_match_success(monkeypatch):
+async def test_bind_match_success(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         ["svc1", "svc2", "svc3"],
@@ -191,7 +191,7 @@ def _legacy_proxy(services=None, fallback=False):
     return server
 
 
-async def test_maybe_fallback_results():
+async def test_maybe_fallback_results() -> None:
     request = pureldap.LDAPBindRequest(dn="cn=alice", auth="secret")
     server = _legacy_proxy()
     success = await server._maybeFallback_async(
@@ -240,7 +240,7 @@ class SearchBase:
         return self.results.pop(0)
 
 
-async def test_try_service_success_and_exhaustion():
+async def test_try_service_success_and_exhaustion() -> None:
     request = pureldap.LDAPBindRequest(dn="cn=alice", auth="secret")
     server = _legacy_proxy()
     base = SearchBase([[], [ServiceEntry()]])
@@ -251,7 +251,7 @@ async def test_try_service_success_and_exhaustion():
     assert await server._tryService_async([], base, request) is None
 
 
-async def test_try_service_retries_invalid_credentials():
+async def test_try_service_retries_invalid_credentials() -> None:
     request = pureldap.LDAPBindRequest(dn="cn=alice", auth="bad")
     invalid = ldaperrors.LDAPInvalidCredentials()
     base = SearchBase([[ServiceEntry(invalid)], [ServiceEntry()]])
@@ -262,7 +262,7 @@ async def test_try_service_retries_invalid_credentials():
     assert isinstance(result, ServiceEntry)
 
 
-async def test_bind_handler_validation_and_anonymous_forwarding():
+async def test_bind_handler_validation_and_anonymous_forwarding() -> None:
     server = _legacy_proxy()
     with pytest.raises(ldaperrors.LDAPProtocolError):
         server.handle_LDAPBindRequest(
@@ -280,7 +280,7 @@ async def test_bind_handler_validation_and_anonymous_forwarding():
     assert await result == "forwarded"
 
 
-async def test_legacy_bind_uses_connected_client_search_interface():
+async def test_legacy_bind_uses_connected_client_search_interface() -> None:
     client = testutil.LDAPClientTestDriver(
         [pureldap.LDAPSearchResultDone(ldaperrors.Success.resultCode)]
     )
@@ -303,7 +303,7 @@ async def test_legacy_bind_uses_connected_client_search_interface():
     client.assertSent(_search_request("svc"))
 
 
-def test_timestamp_shape_and_constructor_defaults():
+def test_timestamp_shape_and_constructor_defaults() -> None:
     server = svcbindproxy.ServiceBindingProxy(config=config.LDAPConfig())
     assert server.services == []
     assert server.fallback is False
@@ -312,7 +312,7 @@ def test_timestamp_shape_and_constructor_defaults():
     assert value.endswith("Z")
 
 
-async def test_bind_match_success_later(monkeypatch):
+async def test_bind_match_success_later(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         ["svc1", "svc2", "svc3"],
@@ -363,7 +363,7 @@ async def test_bind_match_success_later(monkeypatch):
         await server.aclose()
 
 
-async def test_bind_match_bad_auth(monkeypatch):
+async def test_bind_match_bad_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     server, stream, client = await _create_server(
         monkeypatch,
         ["svc1", "svc2", "svc3"],

@@ -5,6 +5,7 @@ import contextlib
 import errno
 import logging
 import os
+import pathlib
 import random
 import shutil
 import subprocess
@@ -142,7 +143,7 @@ objectClass: top
 """,
         )
 
-    async def testSimpleRead(self):
+    async def testSimpleRead(self) -> None:
         want = BaseLDAPEntry(
             dn=b"cn=foo,dc=example,dc=com",
             attributes={
@@ -153,7 +154,7 @@ objectClass: top
         assert await ldiftree.get(self.tree, want.dn) == want
 
     @skipIfWindowsOrRoot
-    async def testNoAccess(self):
+    async def testNoAccess(self) -> None:
         await self.chmod(
             os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif"), 0
         )
@@ -165,30 +166,30 @@ objectClass: top
         with pytest.raises(exceptionClass):
             await ldiftree.get(self.tree, dn)
 
-    async def testMultipleError(self):
+    async def testMultipleError(self) -> None:
         await self.gettingDNRaises(
             "cn=bad-two-entries,dc=example,dc=com",
             ldiftree.LDIFTreeEntryContainsMultipleEntries,
         )
 
-    async def testMissingEndError(self):
+    async def testMissingEndError(self) -> None:
         await self.gettingDNRaises(
             "cn=bad-missing-end,dc=example,dc=com",
             ldiftree.LDIFTreeEntryContainsNoEntries,
         )
 
-    async def testEmptyError(self):
+    async def testEmptyError(self) -> None:
         await self.gettingDNRaises(
             "cn=bad-empty,dc=example,dc=com", ldiftree.LDIFTreeEntryContainsNoEntries
         )
 
-    async def testOnlyNewlineError(self):
+    async def testOnlyNewlineError(self) -> None:
         await self.gettingDNRaises(
             "cn=bad-only-newline,dc=example,dc=com",
             ldifprotocol.LDIFLineWithoutSemicolonError,
         )
 
-    async def testTreeBranches(self):
+    async def testTreeBranches(self) -> None:
         want = BaseLDAPEntry(
             dn=b"cn=sales-thingie,ou=Sales,dc=example,dc=com",
             attributes={
@@ -227,7 +228,7 @@ objectClass: organizationalUnit
 """,
         )
 
-    async def testSimpleWrite(self):
+    async def testSimpleWrite(self) -> None:
         e = BaseLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -248,7 +249,7 @@ cn: foo
 
 """)
 
-    async def testDirCreation(self):
+    async def testDirCreation(self) -> None:
         e = BaseLDAPEntry(
             dn="cn=create-me,ou=OrgUnit,dc=example,dc=com",
             attributes={
@@ -275,7 +276,7 @@ cn: create-me
 
 """)
 
-    async def testDirExists(self):
+    async def testDirExists(self) -> None:
         e = BaseLDAPEntry(
             dn="cn=create-me,ou=OrgUnit,dc=example,dc=com",
             attributes={
@@ -300,7 +301,7 @@ cn: create-me
 
 """)
 
-    async def testMissingLinkError(self):
+    async def testMissingLinkError(self) -> None:
         e = BaseLDAPEntry(
             dn="cn=bad-create,ou=NoSuchOrgUnit,dc=example,dc=com",
             attributes={
@@ -312,7 +313,7 @@ cn: create-me
         with pytest.raises(ldiftree.LDIFTreeNoSuchObject):
             await ldiftree.put(self.tree, e)
 
-    async def testAddTopLevel(self):
+    async def testAddTopLevel(self) -> None:
         e = BaseLDAPEntry(
             dn="dc=org",
             attributes={
@@ -441,13 +442,13 @@ cn: theChild
             theChild, "cn=theChild,ou=oneChild,dc=example,dc=com"
         )
 
-    async def test_children_empty(self):
+    async def test_children_empty(self) -> None:
         with randomizedListdir() as iterdir:
             assert await self.empty.children() == []
 
         assert iterdir.mock_calls == [mock.call(self.empty.path)]
 
-    async def test_children_oneChild(self):
+    async def test_children_oneChild(self) -> None:
         with randomizedListdir() as iterdir:
             children = await self.oneChild.children()
 
@@ -462,7 +463,7 @@ cn: theChild
         want.sort()
         assert got == want
 
-    async def test_children_repeat(self):
+    async def test_children_repeat(self) -> None:
         """Test that .children() returns a copy of the data so that modifying it does not affect behaviour."""
         with randomizedListdir() as iterdir:
             children1 = await self.oneChild.children()
@@ -477,7 +478,7 @@ cn: theChild
             mock.call(self.oneChild.path),
         ]
 
-    async def test_children_twoChildren(self):
+    async def test_children_twoChildren(self) -> None:
         with randomizedListdir() as iterdir:
             children = await self.meta.children()
 
@@ -495,7 +496,7 @@ cn: theChild
         want.sort()
         assert got == want
 
-    async def test_children_twoChildren_callback(self):
+    async def test_children_twoChildren_callback(self) -> None:
         children = []
         with randomizedListdir() as iterdir:
             r = await self.meta.children(callback=children.append)
@@ -516,7 +517,7 @@ cn: theChild
         assert got == want
 
     @skipIfWindowsOrRoot
-    async def test_children_noAccess_dir_noRead(self):
+    async def test_children_noAccess_dir_noRead(self) -> None:
         await self.chmod(self.meta.path, 0o300)
         with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
@@ -525,7 +526,7 @@ cn: theChild
         await self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
-    async def test_children_noAccess_dir_noExec(self):
+    async def test_children_noAccess_dir_noExec(self) -> None:
         await self.chmod(self.meta.path, 0o600)
         with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
@@ -534,14 +535,14 @@ cn: theChild
         await self.chmod(self.meta.path, 0o755)
 
     @skipIfWindowsOrRoot
-    async def test_children_noAccess_file(self):
+    async def test_children_noAccess_file(self) -> None:
         await self.chmod(os.path.join(self.meta.path, "cn=foo.ldif"), 0)
         with randomizedListdir() as iterdir, pytest.raises(OSError) as excinfo:
             await self.meta.children()
         assert excinfo.value.errno == errno.EACCES
         assert iterdir.mock_calls == [mock.call(self.meta.path)]
 
-    async def test_addChild(self):
+    async def test_addChild(self) -> None:
         await self.empty.addChild(
             rdn="a=b",
             attributes={
@@ -561,7 +562,7 @@ cn: theChild
         want.sort()
         assert got == want
 
-    async def test_addChild_Exists(self):
+    async def test_addChild_Exists(self) -> None:
         with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
             await self.meta.addChild(
                 rdn="cn=foo",
@@ -571,38 +572,38 @@ cn: theChild
                 },
             )
 
-    async def test_addChild_to_existing_directory(self):
+    async def test_addChild_to_existing_directory(self) -> None:
         child = await self.meta.addChild(
             rdn="cn=baz",
             attributes={"objectClass": ["a"], "cn": ["baz"]},
         )
         assert child.dn == "cn=baz,ou=metasyntactic,dc=example,dc=com"
 
-    async def test_deleteChild_accepts_relative_distinguished_name(self):
+    async def test_deleteChild_accepts_relative_distinguished_name(self) -> None:
         result = await self.meta.deleteChild(
             distinguishedname.RelativeDistinguishedName("cn=bar")
         )
         assert result == self.bar
 
-    async def test_move_accepts_distinguished_name(self):
+    async def test_move_accepts_distinguished_name(self) -> None:
         result = await self.empty.move(
             distinguishedname.DistinguishedName("ou=moved,dc=example,dc=com")
         )
         assert result
         assert self.empty.dn == "ou=moved,dc=example,dc=com"
 
-    async def test_parent(self):
+    async def test_parent(self) -> None:
         assert await self.foo.parent() == self.meta
         assert await self.meta.parent() == self.example
         assert await self.root.parent() is None
 
-    async def test_subtree_empty(self):
+    async def test_subtree_empty(self) -> None:
         with randomizedListdir() as iterdir:
             assert len(await self.empty.subtree()) == 1
 
         assert iterdir.mock_calls == [mock.call(self.empty.path)]
 
-    async def test_subtree_oneChild(self):
+    async def test_subtree_oneChild(self) -> None:
         with randomizedListdir() as iterdir:
             results = await self.oneChild.subtree()
 
@@ -620,7 +621,7 @@ cn: theChild
         ]
         assert got == want
 
-    async def test_subtree_oneChild_cb(self):
+    async def test_subtree_oneChild_cb(self) -> None:
         got = []
         with randomizedListdir() as iterdir:
             r = await self.oneChild.subtree(got.append)
@@ -640,7 +641,7 @@ cn: theChild
         ]
         assert got == want
 
-    async def test_subtree_many(self):
+    async def test_subtree_many(self) -> None:
         with randomizedListdir() as iterdir:
             result = await self.example.subtree()
 
@@ -670,7 +671,7 @@ cn: theChild
         ]
         util.assert_permutation(expected, result)
 
-    async def test_subtree_many_cb(self):
+    async def test_subtree_many_cb(self) -> None:
         got = []
         with randomizedListdir() as iterdir:
             result = await self.example.subtree(callback=got.append)
@@ -702,25 +703,25 @@ cn: theChild
         ]
         util.assert_permutation(expected, got)
 
-    async def test_lookup_fail(self):
+    async def test_lookup_fail(self) -> None:
         dn = "cn=thud,ou=metasyntactic,dc=example,dc=com"
         with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
             await self.root.lookup(dn)
         assert excinfo.value.message == dn
 
-    async def test_lookup_fail_outOfTree(self):
+    async def test_lookup_fail_outOfTree(self) -> None:
         dn = "dc=invalid"
         with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
             await self.root.lookup(dn)
         assert excinfo.value.message == dn
 
-    async def test_lookup_fail_outOfTree_2(self):
+    async def test_lookup_fail_outOfTree_2(self) -> None:
         dn = "dc=invalid"
         with pytest.raises(ldaperrors.LDAPNoSuchObject) as excinfo:
             await self.example.lookup(dn)
         assert excinfo.value.message == dn
 
-    async def test_lookup_fail_multipleError(self):
+    async def test_lookup_fail_multipleError(self) -> None:
         await writeFile(
             os.path.join(self.example.path, "cn=bad-two-entries.ldif"),
             b"""\
@@ -737,57 +738,57 @@ objectClass: top
         with pytest.raises(ldiftree.LDIFTreeEntryContainsMultipleEntries):
             await self.example.lookup("cn=bad-two-entries,dc=example,dc=com")
 
-    async def test_lookup_fail_emptyError(self):
+    async def test_lookup_fail_emptyError(self) -> None:
         await writeFile(os.path.join(self.example.path, "cn=bad-empty.ldif"), b"")
         with pytest.raises(ldiftree.LDIFTreeEntryContainsNoEntries):
             await self.example.lookup("cn=bad-empty,dc=example,dc=com")
 
-    async def test_lookup_deep(self):
+    async def test_lookup_deep(self) -> None:
         dn = "cn=bar,ou=metasyntactic,dc=example,dc=com"
         assert await self.root.lookup(dn) == self.bar
 
-    async def test_delete_root(self):
+    async def test_delete_root(self) -> None:
         with pytest.raises(ldiftree.LDAPCannotRemoveRootError):
             await self.root.delete()
 
-    async def test_delete_nonLeaf(self):
+    async def test_delete_nonLeaf(self) -> None:
         with pytest.raises(ldaperrors.LDAPNotAllowedOnNonLeaf):
             await self.meta.delete()
 
-    async def test_delete(self):
+    async def test_delete(self) -> None:
         assert await self.foo.delete() == self.foo
         assert await self.meta.children() == [self.bar]
 
-    async def test_deleteChild(self):
+    async def test_deleteChild(self) -> None:
         assert await self.meta.deleteChild("cn=bar") == self.bar
         assert await self.meta.children() == [self.foo]
 
-    async def test_deleteChild_NonExisting(self):
+    async def test_deleteChild_NonExisting(self) -> None:
         with pytest.raises(ldaperrors.LDAPNoSuchObject):
             await self.root.deleteChild("cn=not-exist")
 
-    async def test_setPassword(self):
+    async def test_setPassword(self) -> None:
         self.foo.setPassword(b"s3krit", salt=b"\xf2\x4a")
         assert "userPassword" in self.foo
         assert self.foo["userPassword"] == [b"{SSHA}0n/Iw1NhUOKyaI9gm9v5YsO3ZInySg=="]
 
-    async def test_setPassword_noSalt(self):
+    async def test_setPassword_noSalt(self) -> None:
         self.foo.setPassword(b"s3krit")
         assert "userPassword" in self.foo
         assert await self.foo.bind("s3krit") is self.foo
         with pytest.raises(ldaperrors.LDAPInvalidCredentials):
             await self.foo.bind("s4krit")
 
-    async def test_diffTree_self(self):
+    async def test_diffTree_self(self) -> None:
         assert await self.root.diffTree(self.root) == []
 
-    async def test_diffTree_copy(self, tmp_path):
+    async def test_diffTree_copy(self, tmp_path: pathlib.Path) -> None:
         otherDir = str(tmp_path / "other")
         await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
         assert await self.root.diffTree(other) == []
 
-    async def test_diffTree_addChild(self, tmp_path):
+    async def test_diffTree_addChild(self, tmp_path: pathlib.Path) -> None:
         otherDir = str(tmp_path / "other")
         await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
@@ -797,7 +798,7 @@ objectClass: top
         added = await other.lookup("cn=foo,dc=example,dc=com")
         assert await self.root.diffTree(other) == [delta.AddOp(added)]
 
-    async def test_diffTree_delChild(self, tmp_path):
+    async def test_diffTree_delChild(self, tmp_path: pathlib.Path) -> None:
         otherDir = str(tmp_path / "other")
         await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
@@ -807,7 +808,7 @@ objectClass: top
 
         assert await self.root.diffTree(other) == [delta.DeleteOp(self.empty)]
 
-    async def test_diffTree_edit_failure(self, tmp_path):
+    async def test_diffTree_edit_failure(self, tmp_path: pathlib.Path) -> None:
         otherDir = str(tmp_path / "other")
         await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
@@ -825,7 +826,7 @@ objectClass: top
         assert messages[0] == "[ERROR] Could not commit entry: ou=empty,dc=example,dc=com."
 
     @skipIfWindows
-    async def test_diffTree_edit(self, tmp_path):
+    async def test_diffTree_edit(self, tmp_path: pathlib.Path) -> None:
         otherDir = str(tmp_path / "other")
         await anyio.to_thread.run_sync(shutil.copytree, self.tree, otherDir)
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
@@ -839,7 +840,7 @@ objectClass: top
         ]
 
     @skipIfWindows
-    async def test_move_noChildren_sameSuperior(self):
+    async def test_move_noChildren_sameSuperior(self) -> None:
         await self.empty.move("ou=moved,dc=example,dc=com")
 
         assert set(await self.example.children()) == {
@@ -849,7 +850,7 @@ objectClass: top
         }
 
     @skipIfWindows
-    async def test_move_children_sameSuperior(self):
+    async def test_move_children_sameSuperior(self) -> None:
         await self.meta.move("ou=moved,dc=example,dc=com")
 
         assert set(await self.example.children()) == {
@@ -859,7 +860,7 @@ objectClass: top
         }
 
     @skipIfWindows
-    async def test_move_noChildren_newSuperior(self):
+    async def test_move_noChildren_newSuperior(self) -> None:
         await self.empty.move("ou=moved,ou=oneChild,dc=example,dc=com")
 
         assert set(await self.example.children()) == {self.meta, self.oneChild}
@@ -869,7 +870,7 @@ objectClass: top
         }
 
     @skipIfWindows
-    async def test_move_children_newSuperior(self):
+    async def test_move_children_newSuperior(self) -> None:
         await self.meta.move("ou=moved,ou=oneChild,dc=example,dc=com")
 
         assert set(await self.example.children()) == {self.empty, self.oneChild}
@@ -878,7 +879,7 @@ objectClass: top
             _moved("ou=moved,ou=oneChild,dc=example,dc=com"),
         }
 
-    async def testCompareOtherTypes(self):
+    async def testCompareOtherTypes(self) -> None:
         """
         It can't be compared with other types.
         """
@@ -888,7 +889,7 @@ objectClass: top
         with pytest.raises(TypeError):
             self.example > object()
 
-    async def testCompareGreater(self):
+    async def testCompareGreater(self) -> None:
         """
         It is compared with other entries based on DN, where child is
         greater than the parent.
@@ -896,7 +897,7 @@ objectClass: top
         assert self.oneChild > self.example
         assert not (self.example > self.oneChild)
 
-    async def testCompareLess(self):
+    async def testCompareLess(self) -> None:
         """
         It is compared with other entries based on DN, where parent is
         less than the child.
@@ -904,11 +905,11 @@ objectClass: top
         assert self.example < self.oneChild
         assert not (self.oneChild < self.example)
 
-    async def testRepresentation(self):
+    async def testRepresentation(self) -> None:
         assert self.example.dn.getText() in repr(self.example)
 
 
-def test_module_entrypoint_explains_legacy_demo_removal():
+def test_module_entrypoint_explains_legacy_demo_removal() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "anyldap.ldiftree"],
         check=False,

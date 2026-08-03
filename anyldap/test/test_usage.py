@@ -17,7 +17,7 @@ from anyldap.usage import (
 )
 
 
-def test_duplicate_flag_declarations_are_yielded_once():
+def test_duplicate_flag_declarations_are_yielded_once() -> None:
     class DuplicateFlags(Options):
         optFlags = (("verbose", "v", "first"), ("verbose", "v", "second"))
 
@@ -36,7 +36,7 @@ class DuplicateFlagOptions(FirstFlagOptions):
     optFlags = (("shared", "s", "second"),)
 
 
-def test_duplicate_inherited_flags_are_yielded_once():
+def test_duplicate_inherited_flags_are_yielded_once() -> None:
     assert list(DuplicateFlagOptions._iter_opt_flags()) == [
         ("shared", "s", "first")
     ]
@@ -45,7 +45,7 @@ def test_duplicate_inherited_flags_are_yielded_once():
 
 
 class TestOptions_scope:
-    def test_parseOptions_bad_scope(self):
+    def test_parseOptions_bad_scope(self) -> None:
         """
         It fails to parse the option when the scope is bad
         """
@@ -56,7 +56,7 @@ class TestOptions_scope:
                 options=["--scope", "this is a bad scope"]
             )
 
-    def test_parseOptions_default(self):
+    def test_parseOptions_default(self) -> None:
         """
         When no explicit options is provided it will set an empty dict.
         """
@@ -101,7 +101,7 @@ class HandlerOptions(Options):
 
 
 class TestCompleteOptions:
-    def test_uses_process_arguments_and_option_handlers(self):
+    def test_uses_process_arguments_and_option_handlers(self) -> None:
         previous = sys.argv
         try:
             sys.argv = ["command", "--verbose", "--custom=value"]
@@ -111,12 +111,12 @@ class TestCompleteOptions:
         assert result["handled-flag"]
         assert result["handled-parameter"] == "value"
 
-    def test_mapping_protocol(self):
+    def test_mapping_protocol(self) -> None:
         options = Options()
         options["key"] = "value"
         assert options["key"] == "value"
 
-    def test_long_short_flags_and_parameters(self):
+    def test_long_short_flags_and_parameters(self) -> None:
         options = CompleteOptions()
         result = options.parseOptions(
             [
@@ -140,18 +140,18 @@ class TestCompleteOptions:
         assert result["toggled"] == "enabled"
         assert result["bind-auth-fd"] == 7
 
-    def test_double_dash_stops_option_parsing(self):
+    def test_double_dash_stops_option_parsing(self) -> None:
         options = Options()
         assert options.parseOptions(["--", "ignored"]) == {}
 
-    def test_positional_arguments_are_dispatched(self):
+    def test_positional_arguments_are_dispatched(self) -> None:
         options = HandlerOptions()
         received = []
         options.parseArgs = lambda *args: received.extend(args)
         options.parseOptions(["first", "second"])
         assert received == ["first", "second"]
 
-    def test_option_errors(self):
+    def test_option_errors(self) -> None:
         cases = [
             (["argument"], "Unknown argument"),
             (["--unknown"], "Unknown option"),
@@ -164,7 +164,7 @@ class TestCompleteOptions:
             with pytest.raises(UsageError, match=message):
                 CompleteOptions().parseOptions(arguments)
 
-    def test_required_values(self):
+    def test_required_values(self) -> None:
         with pytest.raises(UsageError, match="base must be given"):
             CompleteOptions().parseOptions(["--binddn=cn=admin"])
         with pytest.raises(UsageError, match="binddn must be given"):
@@ -182,7 +182,7 @@ class TestOptions_service_location:
     Unit tests for Options_service_location.
     """
 
-    def test_parseOptions_default(self):
+    def test_parseOptions_default(self) -> None:
         """
         When no explicit options is provided it will set an empty dict.
         """
@@ -193,7 +193,7 @@ class TestOptions_service_location:
 
         assert {} == sut.opts["service-location"]
 
-    def test_parseOptions_single(self):
+    def test_parseOptions_single(self) -> None:
         """
         It can have a single --service-location option.
         """
@@ -207,7 +207,7 @@ class TestOptions_service_location:
         value = sut.opts["service-location"][base]
         assert ("127.0.0.1", "1234") == value
 
-    def test_parseOptions_invalid_DN(self):
+    def test_parseOptions_invalid_DN(self) -> None:
         """
         It fails to parse the option when the base DN is not valid.
         """
@@ -218,7 +218,7 @@ class TestOptions_service_location:
 
         assert "Invalid relative distinguished name 'example.com'." == excinfo.value.args[0]
 
-    def test_parseOptions_no_server(self):
+    def test_parseOptions_no_server(self) -> None:
         """
         It fails to parse the option when no host is defined, but only
         a base DN.
@@ -230,7 +230,7 @@ class TestOptions_service_location:
 
         assert "service-location must specify host" == excinfo.value.args[0]
 
-    def test_parseOptions_multiple(self):
+    def test_parseOptions_multiple(self) -> None:
         """
         It can have have multiple --service-location options and they are
         indexed using the base DN.

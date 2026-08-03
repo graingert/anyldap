@@ -12,7 +12,7 @@ class WireableObject:
     Object with bytes representation as a constant toWire value
     """
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         return b"wire"
 
 
@@ -21,12 +21,12 @@ class TextObject(anyldap._encoder.TextStrAlias):
     Object with human readable representation as a constant getText value
     """
 
-    def getText(self):
+    def getText(self) -> str:
         return "text"
 
 
 class TestEncoderTests:
-    def test_wireable_object(self):
+    def test_wireable_object(self) -> None:
         """
         to_bytes function use object`s toWire method
         to get its bytes representation if it has one
@@ -34,7 +34,7 @@ class TestEncoderTests:
         obj = WireableObject()
         assert anyldap._encoder.to_bytes(obj) == b"wire"
 
-    def test_unicode_object(self):
+    def test_unicode_object(self) -> None:
         """
         unicode string is encoded to utf-8 if passed
         to to_bytes function
@@ -42,7 +42,7 @@ class TestEncoderTests:
         obj = "unicode"
         assert anyldap._encoder.to_bytes(obj) == b"unicode"
 
-    def test_bytes_object(self):
+    def test_bytes_object(self) -> None:
         """
         byte string is returned without changes
         if passed to to_bytes function
@@ -50,7 +50,7 @@ class TestEncoderTests:
         obj = b"bytes"
         assert anyldap._encoder.to_bytes(obj) == b"bytes"
 
-    def test_int_object(self):
+    def test_int_object(self) -> None:
         """
         integer is converted to a string representation, then encoded to bytes
         if passed to to_bytes function
@@ -60,12 +60,12 @@ class TestEncoderTests:
 
 
 class WireObject(anyldap._encoder.WireStrAlias):
-    def toWire(self):
+    def toWire(self) -> bytes:
         return b"wire"
 
 
 class TestWireStrAliasTests:
-    def test_toWire_not_implemented(self):
+    def test_toWire_not_implemented(self) -> None:
         """
         WireStrAlias.toWire is an abstract method and raises NotImplementedError
         """
@@ -73,7 +73,7 @@ class TestWireStrAliasTests:
         with pytest.raises(NotImplementedError):
             obj.toWire()
 
-    def test_deprecation_warning(self, recwarn):
+    def test_deprecation_warning(self, recwarn: pytest.WarningsRecorder) -> None:
         """
         __str__ warns, then fails: toWire returns bytes, which __str__ may not.
         """
@@ -88,7 +88,7 @@ class TestWireStrAliasTests:
 
 
 class TestTextStrAliasTests:
-    def test_deprecation_warning(self, recwarn):
+    def test_deprecation_warning(self, recwarn: pytest.WarningsRecorder) -> None:
         str(TextObject())
         msg = (
             "TextObject.__str__ method is deprecated and will not be used "
@@ -99,7 +99,7 @@ class TestTextStrAliasTests:
         assert recwarn[0].category is DeprecationWarning
         assert str(recwarn[0].message) == msg
 
-    def test_getText_not_implemented(self):
+    def test_getText_not_implemented(self) -> None:
         """
         TextStrAlias.getText is an abstract method and raises NotImplementedError
         """

@@ -64,7 +64,7 @@ def decode_message(wire_bytes):
     return message
 
 
-async def test_starttls_upgrades_real_socket_stream():
+async def test_starttls_upgrades_real_socket_stream() -> None:
     authority = trustme.CA()
     certificate = authority.issue_cert("localhost")
     server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -100,7 +100,7 @@ async def test_starttls_upgrades_real_socket_stream():
         await listener.aclose()
 
 
-async def test_ldap_server_attach_stream_bind_response():
+async def test_ldap_server_attach_stream_bind_response() -> None:
     root = inmemory.ReadOnlyInMemoryLDAPEntry(
         dn="dc=example,dc=com",
         attributes={"dc": "example"},
@@ -121,7 +121,7 @@ async def test_ldap_server_attach_stream_bind_response():
         await server.aclose()
 
 
-async def test_base_server_real_stream_partial_message_and_close_lifecycle():
+async def test_base_server_real_stream_partial_message_and_close_lifecycle() -> None:
     server = ldapserver.BaseLDAPServer()
     server.debug = True
     stream = MemoryByteStream()
@@ -144,7 +144,7 @@ async def test_base_server_real_stream_partial_message_and_close_lifecycle():
         await server.aclose()
 
 
-async def test_unattached_server_stream_workers_and_wait_closed_are_noops():
+async def test_unattached_server_stream_workers_and_wait_closed_are_noops() -> None:
     server = ldapserver.BaseLDAPServer()
 
     await server.wait_closed()
@@ -153,7 +153,7 @@ async def test_unattached_server_stream_workers_and_wait_closed_are_noops():
     await server._send_anyio_write(b"unattached")
 
 
-async def test_server_closes_when_the_output_side_breaks():
+async def test_server_closes_when_the_output_side_breaks() -> None:
     server = ldapserver.BaseLDAPServer()
     stream = MemoryByteStream()
 
@@ -168,7 +168,7 @@ async def test_server_closes_when_the_output_side_breaks():
     assert stream.closed
 
 
-async def test_ldap_server_accepts_factory_with_root_attribute():
+async def test_ldap_server_accepts_factory_with_root_attribute() -> None:
     root = inmemory.ReadOnlyInMemoryLDAPEntry(
         dn="dc=example,dc=com",
         attributes={"dc": "example"},
@@ -194,7 +194,7 @@ async def test_ldap_server_accepts_factory_with_root_attribute():
         await server.aclose()
 
 
-async def test_extended_request_handler_without_decoder_receives_raw_value():
+async def test_extended_request_handler_without_decoder_receives_raw_value() -> None:
     class ExtendedServer(ldapserver.LDAPServer):
         def extendedRequest_echo(self, value, reply):
             return pureldap.LDAPExtendedResponse(
@@ -224,7 +224,7 @@ async def test_extended_request_handler_without_decoder_receives_raw_value():
         await server.aclose()
 
 
-async def test_server_async_handler_error_uses_protocol_error_response():
+async def test_server_async_handler_error_uses_protocol_error_response() -> None:
     class FailingServer(ldapserver.BaseLDAPServer):
         async def handle_LDAPBindRequest(self, request, controls, reply):
             raise RuntimeError("real handler failed")
@@ -243,7 +243,7 @@ async def test_server_async_handler_error_uses_protocol_error_response():
         await server.aclose()
 
 
-async def test_listen_reports_real_tcp_listener_readiness():
+async def test_listen_reports_real_tcp_listener_readiness() -> None:
     async with anyio.create_task_group() as task_group:
         host, port = await task_group.start(
             ldapserver.BaseLDAPServer.listen,
@@ -255,7 +255,7 @@ async def test_listen_reports_real_tcp_listener_readiness():
         task_group.cancel_scope.cancel()
 
 
-async def test_proxybase_attach_stream_forwards_bind():
+async def test_proxybase_attach_stream_forwards_bind() -> None:
     expected = pureldap.LDAPBindResponse(resultCode=ldaperrors.Success.resultCode)
     client = ldapclient.LDAPClient()
     upstream = MemoryByteStream()
@@ -286,7 +286,7 @@ async def test_proxybase_attach_stream_forwards_bind():
         await client.aclose()
 
 
-async def test_proxy_queues_until_real_upstream_client_is_ready():
+async def test_proxy_queues_until_real_upstream_client_is_ready() -> None:
     connect = anyio.Event()
 
     client = ldapclient.LDAPClient()
@@ -320,7 +320,7 @@ async def test_proxy_queues_until_real_upstream_client_is_ready():
         await client.aclose()
 
 
-async def test_proxy_public_interception_hook_can_answer_without_forwarding():
+async def test_proxy_public_interception_hook_can_answer_without_forwarding() -> None:
     class InterceptingProxy(proxybase.ProxyBase):
         def handleBeforeForwardRequest(self, request, controls, reply):
             reply(pureldap.LDAPBindResponse(resultCode=0))
@@ -345,7 +345,7 @@ async def test_proxy_public_interception_hook_can_answer_without_forwarding():
         await client.aclose()
 
 
-async def test_proxy_reports_real_connector_failure_and_closes_downstream():
+async def test_proxy_reports_real_connector_failure_and_closes_downstream() -> None:
     async def connector():
         raise OSError("connection refused")
 
@@ -358,7 +358,7 @@ async def test_proxy_reports_real_connector_failure_and_closes_downstream():
         assert downstream.closed
 
 
-async def test_proxy_closes_real_upstream_when_downstream_disconnects_while_connecting():
+async def test_proxy_closes_real_upstream_when_downstream_disconnects_while_connecting() -> None:
     release = anyio.Event()
     connector_started = anyio.Event()
     client = ldapclient.LDAPClient()
@@ -384,7 +384,7 @@ async def test_proxy_closes_real_upstream_when_downstream_disconnects_while_conn
         assert server.client is None
 
 
-async def test_merged_server_attach_stream_merges_real_upstream_bind_responses():
+async def test_merged_server_attach_stream_merges_real_upstream_bind_responses() -> None:
     first_client = ldapclient.LDAPClient()
     second_client = ldapclient.LDAPClient()
     first_upstream = MemoryByteStream()
@@ -430,7 +430,7 @@ async def test_merged_server_attach_stream_merges_real_upstream_bind_responses()
         await server.aclose()
 
 
-async def test_merged_server_reports_real_async_connector_failure():
+async def test_merged_server_reports_real_async_connector_failure() -> None:
     def refuse_connection(protocol_factory):
         raise OSError("connection refused")
 
@@ -449,7 +449,7 @@ async def test_merged_server_reports_real_async_connector_failure():
             await server.attach_stream(stream, task_group)
 
 
-async def test_merged_server_sends_unbind_through_real_async_client():
+async def test_merged_server_sends_unbind_through_real_async_client() -> None:
     client = ldapclient.LDAPClient()
     server = merger.MergedLDAPServer([], [])
     server.clients = [client]
@@ -476,7 +476,7 @@ async def test_merged_server_sends_unbind_through_real_async_client():
         task_group.cancel_scope.cancel()
 
 
-async def test_proxy_attach_stream_forwards_bind():
+async def test_proxy_attach_stream_forwards_bind() -> None:
     client = testutil.LDAPClientTestDriver(
         [pureldap.LDAPBindResponse(resultCode=ldaperrors.Success.resultCode)]
     )
@@ -501,7 +501,7 @@ async def test_proxy_attach_stream_forwards_bind():
         await server.aclose()
 
 
-async def test_service_binding_proxy_attach_stream_intercepts_bind():
+async def test_service_binding_proxy_attach_stream_intercepts_bind() -> None:
     client = testutil.LDAPClientTestDriver(
         [
             pureldap.LDAPSearchResultEntry(
@@ -609,7 +609,7 @@ async def test_service_binding_proxy_attach_stream_intercepts_bind():
         await server.aclose()
 
 
-async def test_serve_stream_runs_until_eof():
+async def test_serve_stream_runs_until_eof() -> None:
     root = inmemory.ReadOnlyInMemoryLDAPEntry(
         dn="dc=example,dc=com",
         attributes={"dc": "example"},
@@ -643,7 +643,7 @@ async def test_serve_stream_runs_until_eof():
     assert result["server"].connected == 0
 
 
-async def test_proxybase_failure_and_starttls_response_paths():
+async def test_proxybase_failure_and_starttls_response_paths() -> None:
     replies = []
     server = proxybase.ProxyBase()
     server.queuedRequests = [
@@ -687,7 +687,7 @@ async def test_proxybase_failure_and_starttls_response_paths():
     )
 
 
-async def test_proxybase_connection_tls_disconnect_and_backlog_paths():
+async def test_proxybase_connection_tls_disconnect_and_backlog_paths() -> None:
     client = testutil.LDAPClientTestDriver(
         [pureldap.LDAPBindResponse(resultCode=0)], []
     )
@@ -727,7 +727,7 @@ async def test_proxybase_connection_tls_disconnect_and_backlog_paths():
     assert disconnected_server.queuedRequests == []
 
 
-async def test_proxybase_forwarding_and_example_response_paths():
+async def test_proxybase_forwarding_and_example_response_paths() -> None:
     client = testutil.LDAPClientTestDriver(
         [
             pureldap.LDAPSearchResultEntry("cn=a", []),
@@ -758,7 +758,7 @@ async def test_proxybase_forwarding_and_example_response_paths():
     assert example.handleProxiedResponse(response, None, None) is response
 
 
-async def test_proxybase_queues_requests_until_connected():
+async def test_proxybase_queues_requests_until_connected() -> None:
     server = proxybase.ProxyBase()
     request = pureldap.LDAPSearchRequest()
     replies = []
@@ -766,7 +766,7 @@ async def test_proxybase_queues_requests_until_connected():
     assert server.queuedRequests == [(request, None, replies.append)]
 
 
-async def test_proxybase_replies_in_response_order():
+async def test_proxybase_replies_in_response_order() -> None:
     request = pureldap.LDAPSearchRequest()
     replies = []
 
@@ -785,7 +785,7 @@ async def test_proxybase_replies_in_response_order():
     assert replies == [("rewritten", entry), ("rewritten", done)]
 
 
-async def test_proxybase_connection_close_and_quiet_starttls_paths():
+async def test_proxybase_connection_close_and_quiet_starttls_paths() -> None:
     client = AsyncLDAPClientDriver([])
     server = proxybase.ProxyBase()
     server.client = client
@@ -816,7 +816,7 @@ async def test_proxybase_connection_close_and_quiet_starttls_paths():
     assert replies[0].resultCode == ldaperrors.Success.resultCode
 
 
-async def test_server_stream_state_guards():
+async def test_server_stream_state_guards() -> None:
     server = ldapserver.BaseLDAPServer()
     await server._send_anyio_write(b"data")
     with pytest.raises(ldapserver.LDAPServerConnectionLostException):
@@ -827,7 +827,7 @@ async def test_server_stream_state_guards():
         await server._upgrade_to_tls(None, b"response")
 
 
-async def test_ldaps_connects_over_tls_from_the_start():
+async def test_ldaps_connects_over_tls_from_the_start() -> None:
     """A client reaches an LDAPS server, which is TLS before any LDAP.
 
     Distinct from STARTTLS, which negotiates in the clear first. The

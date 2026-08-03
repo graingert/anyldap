@@ -29,22 +29,22 @@ class TestAttributeAsLDIFTests:
     from key by two semicolons and a space.
     """
 
-    def test_byte_string(self):
+    def test_byte_string(self) -> None:
         """Key and value are byte strings"""
         result = attributeAsLDIF(b"some key", b"some value")
         assert result == b"some key: some value\n"
 
-    def test_unicode_string(self):
+    def test_unicode_string(self) -> None:
         """Key and value are unicode strings"""
         result = attributeAsLDIF("another key", "another value")
         assert result == b"another key: another value\n"
 
-    def test_wireable_object(self):
+    def test_wireable_object(self) -> None:
         """Value is an object with toWire method returning its bytes representation"""
         result = attributeAsLDIF("dn", WireableObject())
         assert result == b"dn: wire\n"
 
-    def test_startswith_special_character(self):
+    def test_startswith_special_character(self) -> None:
         """
         Value is a string starting with one of the reserved characters.
         Returned value is base64 encoded.
@@ -55,7 +55,7 @@ class TestAttributeAsLDIFTests:
             result = attributeAsLDIF(b"key", value)
             assert result == b"key:: %s\n" % encode(value)
 
-    def test_endswith_special_character(self):
+    def test_endswith_special_character(self) -> None:
         """
         Value is a string ending with one of the reserved characters.
         Returned value is base64 encoded.
@@ -66,7 +66,7 @@ class TestAttributeAsLDIFTests:
             result = attributeAsLDIF(b"key", value)
             assert result == b"key:: %s\n" % encode(value)
 
-    def test_contains_special_characters(self):
+    def test_contains_special_characters(self) -> None:
         """
         Value is a string with one of the reserved characters
         somewhere in its middle.
@@ -78,7 +78,7 @@ class TestAttributeAsLDIFTests:
             result = attributeAsLDIF(b"key", value)
             assert result == b"key:: %s\n" % encode(value)
 
-    def test_contains_nonprintable_characters(self):
+    def test_contains_nonprintable_characters(self) -> None:
         """
         Value is a string containing nonprintable characters.
         Returned value is base64 encoded.
@@ -95,7 +95,7 @@ class TestAsLDIFTests:
     including DN.
     """
 
-    def test_byte_string(self):
+    def test_byte_string(self) -> None:
         """DN and attribute keys and values are byte strings"""
         attributes = [
             (b"key1", [b"value11", b"value12"]),
@@ -111,7 +111,7 @@ key2: value22
 
 """)
 
-    def test_unicode_string(self):
+    def test_unicode_string(self) -> None:
         """DN and attribute keys and values are unicode string"""
         attributes = [
             ("key1", ["value11", "value12"]),
@@ -127,7 +127,7 @@ key2: value22
 
 """)
 
-    def test_wireable_object(self):
+    def test_wireable_object(self) -> None:
         """
         DN and attribute values are objects with
         toWire method returning bytes representation
@@ -149,7 +149,7 @@ class TestManyAsLDIFTests:
     by an empty line.
     """
 
-    def test_multiple_objects(self):
+    def test_multiple_objects(self) -> None:
         objects = [
             (
                 b"object1",

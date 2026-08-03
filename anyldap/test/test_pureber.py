@@ -6,7 +6,7 @@ import pytest
 from anyldap.protocols import pureber
 
 
-def test_custom_tag_representations_and_unknown_tag(capsys):
+def test_custom_tag_representations_and_unknown_tag(capsys: pytest.CaptureFixture[str]) -> None:
     values = [
         pureber.BERInteger(1, tag=10),
         pureber.BEROctetString(b"value", tag=10),
@@ -57,21 +57,21 @@ class TestBerLengths:
         (256 ** 127 - 1, [0x80 | 127] + 127 * [0xFF]),
     )
 
-    def testToBER(self):
+    def testToBER(self) -> None:
         for integer, encoded in self.knownValues:
             got = pureber.int2berlen(integer)
             got = bytes(got)
             got = l(got)
             assert got == encoded
 
-    def testFromBER(self):
+    def testFromBER(self) -> None:
         for integer, encoded in self.knownValues:
             m = s(*encoded)
             got, bytes = pureber.berDecodeLength(m)
             assert bytes == len(m)
             assert got == integer
 
-    def testPartialBER(self):
+    def testPartialBER(self) -> None:
         m = bytes(pureber.int2berlen(3 * 256))
         assert 3 == len(m)
         with pytest.raises(pureber.BERExceptionInsufficientData):
@@ -101,7 +101,7 @@ class TestBERBaseTests:
         (pureber.BEROctetString, ["b" + chr(0xE4) + chr(0xE4)]),
     )
 
-    def testEquality(self):
+    def testEquality(self) -> None:
         """
         BER objects equal BER objects with same type and content
         """
@@ -111,7 +111,7 @@ class TestBERBaseTests:
             assert x == x
             assert x == y
 
-    def testInequalityWithBER(self):
+    def testInequalityWithBER(self) -> None:
         """
         BER objects do not equal BER objects with different type or content
         """
@@ -124,7 +124,7 @@ class TestBERBaseTests:
                     y = j_class(*j_args)
                     assert x != y
 
-    def testInequalityWithNonBER(self):
+    def testInequalityWithNonBER(self) -> None:
         """
         BER objects are not equal with non-BER objects.
         """
@@ -133,7 +133,7 @@ class TestBERBaseTests:
         assert not (0 == sut)
         assert 0 != sut
 
-    def testHashEquality(self):
+    def testHashEquality(self) -> None:
         """
         Objects which are equal have the same hash.
         """
@@ -144,7 +144,7 @@ class TestBERBaseTests:
 
 
 class TestBERDecoderContextRepr:
-    def testRepr(self):
+    def testRepr(self) -> None:
         assert repr(pureber.BERDecoderContext(fallback="foo", inherit="bar")) == ("<BERDecoderContext identities={"
             "0x01: BERBoolean, "
             "0x02: BERInteger, "
@@ -175,7 +175,7 @@ class TestBERIntegerKnownValues:
         (256, [0x02, 0x02, 1, 0]),
     )
 
-    def testToBERIntegerKnownValues(self):
+    def testToBERIntegerKnownValues(self) -> None:
         """BERInteger(n).toWire() should give known result with known input"""
         for integer, encoded in self.knownValues:
             result = pureber.BERInteger(integer)
@@ -183,7 +183,7 @@ class TestBERIntegerKnownValues:
             result = l(result)
             assert encoded == result
 
-    def testFromBERIntegerKnownValues(self):
+    def testFromBERIntegerKnownValues(self) -> None:
         """BERInteger(encoded="...") should give known result with known input"""
         for integer, encoded in self.knownValues:
             m = s(*encoded)
@@ -193,7 +193,7 @@ class TestBERIntegerKnownValues:
             result = result.value
             assert integer == result
 
-    def testPartialBERIntegerEncodings(self):
+    def testPartialBERIntegerEncodings(self) -> None:
         """BERInteger(encoded="...") with too short input should throw BERExceptionInsufficientData"""
         m = pureber.BERInteger(42).toWire()
         assert 3 == len(m)
@@ -205,7 +205,7 @@ class TestBERIntegerKnownValues:
 
 
 class TestBERIntegerSanityCheck:
-    def testSanity(self):
+    def testSanity(self) -> None:
         """BERInteger(encoded=BERInteger(n)).value==n for -1000..1000"""
         for n in range(-1000, 1001, 10):
             encoded = pureber.BERInteger(n).toWire()
@@ -235,7 +235,7 @@ class TestBEROctetString:
         (ObjectWithToWireMethod(), [0x04, 3] + l(b"bar")),
     )
 
-    def testToBEROctetStringKnownValues(self):
+    def testToBEROctetStringKnownValues(self) -> None:
         """BEROctetString(n).toWire() should give known result with known input"""
         for st, encoded in self.knownValues:
             result = pureber.BEROctetString(st)
@@ -243,7 +243,7 @@ class TestBEROctetString:
             result = l(result)
             assert encoded == result
 
-    def testFromBEROctetStringKnownValues(self):
+    def testFromBEROctetStringKnownValues(self) -> None:
         """BEROctetString(encoded="...") should give known result with known input"""
         for st, encoded in self.knownValues:
             m = s(*encoded)
@@ -254,7 +254,7 @@ class TestBEROctetString:
             result = l(result)
             assert encoded == result
 
-    def testPartialBEROctetStringEncodings(self):
+    def testPartialBEROctetStringEncodings(self) -> None:
         """BEROctetString(encoded="...") with too short input should throw BERExceptionInsufficientData"""
         m = pureber.BEROctetString("x").toWire()
         assert 3 == len(m)
@@ -264,7 +264,7 @@ class TestBEROctetString:
             pureber.berDecodeObject(pureber.BERDecoderContext(), m[:1])
         assert (None, 0) == pureber.berDecodeObject(pureber.BERDecoderContext(), "")
 
-    def testSanity(self):
+    def testSanity(self) -> None:
         """BEROctetString(encoded=BEROctetString(n*'x')).value==n*'x' for some values of n"""
         for n in 0, 1, 2, 3, 4, 5, 6, 100, 126, 127, 128, 129, 1000, 2000:
             encoded = pureber.BEROctetString(n * b"x").toWire()
@@ -278,14 +278,14 @@ class TestBEROctetString:
 
 
 class TestBERNullKnownValues:
-    def testToBERNullKnownValues(self):
+    def testToBERNullKnownValues(self) -> None:
         """BERNull().toWire() should give known result"""
         result = pureber.BERNull()
         result = result.toWire()
         result = l(result)
         assert [0x05, 0x00] == result
 
-    def testFromBERNullKnownValues(self):
+    def testFromBERNullKnownValues(self) -> None:
         """BERNull(encoded="...") should give known result with known input"""
         encoded = [0x05, 0x00]
         m = s(*encoded)
@@ -294,7 +294,7 @@ class TestBERNullKnownValues:
         assert isinstance(result, pureber.BERNull)
         assert 0x05 == result.tag
 
-    def testPartialBERNullEncodings(self):
+    def testPartialBERNullEncodings(self) -> None:
         """BERNull(encoded="...") with too short input should throw BERExceptionInsufficientData"""
         m = pureber.BERNull().toWire()
         assert 2 == len(m)
@@ -325,7 +325,7 @@ class TestBERBooleanKnownValues:
         (9999, [0x01, 0x01, 0xFF], 0xFF),
     )
 
-    def testToBERBooleanKnownValues(self):
+    def testToBERBooleanKnownValues(self) -> None:
         """BERBoolean(n).toWire() should give known result with known input"""
         for integer, encoded, dummy in self.knownValues:
             result = pureber.BERBoolean(integer)
@@ -333,7 +333,7 @@ class TestBERBooleanKnownValues:
             result = l(result)
             assert encoded == result
 
-    def testFromBERBooleanKnownValues(self):
+    def testFromBERBooleanKnownValues(self) -> None:
         """BERBoolean(encoded="...") should give known result with known input"""
         for integer, encoded, canon in self.knownValues:
             m = s(*encoded)
@@ -343,7 +343,7 @@ class TestBERBooleanKnownValues:
             result = result.value
             assert canon == result
 
-    def testPartialBERBooleanEncodings(self):
+    def testPartialBERBooleanEncodings(self) -> None:
         """BERBoolean(encoded="...") with too short input should throw BERExceptionInsufficientData"""
         m = pureber.BERBoolean(42).toWire()
         assert 3 == len(m)
@@ -373,7 +373,7 @@ class TestBEREnumeratedKnownValues:
         (256, [0x0A, 0x02, 1, 0]),
     )
 
-    def testToBEREnumeratedKnownValues(self):
+    def testToBEREnumeratedKnownValues(self) -> None:
         """BEREnumerated(n).toWire() should give known result with known input"""
         for integer, encoded in self.knownValues:
             result = pureber.BEREnumerated(integer)
@@ -381,7 +381,7 @@ class TestBEREnumeratedKnownValues:
             result = l(result)
             assert encoded == result
 
-    def testFromBEREnumeratedKnownValues(self):
+    def testFromBEREnumeratedKnownValues(self) -> None:
         """BEREnumerated(encoded="...") should give known result with known input"""
         for integer, encoded in self.knownValues:
             m = s(*encoded)
@@ -391,7 +391,7 @@ class TestBEREnumeratedKnownValues:
             result = result.value
             assert integer == result
 
-    def testPartialBEREnumeratedEncodings(self):
+    def testPartialBEREnumeratedEncodings(self) -> None:
         """BEREnumerated(encoded="...") with too short input should throw BERExceptionInsufficientData"""
         m = pureber.BEREnumerated(42).toWire()
         assert 3 == len(m)
@@ -403,7 +403,7 @@ class TestBEREnumeratedKnownValues:
 
 
 class TestBEREnumeratedSanityCheck:
-    def testSanity(self):
+    def testSanity(self) -> None:
         """BEREnumerated(encoded=BEREnumerated(n)).value==n for -1000..1000"""
         for n in range(-1000, 1001, 10):
             encoded = pureber.BEREnumerated(n).toWire()
@@ -421,7 +421,7 @@ class TestBERSequence:
     Unit test for BERSequence.
     """
 
-    def testStringRepresentationEmpty(self):
+    def testStringRepresentationEmpty(self) -> None:
         """
         It can return the byte string representation for empty sequence which
         is just the zero/null byte.
@@ -432,7 +432,7 @@ class TestBERSequence:
 
         assert b"0\x00" == result
 
-    def testStringRepresentatinSmallInteger(self):
+    def testStringRepresentatinSmallInteger(self) -> None:
         """
         It can represent a sequence of a single integer which has a
         single byte value.
@@ -443,7 +443,7 @@ class TestBERSequence:
 
         assert b"0\x03\x02\x01\x02" == result
 
-    def testStringRepresentatinLargerInteger(self):
+    def testStringRepresentatinLargerInteger(self) -> None:
         """
         It can represent a sequence of a single integer which has a
         multi bites value.
@@ -454,7 +454,7 @@ class TestBERSequence:
 
         assert b"0\x04\x02\x02\x00\x80" == result
 
-    def testStringRepresentatinMultipleIntegers(self):
+    def testStringRepresentatinMultipleIntegers(self) -> None:
         """
         It can represent a sequence of multiple integer.
         """
@@ -464,7 +464,7 @@ class TestBERSequence:
 
         assert b"0\x07\x02\x01\x03\x02\x02\x00\x80" == result
 
-    def testDecodeValidInput(self):
+    def testDecodeValidInput(self) -> None:
         """
         It can be decoded from its bytes serialization.
         """
@@ -494,7 +494,7 @@ class TestBERSequence:
                 assert content[i] == result[i]
             assert content == result
 
-    def testDecdeInvalidInput(self):
+    def testDecdeInvalidInput(self) -> None:
         """
         It raises BERExceptionInsufficientData when trying to decode from
         data which is not valid.

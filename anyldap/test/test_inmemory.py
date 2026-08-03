@@ -13,7 +13,7 @@ from anyldap.test import util
 pytestmark = pytest.mark.anyio
 
 
-async def test_async_entry_operations_use_the_in_memory_tree():
+async def test_async_entry_operations_use_the_in_memory_tree() -> None:
     root = inmemory.ReadOnlyInMemoryLDAPEntry(
         "dc=example,dc=com", {"dc": ["example"]}
     )
@@ -29,7 +29,7 @@ async def test_async_entry_operations_use_the_in_memory_tree():
     assert await root.move_async("dc=renamed") is root
 
 
-async def test_ldif_protocol_reports_abnormal_disconnect():
+async def test_ldif_protocol_reports_abnormal_disconnect() -> None:
     protocol = inmemory.InMemoryLDIFProtocol()
     protocol.dataReceived(b"version: 1\n\n")
     protocol.connectionLost(Failure(RuntimeError("input failed")))
@@ -43,7 +43,7 @@ class SubclassEntry(inmemory.ReadOnlyInMemoryLDAPEntry):
 
 
 class TestInMemoryDatabase:
-    def setup_method(self):
+    def setup_method(self) -> None:
         self.root = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -92,11 +92,11 @@ class TestInMemoryDatabase:
             },
         )
 
-    async def test_children_empty(self):
+    async def test_children_empty(self) -> None:
         _result = await self.empty.children()
         util.assert_permutation(_result, [])
 
-    async def test_children_oneChild(self):
+    async def test_children_oneChild(self) -> None:
 
 
         children = await self.oneChild.children()
@@ -111,7 +111,7 @@ class TestInMemoryDatabase:
         want.sort()
         util.assert_permutation(got, want)
 
-    async def test_children_repeat(self):
+    async def test_children_repeat(self) -> None:
         """Test that .children() returns a copy of the data so that modifying it does not affect behaviour."""
         children1 = await self.oneChild.children()
         assert len(children1) == 1
@@ -120,7 +120,7 @@ class TestInMemoryDatabase:
 
         assert len(await self.oneChild.children()) == 1
 
-    async def test_children_twoChildren(self):
+    async def test_children_twoChildren(self) -> None:
 
 
         children = await self.meta.children()
@@ -136,7 +136,7 @@ class TestInMemoryDatabase:
         got = [e.dn for e in children]
         util.assert_permutation(got, want)
 
-    async def test_addChild(self):
+    async def test_addChild(self) -> None:
         self.empty.addChild(
             rdn="a=b",
             attributes={
@@ -156,7 +156,7 @@ class TestInMemoryDatabase:
         want.sort()
         util.assert_permutation(got, want)
 
-    def test_addChild_Exists(self):
+    def test_addChild_Exists(self) -> None:
         with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
             self.meta.addChild(
                 rdn="cn=foo",
@@ -166,7 +166,7 @@ class TestInMemoryDatabase:
                 },
             )
 
-    def test_addChild_subclass(self):
+    def test_addChild_subclass(self) -> None:
         """
         Adding child to ReadOnlyInMemoryLDAPEntry subclass instance
         creates entry of the same class
@@ -175,25 +175,25 @@ class TestInMemoryDatabase:
         child = entry.addChild(rdn="ou=empty", attributes={"objectClass": ["a"]})
         assert isinstance(child, SubclassEntry)
 
-    def test_parent(self):
+    def test_parent(self) -> None:
         assert self.foo.parent() == self.meta
         assert self.meta.parent() == self.root
         assert self.root.parent() is None
 
-    async def test_subtree_empty(self):
+    async def test_subtree_empty(self) -> None:
 
 
         entries = await self.empty.subtree()
         assert len(entries) == 1
 
-    async def test_subtree_oneChild(self):
+    async def test_subtree_oneChild(self) -> None:
         _result = await self.oneChild.subtree()
         util.assert_permutation(_result, [
                     self.oneChild,
                     self.theChild,
                 ])
 
-    async def test_subtree_oneChild_cb(self):
+    async def test_subtree_oneChild_cb(self) -> None:
         got = []
         assert await self.oneChild.subtree(got.append) is None
         util.assert_permutation(
@@ -204,7 +204,7 @@ class TestInMemoryDatabase:
             ],
         )
 
-    async def test_subtree_many(self):
+    async def test_subtree_many(self) -> None:
 
 
         results = await self.root.subtree()
@@ -220,7 +220,7 @@ class TestInMemoryDatabase:
         ]
         util.assert_permutation(got, want)
 
-    async def test_subtree_many_cb(self):
+    async def test_subtree_many_cb(self) -> None:
         got = []
 
 
@@ -238,7 +238,7 @@ class TestInMemoryDatabase:
         ]
         util.assert_permutation(got, want)
 
-    async def test_lookup_fail(self):
+    async def test_lookup_fail(self) -> None:
         dn = distinguishedname.DistinguishedName(
             "cn=thud,ou=metasyntactic,dc=example,dc=com"
         )
@@ -248,7 +248,7 @@ class TestInMemoryDatabase:
             await self.root.lookup(dn)
         assert excinfo.value.message == dn
 
-    async def test_lookup_fail_outOfTree(self):
+    async def test_lookup_fail_outOfTree(self) -> None:
         dn = distinguishedname.DistinguishedName("dc=invalid")
 
 
@@ -256,7 +256,7 @@ class TestInMemoryDatabase:
             await self.root.lookup(dn)
         assert excinfo.value.message == dn
 
-    async def test_lookup_deep_dn(self):
+    async def test_lookup_deep_dn(self) -> None:
         """Entry lookup with a DN instance returns entry instance with this DN"""
         dn = distinguishedname.DistinguishedName(
             "cn=bar,ou=metasyntactic,dc=example,dc=com"
@@ -264,12 +264,12 @@ class TestInMemoryDatabase:
         _result = await self.root.lookup(dn)
         assert _result == self.bar
 
-    async def test_lookup_deep_str(self):
+    async def test_lookup_deep_str(self) -> None:
         """Entry lookup with a DN as a string returns entry instance with this DN"""
         _result = await self.root.lookup("cn=bar,ou=metasyntactic,dc=example,dc=com")
         assert _result == self.bar
 
-    async def test_delete_root(self):
+    async def test_delete_root(self) -> None:
         newRoot = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -278,7 +278,7 @@ class TestInMemoryDatabase:
         with pytest.raises(inmemory.LDAPCannotRemoveRootError):
             await newRoot.delete()
 
-    async def test_delete_nonLeaf(self):
+    async def test_delete_nonLeaf(self) -> None:
         with pytest.raises(ldaperrors.LDAPNotAllowedOnNonLeaf) as excinfo:
             await self.meta.delete()
 
@@ -289,36 +289,36 @@ class TestInMemoryDatabase:
             b"notAllowedOnNonLeaf: ou=metasyntactic,dc=example,dc=com"
         )
 
-    async def test_delete(self):
+    async def test_delete(self) -> None:
         _result = await self.foo.delete()
         assert _result == self.foo
         _result = await self.meta.children()
         util.assert_permutation(_result, [self.bar])
 
-    async def test_deleteChild(self):
+    async def test_deleteChild(self) -> None:
         _result = await self.meta.deleteChild("cn=bar")
         assert _result == self.bar
         _result = await self.meta.children()
         util.assert_permutation(_result, [self.foo])
 
-    async def test_deleteChild_NonExisting(self):
+    async def test_deleteChild_NonExisting(self) -> None:
 
 
         with pytest.raises(ldaperrors.LDAPNoSuchObject):
             await self.root.deleteChild("cn=not-exist")
 
-    def test_setPassword(self):
+    def test_setPassword(self) -> None:
         self.foo.setPassword(b"s3krit", salt=b"\xf2\x4a")
         assert self.foo["userPassword"] == [b"{SSHA}0n/Iw1NhUOKyaI9gm9v5YsO3ZInySg=="]
 
-    async def test_setPassword_noSalt(self):
+    async def test_setPassword_noSalt(self) -> None:
         self.foo.setPassword(b"s3krit")
         assert "userPassword" in self.foo
         assert await self.foo.bind(b"s3krit") is self.foo
         with pytest.raises(ldaperrors.LDAPInvalidCredentials):
             await self.foo.bind(b"s4krit")
 
-    async def testSearch_withCallback(self):
+    async def testSearch_withCallback(self) -> None:
         got = []
 
 
@@ -331,14 +331,14 @@ class TestInMemoryDatabase:
         ]
         util.assert_permutation(got, want)
 
-    async def testSearch_withoutCallback(self):
+    async def testSearch_withoutCallback(self) -> None:
         _result = await self.root.search(filterText="(|(cn=foo)(cn=bar))")
         util.assert_permutation(_result, [
                     self.bar,
                     self.foo,
                 ])
 
-    async def test_move_noChildren_sameSuperior(self):
+    async def test_move_noChildren_sameSuperior(self) -> None:
 
 
         _result = await self.empty.move("ou=moved,dc=example,dc=com")
@@ -355,7 +355,7 @@ class TestInMemoryDatabase:
                     self.oneChild,
                 ])
 
-    async def test_move_children_sameSuperior(self):
+    async def test_move_children_sameSuperior(self) -> None:
 
 
         _result = await self.meta.move("ou=moved,dc=example,dc=com")
@@ -372,7 +372,7 @@ class TestInMemoryDatabase:
                     self.oneChild,
                 ])
 
-    async def test_move_noChildren_newSuperior(self):
+    async def test_move_noChildren_newSuperior(self) -> None:
 
 
 
@@ -395,7 +395,7 @@ class TestInMemoryDatabase:
                     ),
                 ])
 
-    async def test_move_children_newSuperior(self):
+    async def test_move_children_newSuperior(self) -> None:
 
 
 
@@ -418,7 +418,7 @@ class TestInMemoryDatabase:
                     ),
                 ])
 
-    async def test_commit(self):
+    async def test_commit(self) -> None:
         """ReadOnlyInMemoryLDAPEntry.commit() always reports success."""
         self.meta["foo"] = ["bar"]
         assert await self.meta.commit() is True
@@ -458,7 +458,7 @@ cn: foo
         protocol.connectionLost(Failure(ConnectionDone()))
         return await protocol.completed()
 
-    async def test_lookupFailed_can_skip_the_entry(self):
+    async def test_lookupFailed_can_skip_the_entry(self) -> None:
         skipped = []
 
         class SkipMissingParents(inmemory.InMemoryLDIFProtocol):
@@ -470,11 +470,11 @@ cn: foo
         assert skipped == ["cn=foo,ou=nonexisting,dc=example,dc=com"]
         assert await db.children() == []
 
-    async def test_addFailed_aborts_by_default(self):
+    async def test_addFailed_aborts_by_default(self) -> None:
         with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
             await self._load(inmemory.InMemoryLDIFProtocol(), self.duplicate)
 
-    async def test_addFailed_can_skip_the_entry(self):
+    async def test_addFailed_can_skip_the_entry(self) -> None:
         skipped = []
 
         class SkipDuplicates(inmemory.InMemoryLDIFProtocol):
@@ -488,7 +488,7 @@ cn: foo
 
 
 class TestFromLDIF:
-    async def test_single(self):
+    async def test_single(self) -> None:
         ldif = BytesIO(
             b"""\
 dn: cn=foo,dc=example,dc=com
@@ -504,7 +504,7 @@ bValue: c
         assert db.dn == distinguishedname.DistinguishedName("cn=foo,dc=example,dc=com")
         assert await db.children() == []
 
-    async def test_two(self):
+    async def test_two(self) -> None:
         ldif = BytesIO(
             b"""\
 dn: dc=example,dc=com
@@ -530,7 +530,7 @@ cn: foo
             ],
         )
 
-    async def test_missingNode(self):
+    async def test_missingNode(self) -> None:
         ldif = BytesIO(
             b"""\
 dn: dc=example,dc=com
@@ -551,7 +551,7 @@ cn: foo
 
 
 class TestDiff:
-    async def testNoChange(self):
+    async def testNoChange(self) -> None:
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             "dc=example,dc=com",
             {
@@ -567,7 +567,7 @@ class TestDiff:
         _result = await a.diffTree(b)
         assert _result == []
 
-    async def testRootChange_Add(self):
+    async def testRootChange_Add(self) -> None:
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             "dc=example,dc=com",
             {
@@ -591,7 +591,7 @@ class TestDiff:
                 ),
             ]
 
-    async def testChildChange_Add(self):
+    async def testChildChange_Add(self) -> None:
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             "dc=example,dc=com",
             {
@@ -627,7 +627,7 @@ class TestDiff:
                 ),
             ]
 
-    async def testAddChild(self):
+    async def testAddChild(self) -> None:
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -656,7 +656,7 @@ class TestDiff:
                 delta.AddOp(foo),
             ]
 
-    async def testAddSubtree(self):
+    async def testAddSubtree(self) -> None:
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -693,7 +693,7 @@ class TestDiff:
                 delta.AddOp(baz),
             ]
 
-    async def testDeleteChild(self):
+    async def testDeleteChild(self) -> None:
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )
@@ -722,7 +722,7 @@ class TestDiff:
                 delta.DeleteOp(foo),
             ]
 
-    async def testDeleteSubtree(self):
+    async def testDeleteSubtree(self) -> None:
         a = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn=distinguishedname.DistinguishedName("dc=example,dc=com")
         )

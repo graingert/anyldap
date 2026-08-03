@@ -18,7 +18,7 @@ class LDIFDeltaDriver(ldifdelta.LDIFDelta):
         self.listOfCompleted.append(obj)
 
 
-def test_from_ldif_file_reads_complete_change_records():
+def test_from_ldif_file_reads_complete_change_records() -> None:
     operations = ldifdelta.fromLDIFFile(
         BytesIO(b"dn: cn=gone,dc=example,dc=com\nchangetype: delete\n\n")
     )
@@ -71,7 +71,7 @@ deleteoldrdn: 0 #OR 1
 
 
 class TestLDIFDeltaParsing:
-    def testModification_empty(self):
+    def testModification_empty(self) -> None:
         proto = LDIFDeltaDriver()
         proto.dataReceived(
             b"""\
@@ -86,7 +86,7 @@ changetype: modify
                 delta.ModifyOp(dn="cn=foo,dc=example,dc=com"),
             ])
 
-    def testModification_oneAdd(self):
+    def testModification_oneAdd(self) -> None:
         proto = LDIFDeltaDriver()
         proto.dataReceived(
             b"""\
@@ -109,7 +109,7 @@ foo: bar
                 ),
             ])
 
-    def testModification_twoAdds(self):
+    def testModification_twoAdds(self) -> None:
         proto = LDIFDeltaDriver()
         proto.dataReceived(
             b"""\
@@ -137,7 +137,7 @@ thud: baz
                 ),
             ])
 
-    def testModification_complex(self):
+    def testModification_complex(self) -> None:
         proto = LDIFDeltaDriver()
         proto.dataReceived(
             b"""\
@@ -182,7 +182,7 @@ add: silly
                 ),
             ])
 
-    def testModification_fail_noDash_1(self):
+    def testModification_fail_noDash_1(self) -> None:
         proto = LDIFDeltaDriver()
         with pytest.raises(ldifdelta.LDIFDeltaModificationMissingEndDashError):
             proto.dataReceived(b"""\
@@ -194,7 +194,7 @@ foo: bar
 
 """)
 
-    def testModification_fail_noDash_2(self):
+    def testModification_fail_noDash_2(self) -> None:
         proto = LDIFDeltaDriver()
         with pytest.raises(ldifdelta.LDIFDeltaModificationMissingEndDashError):
             proto.dataReceived(b"""\
@@ -205,7 +205,7 @@ add: foo
 
 """)
 
-    def testModification_fail_differentKey(self):
+    def testModification_fail_differentKey(self) -> None:
         proto = LDIFDeltaDriver()
         with pytest.raises(ldifdelta.LDIFDeltaModificationDifferentAttributeTypeError):
             proto.dataReceived(b"""\
@@ -218,7 +218,7 @@ bar: quux
 
 """)
 
-    def testModification_fail_unknownModSpec(self):
+    def testModification_fail_unknownModSpec(self) -> None:
         proto = LDIFDeltaDriver()
         with pytest.raises(ldifdelta.LDIFDeltaUnknownModificationError):
             proto.dataReceived(b"""\
@@ -231,7 +231,7 @@ foo: bar
 
 """)
 
-    def testNoChangeType(self):
+    def testNoChangeType(self) -> None:
         """
         Raises an error is the changetype is not present.
         """
@@ -248,7 +248,7 @@ foo: bar
             )
         assert (b"cn=foo,dc=example,dc=com", b"add", b"foo") == excinfo.value.args
 
-    def testNoChangetTypeEmpty(self):
+    def testNoChangetTypeEmpty(self) -> None:
         """
         Raises an error is the changetype is not present even if no
         other command are specified for the DN.
@@ -265,7 +265,7 @@ dn: cn=foo,dc=example,dc=com
 
         assert (b"cn=foo,dc=example,dc=com",) == excinfo.value.args
 
-    def testAdd(self):
+    def testAdd(self) -> None:
         proto = LDIFDeltaDriver()
         proto.dataReceived(
             b"""\
@@ -291,7 +291,7 @@ thud: baz
                 )
             ])
 
-    def testAdd_fail_noAttrvals(self):
+    def testAdd_fail_noAttrvals(self) -> None:
         proto = LDIFDeltaDriver()
         with pytest.raises(ldifdelta.LDIFDeltaAddMissingAttributesError):
             proto.dataReceived(b"""\
@@ -301,7 +301,7 @@ changetype: add
 
 """)
 
-    def testDelete(self):
+    def testDelete(self) -> None:
         """ "
         Triggers a DeleteOp when the diff action is `delete`.
         """
@@ -317,7 +317,7 @@ changetype: delete
         proto.connectionLost()
         assert proto.listOfCompleted == [delta.DeleteOp(dn=b"cn=foo,dc=example,dc=com")]
 
-    def testDeleteMalformat(self):
+    def testDeleteMalformat(self) -> None:
         """ "
         Raises an error when delete change has data after the changetype.
         """
@@ -333,7 +333,7 @@ foo: bar
 """
             )
 
-    def testMODRDN(self):
+    def testMODRDN(self) -> None:
         """
         modrdn is not yet supported.
         """
@@ -348,7 +348,7 @@ changetype: modrdn
 """
             )
 
-    def testMODDN(self):
+    def testMODDN(self) -> None:
         """
         moddn is not yet supported.
         """
@@ -363,7 +363,7 @@ changetype: moddn
 """
             )
 
-    def testUnknownChnagetType(self):
+    def testUnknownChnagetType(self) -> None:
         """
         Raises an error is the changetype is not supported.
         """

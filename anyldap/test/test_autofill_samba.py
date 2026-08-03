@@ -10,7 +10,7 @@ from anyldap.protocols.ldap.autofill import sambaAccount, sambaSamAccount
 pytestmark = pytest.mark.anyio
 
 
-def test_notify_ignores_unrelated_attributes():
+def test_notify_ignores_unrelated_attributes() -> None:
     assert sambaAccount.Autofill_samba().notify({}, "description") is None
     assert (
         sambaSamAccount.Autofill_samba("S-1-5-21").notify({}, "description")
@@ -19,7 +19,7 @@ def test_notify_ignores_unrelated_attributes():
 
 
 class TestLDAPAutoFill_sambaAccount:
-    async def testMustHaveObjectClass(self):
+    async def testMustHaveObjectClass(self) -> None:
         """Test that Autofill_samba fails unless object is a sambaAccount."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -34,7 +34,7 @@ class TestLDAPAutoFill_sambaAccount:
             await o.addAutofiller(autoFiller)
         client.assertNothingSent()
 
-    async def testDefaultSetting(self):
+    async def testDefaultSetting(self) -> None:
         """Test that fields get their default values."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -63,7 +63,7 @@ class TestLDAPAutoFill_sambaAccount:
         assert "pwdMustChange" in o
         assert o["pwdMustChange"] == ["0"]
 
-    async def testRid(self):
+    async def testRid(self) -> None:
         """Test that rid field is updated based on uidNumber."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -94,7 +94,7 @@ class TestLDAPAutoFill_sambaAccount:
         o["uidNumber"] = ["16000"]
         assert o["rid"] == [str(2 * 16000 + 1000)]
 
-    async def testPrimaryGroupId(self):
+    async def testPrimaryGroupId(self) -> None:
         """Test that primaryGroupID field is updated based on gidNumber."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -127,7 +127,7 @@ class TestLDAPAutoFill_sambaAccount:
 
 
 class TestLDAPAutoFill_sambaSamAccount:
-    async def testMustHaveObjectClass(self):
+    async def testMustHaveObjectClass(self) -> None:
         """Test that Autofill_samba fails unless object is a sambaSamAccount."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -142,7 +142,7 @@ class TestLDAPAutoFill_sambaSamAccount:
             await o.addAutofiller(autoFiller)
         client.assertNothingSent()
 
-    async def testDefaultSetting(self):
+    async def testDefaultSetting(self) -> None:
         """Test that fields get their default values."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -174,7 +174,7 @@ class TestLDAPAutoFill_sambaSamAccount:
         assert o["sambaPwdCanChange"] == ["0"]
         assert o["sambaPwdMustChange"] == ["0"]
 
-    async def testDefaultSetting_fixedPrimaryGroupSID(self):
+    async def testDefaultSetting_fixedPrimaryGroupSID(self) -> None:
         """Test that fields get their default values."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -212,7 +212,7 @@ class TestLDAPAutoFill_sambaSamAccount:
         assert o["sambaPwdCanChange"] == ["0"]
         assert o["sambaPwdMustChange"] == ["0"]
 
-    async def testSambaSID(self):
+    async def testSambaSID(self) -> None:
         """Test that sambaSID field is updated based on uidNumber."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -243,7 +243,7 @@ class TestLDAPAutoFill_sambaSamAccount:
         o["uidNumber"] = ["16000"]
         assert o["sambaSID"] == ["foo-%s" % (2 * 16000 + 1000)]
 
-    async def testSambaSID_preExisting(self):
+    async def testSambaSID_preExisting(self) -> None:
         """Test that sambaSID field is updated based on uidNumber."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -262,7 +262,7 @@ class TestLDAPAutoFill_sambaSamAccount:
         assert "sambaSID" in o
         assert o["sambaSID"] == ["foo-%s" % (2 * 1000 + 1000)]
 
-    async def testSambaPrimaryGroupSID(self):
+    async def testSambaPrimaryGroupSID(self) -> None:
         """Test that sambaPrimaryGroupSID field is updated based on gidNumber."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -293,7 +293,7 @@ class TestLDAPAutoFill_sambaSamAccount:
         o["gidNumber"] = ["16000"]
         assert o["sambaPrimaryGroupSID"] == ["foo-%s" % (2 * 16000 + 1001)]
 
-    async def testSambaPrimaryGroupSID_preExisting(self):
+    async def testSambaPrimaryGroupSID_preExisting(self) -> None:
         """Test that sambaPrimaryGroupSID field is updated based on gidNumber."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
@@ -312,7 +312,7 @@ class TestLDAPAutoFill_sambaSamAccount:
         assert "sambaPrimaryGroupSID" in o
         assert o["sambaPrimaryGroupSID"] == ["foo-%s" % (2 * 1000 + 1001)]
 
-    async def testSambaPrimaryGroupSID_notUpdatedWhenFixed(self):
+    async def testSambaPrimaryGroupSID_notUpdatedWhenFixed(self) -> None:
         """Test that sambaPrimaryGroupSID field is updated based on gidNumber."""
         client = testutil.LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(

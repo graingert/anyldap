@@ -10,7 +10,7 @@ from anyldap import ldapfilter
 from anyldap.protocols import pureldap
 
 
-def test_filter_errors_and_legacy_extensible_parser():
+def test_filter_errors_and_legacy_extensible_parser() -> None:
     error = ldapfilter.InvalidLDAPFilter("bad", 2, "text")
     assert str(error) == "Invalid LDAP filter: bad at point 2 in 'text'"
     with pytest.raises(NotImplementedError):
@@ -19,7 +19,7 @@ def test_filter_errors_and_legacy_extensible_parser():
         ldapfilter.parseMaybeSubstring("cn", "\\")
 
 
-def test_filter_module_entrypoint():
+def test_filter_module_entrypoint() -> None:
     result = subprocess.run(
         [sys.executable, "-m", ldapfilter.__name__, "(cn=alice)"],
         check=True,
@@ -30,7 +30,7 @@ def test_filter_module_entrypoint():
 
 
 class TestRFC2254Examples:
-    def test_cn(self):
+    def test_cn(self) -> None:
         text = "(cn=Babs Jensen)"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="cn"),
@@ -39,7 +39,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_not_cn(self):
+    def test_not_cn(self) -> None:
         text = "(!(cn=Tim Howes))"
         filt = pureldap.LDAPFilter_not(
             pureldap.LDAPFilter_equalityMatch(
@@ -50,7 +50,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_and_or(self):
+    def test_and_or(self) -> None:
         text = "(&(objectClass=Person)(|(sn=Jensen)(cn=Babs J*)))"
         filt = pureldap.LDAPFilter_and(
             [
@@ -79,7 +79,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_substrings(self):
+    def test_substrings(self) -> None:
         text = "(o=univ*of*mich*)"
         filt = pureldap.LDAPFilter_substrings(
             type="o",
@@ -92,7 +92,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_extensible_1(self):
+    def test_extensible_1(self) -> None:
         text = "(cn:1.2.3.4.5:=Fred Flintstone)"
         filt = pureldap.LDAPFilter_extensibleMatch(
             type="cn",
@@ -103,7 +103,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_extensible_2(self):
+    def test_extensible_2(self) -> None:
         text = "(sn:dn:2.4.6.8.10:=Barney Rubble)"
         filt = pureldap.LDAPFilter_extensibleMatch(
             type="sn",
@@ -114,7 +114,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_extensible_3(self):
+    def test_extensible_3(self) -> None:
         text = "(o:dn:=Ace Industry)"
         filt = pureldap.LDAPFilter_extensibleMatch(
             type="o",
@@ -125,7 +125,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_extensible_4(self):
+    def test_extensible_4(self) -> None:
         text = "(:dn:2.4.6.8.10:=Dino)"
         filt = pureldap.LDAPFilter_extensibleMatch(
             type=None,
@@ -136,7 +136,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_extensible_5(self):
+    def test_extensible_5(self) -> None:
         text = "(cn:1.2.3.4.5:=Fred Flintstone)"
         filt = pureldap.LDAPFilter_extensibleMatch(
             type="cn",
@@ -146,7 +146,7 @@ class TestRFC2254Examples:
         )
         assert filt.asText() == text
 
-    def test_escape_parens(self):
+    def test_escape_parens(self) -> None:
         text = r"(o=Parens R Us \28for all your parenthetical needs\29)"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="o"),
@@ -157,7 +157,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_escape_asterisk(self):
+    def test_escape_asterisk(self) -> None:
         text = r"(cn=*\2A*)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -168,7 +168,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text.lower()
 
-    def test_escape_backslash(self):
+    def test_escape_backslash(self) -> None:
         text = r"(filename=C:\5cMyFile)"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="filename"),
@@ -177,7 +177,7 @@ class TestRFC2254Examples:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_escape_binary(self):
+    def test_escape_binary(self) -> None:
         text = r"(bin=\00\00\00\04)"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="bin"),
@@ -185,7 +185,7 @@ class TestRFC2254Examples:
         )
         assert ldapfilter.parseFilter(text) == filt
 
-    def test_escape_utf8(self):
+    def test_escape_utf8(self) -> None:
         text = r"(sn=Lu\c4\8di\c4\87)"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="sn"),
@@ -196,13 +196,13 @@ class TestRFC2254Examples:
 
 
 class TestValid:
-    def test_item_present(self):
+    def test_item_present(self) -> None:
         text = r"(cn=*)"
         filt = pureldap.LDAPFilter_present(value="cn")
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_simple(self):
+    def test_item_simple(self) -> None:
         text = r"(cn=foo)"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="cn"),
@@ -211,7 +211,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_init(self):
+    def test_item_substring_init(self) -> None:
         text = r"(cn=foo*)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -222,7 +222,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_final(self):
+    def test_item_substring_final(self) -> None:
         text = r"(cn=*foo)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -233,7 +233,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_any(self):
+    def test_item_substring_any(self) -> None:
         text = r"(cn=*foo*)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -244,7 +244,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_aa(self):
+    def test_item_substring_aa(self) -> None:
         text = r"(cn=*foo*bar*)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -256,7 +256,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_ia(self):
+    def test_item_substring_ia(self) -> None:
         text = r"(cn=foo*bar*)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -268,7 +268,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_iaa(self):
+    def test_item_substring_iaa(self) -> None:
         text = r"(cn=foo*bar*baz*)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -281,7 +281,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_if(self):
+    def test_item_substring_if(self) -> None:
         text = r"(cn=foo*bar)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -293,7 +293,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_iaf(self):
+    def test_item_substring_iaf(self) -> None:
         text = r"(cn=foo*bar*baz)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -306,7 +306,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_iaaf(self):
+    def test_item_substring_iaaf(self) -> None:
         text = r"(cn=foo*bar*baz*quux)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -320,7 +320,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_af(self):
+    def test_item_substring_af(self) -> None:
         text = r"(cn=*foo*bar)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -332,7 +332,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_item_substring_aaf(self):
+    def test_item_substring_aaf(self) -> None:
         text = r"(cn=*foo*bar*baz)"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -345,7 +345,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_not_item(self):
+    def test_not_item(self) -> None:
         text = r"(!(cn=foo))"
         filt = pureldap.LDAPFilter_not(
             pureldap.LDAPFilter_equalityMatch(
@@ -356,7 +356,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_or_item(self):
+    def test_or_item(self) -> None:
         text = r"(|(cn=foo)(cn=bar))"
         filt = pureldap.LDAPFilter_or(
             [
@@ -373,7 +373,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_and_item(self):
+    def test_and_item(self) -> None:
         text = r"(&(cn=foo)(cn=bar))"
         filt = pureldap.LDAPFilter_and(
             [
@@ -390,7 +390,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_andornot(self):
+    def test_andornot(self) -> None:
         text = r"(&(!(|(cn=foo)(cn=bar)))(sn=a*b*c*d))"
         filt = pureldap.LDAPFilter_and(
             [
@@ -426,7 +426,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_whitespace_beforeCloseParen(self):
+    def test_whitespace_beforeCloseParen(self) -> None:
         text = r"(cn=foo )"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="cn"),
@@ -435,7 +435,7 @@ class TestValid:
         assert ldapfilter.parseFilter(text) == filt
         assert filt.asText() == text
 
-    def test_whitespace_afterEq(self):
+    def test_whitespace_afterEq(self) -> None:
         text = r"(cn= foo)"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="cn"),
@@ -446,62 +446,62 @@ class TestValid:
 
 
 class TestInvalid:
-    def test_closeParen_1(self):
+    def test_closeParen_1(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter("(&(|(mail=)@*)(uid=)))(mail=*))")
 
-    def test_closeParen_2(self):
+    def test_closeParen_2(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter("(|(mail=)@*)(uid=)))")
 
-    def test_closeParen_3(self):
+    def test_closeParen_3(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter("(mail=)@*)")
 
-    def test_closeParen_4(self):
+    def test_closeParen_4(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter("(uid=))")
 
-    def test_openParen_1(self):
+    def test_openParen_1(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter("(&(|(mail=(@*)(uid=())(mail=*))")
 
-    def test_openParen_2(self):
+    def test_openParen_2(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter("(|(mail=(@*)(uid=())")
 
-    def test_openParen_3(self):
+    def test_openParen_3(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter("(mail=(@*)")
 
-    def test_openParen_4(self):
+    def test_openParen_4(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter("(uid=()")
 
-    def test_whitespace_leading(self):
+    def test_whitespace_leading(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter(r" (cn=foo)")
 
-    def test_whitespace_trailing(self):
+    def test_whitespace_trailing(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter(r"(cn=foo) ")
 
-    def test_whitespace_afterOpenParen(self):
+    def test_whitespace_afterOpenParen(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter(r"( cn=foo)")
 
-    def test_whitespace_beforeEq(self):
+    def test_whitespace_beforeEq(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter(r"(cn =foo)")
 
 
 class TestMaybeSubstring:
-    def test_item_present(self):
+    def test_item_present(self) -> None:
         text = r"*"
         filt = pureldap.LDAPFilter_present(value="cn")
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_simple(self):
+    def test_item_simple(self) -> None:
         text = r"foo"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="cn"),
@@ -509,7 +509,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_init(self):
+    def test_item_substring_init(self) -> None:
         text = r"foo*"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -519,7 +519,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_final(self):
+    def test_item_substring_final(self) -> None:
         text = r"*foo"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -529,7 +529,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_any(self):
+    def test_item_substring_any(self) -> None:
         text = r"*foo*"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -539,7 +539,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_aa(self):
+    def test_item_substring_aa(self) -> None:
         text = r"*foo*bar*"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -550,7 +550,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_ia(self):
+    def test_item_substring_ia(self) -> None:
         text = r"foo*bar*"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -561,7 +561,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_iaa(self):
+    def test_item_substring_iaa(self) -> None:
         text = r"foo*bar*baz*"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -573,7 +573,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_if(self):
+    def test_item_substring_if(self) -> None:
         text = r"foo*bar"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -584,7 +584,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_iaf(self):
+    def test_item_substring_iaf(self) -> None:
         text = r"foo*bar*baz"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -596,7 +596,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_iaaf(self):
+    def test_item_substring_iaaf(self) -> None:
         text = r"foo*bar*baz*quux"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -609,7 +609,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_af(self):
+    def test_item_substring_af(self) -> None:
         text = r"*foo*bar"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -620,7 +620,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_item_substring_aaf(self):
+    def test_item_substring_aaf(self) -> None:
         text = r"*foo*bar*baz"
         filt = pureldap.LDAPFilter_substrings(
             type="cn",
@@ -632,7 +632,7 @@ class TestMaybeSubstring:
         )
         assert ldapfilter.parseMaybeSubstring("cn", text) == filt
 
-    def test_escape_simple(self):
+    def test_escape_simple(self) -> None:
         text = r"f\2aoo(bar"
         filt = pureldap.LDAPFilter_equalityMatch(
             attributeDesc=pureldap.LDAPAttributeDescription(value="cn"),
@@ -642,6 +642,6 @@ class TestMaybeSubstring:
 
 
 class TestWhitespace:
-    def test_escape(self):
+    def test_escape(self) -> None:
         with pytest.raises(ldapfilter.InvalidLDAPFilter):
             ldapfilter.parseFilter(r"(cn=\ 61)")

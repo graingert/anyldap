@@ -13,7 +13,7 @@ from anyldap.protocols.ldap import ldaperrors
 # We inject the examples so that we can import them.
 # There is no cleanup, so this is leaving side effects.
 sys.path.append(os.path.abspath("docs/source/examples"))
-import anyldap_with_upn_bind
+import anyldap_with_upn_bind  # type: ignore[import-not-found]
 
 pytestmark = pytest.mark.anyio
 
@@ -23,7 +23,7 @@ class TestLDAPServerWithUPNBind:
     Tests for docs/source/examples/anyldap_with_upn_bind.py
     """
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         self.root = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="dc=example,dc=com", attributes={"dc": "example"}
         )
@@ -41,7 +41,7 @@ class TestLDAPServerWithUPNBind:
         server.factory = self.root
         self.server = server
 
-    async def checkSuccessfulBIND(self, bind_dn, password):
+    async def checkSuccessfulBIND(self, bind_dn: str, password: bytes) -> None:
         """
         Do a BIND request and check that is succeeds.
         """
@@ -58,19 +58,19 @@ class TestLDAPServerWithUPNBind:
                 id=4,
             ).toWire())
 
-    async def test_bindSuccessUPN(self):
+    async def test_bindSuccessUPN(self) -> None:
         """
         It can authenticate based on the UPN.
         """
         await self.checkSuccessfulBIND("bob@ad.example.com", b"secret")
 
-    async def test_bindSuccessDN(self):
+    async def test_bindSuccessDN(self) -> None:
         """
         It can still authenticate based on the normal DN.
         """
         await self.checkSuccessfulBIND("cn=bob,dc=example,dc=com", b"secret")
 
-    async def test_bindBadPassword(self):
+    async def test_bindBadPassword(self) -> None:
         """
         When password don't match the BIND fails.
         """

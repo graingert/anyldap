@@ -20,11 +20,11 @@ class TestNTHash:
         (1000 * b"x", b"65681023D0CB5E7E96FF662150EF060D"),
     ]
 
-    def testKnownValues(self):
+    def testKnownValues(self) -> None:
         """nthash(...) gives known results"""
         assert self.knownValues == [(p, smbpassword.nthash(p)) for p, _ in self.knownValues]
 
-    def testAcceptsTextAsWellAsBytes(self):
+    def testAcceptsTextAsWellAsBytes(self) -> None:
         """A text password hashes the same as its bytes equivalent."""
         assert smbpassword.nthash("foo") == smbpassword.nthash(b"foo")
 
@@ -46,7 +46,7 @@ class TestLMHash:
         (b"1234567XXXXXXX", b"0182BD0BD4444BF83AA62DBBEFDB6763"),
     ]
 
-    def testKnownValues(self):
+    def testKnownValues(self) -> None:
         """
         When lanman password are enabled in the configuration, they will
         return
@@ -55,14 +55,14 @@ class TestLMHash:
         cfg.set("samba", "use-lmhash", "yes")
         assert self.knownValues == [(p, smbpassword.lmhash(p)) for p, _ in self.knownValues]
 
-    def testAcceptsTextAsWellAsBytes(self):
+    def testAcceptsTextAsWellAsBytes(self) -> None:
         """A text password hashes the same as its bytes equivalent."""
         cfg = config.loadConfig()
         cfg.set("samba", "use-lmhash", "yes")
 
         assert smbpassword.lmhash("foo") == smbpassword.lmhash(b"foo")
 
-    def testLMHashConfiguationDisabled(self):
+    def testLMHashConfiguationDisabled(self) -> None:
         """
         When the lanman passwords are disabled from the configuration, it will
         return the disabled password.

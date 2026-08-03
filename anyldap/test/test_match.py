@@ -14,15 +14,15 @@ pytestmark = pytest.mark.anyio
 
 
 class TestEntryMatch:
-    def test_safelower_preserves_values_without_lower(self):
+    def test_safelower_preserves_values_without_lower(self) -> None:
         marker = object()
         assert entryhelpers.safelower(marker) is marker
 
-    def test_safelower_folds_values_with_lower(self):
+    def test_safelower_folds_values_with_lower(self) -> None:
         assert entryhelpers.safelower("Foo") == "foo"
         assert entryhelpers.safelower(b"Foo") == b"foo"
 
-    def test_matchAll(self):
+    def test_matchAll(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -34,7 +34,7 @@ class TestEntryMatch:
         result = o.match(pureldap.LDAPFilterMatchAll)
         assert result is True
 
-    def test_present_match(self):
+    def test_present_match(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -46,7 +46,7 @@ class TestEntryMatch:
         result = o.match(pureldap.LDAPFilter_present("aValue"))
         assert result is True
 
-    def test_present_noMatch(self):
+    def test_present_noMatch(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -58,7 +58,7 @@ class TestEntryMatch:
         result = o.match(pureldap.LDAPFilter_present("noSuchValue"))
         assert result is False
 
-    def test_and_match(self):
+    def test_and_match(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -77,7 +77,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_and_noMatch(self):
+    def test_and_noMatch(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -96,7 +96,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_or_match(self):
+    def test_or_match(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -115,7 +115,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_or_noMatch(self):
+    def test_or_noMatch(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -134,7 +134,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_not(self):
+    def test_not(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -155,7 +155,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_equality_match(self):
+    def test_equality_match(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -172,7 +172,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_equality_match_caseInsensitive(self):
+    def test_equality_match_caseInsensitive(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -189,7 +189,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_equality_noMatch(self):
+    def test_equality_noMatch(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -206,7 +206,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_substrings_match(self):
+    def test_substrings_match(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -225,7 +225,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_substrings_match2(self):
+    def test_substrings_match2(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -245,7 +245,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_substrings_match3(self):
+    def test_substrings_match3(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -266,7 +266,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_substrings_match4(self):
+    def test_substrings_match4(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -289,7 +289,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_substrings_match5(self):
+    def test_substrings_match5(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -312,7 +312,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_substrings_match6(self):
+    def test_substrings_match6(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -335,7 +335,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_substrings_match7(self):
+    def test_substrings_match7(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -353,7 +353,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_substrings_noMatch(self):
+    def test_substrings_noMatch(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -375,7 +375,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_substrings_noMatch2(self):
+    def test_substrings_noMatch2(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -398,7 +398,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_greaterOrEqual_noMatch_nosuchattr(self):
+    def test_greaterOrEqual_noMatch_nosuchattr(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -414,7 +414,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_greaterOrEqual_match_greater(self):
+    def test_greaterOrEqual_match_greater(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -430,7 +430,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_greaterOrEqual_match_equal(self):
+    def test_greaterOrEqual_match_equal(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -446,7 +446,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_greaterOrEqual_noMatch(self):
+    def test_greaterOrEqual_noMatch(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -462,7 +462,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_lessOrEqual_noMatch_nosuchattr(self):
+    def test_lessOrEqual_noMatch_nosuchattr(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -478,7 +478,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_lessOrEqual_match_less(self):
+    def test_lessOrEqual_match_less(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -494,7 +494,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_lessOrEqual_match_equal(self):
+    def test_lessOrEqual_match_equal(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -510,7 +510,7 @@ class TestEntryMatch:
         )
         assert result is True
 
-    def test_lessOrEqual_noMatch(self):
+    def test_lessOrEqual_noMatch(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -526,7 +526,7 @@ class TestEntryMatch:
         )
         assert result is False
 
-    def test_extensibleMatch4(self):
+    def test_extensibleMatch4(self) -> None:
         """
         An extensibleMatch filter that uses DN attributes matches an entry
         based on its OU.
@@ -549,7 +549,7 @@ class TestEntryMatch:
         result = o.match(m)
         assert result is True
 
-    def test_extensibleMatch4_noMatch(self):
+    def test_extensibleMatch4_noMatch(self) -> None:
         """
         An extensibleMatch filter that uses DN attributes does not match an entry
         based on its OU.
@@ -572,7 +572,7 @@ class TestEntryMatch:
         result = o.match(m)
         assert result is False
 
-    def test_notImplemented(self):
+    def test_notImplemented(self) -> None:
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
             attributes={
@@ -590,14 +590,14 @@ class TestEntryMatch:
         with pytest.raises(ldapsyntax.MatchNotImplemented, match=re.escape("Match type not implemented: UnknownMatch()")):
             o.match(unknownMatch)
 
-    def test_substring_attribute_absent(self):
+    def test_substring_attribute_absent(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
         filter_object = pureldap.LDAPFilter_substrings(
             type="missing", substrings=[pureldap.LDAPFilter_substrings_any("x")]
         )
         assert not (entry.match(filter_object))
 
-    def test_substring_without_initial_component(self):
+    def test_substring_without_initial_component(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry(
             "cn=foo", {"cn": ["prefix-middle-suffix"]}
         )
@@ -610,7 +610,7 @@ class TestEntryMatch:
         )
         assert entry.match(filter_object)
 
-    def test_greater_or_equal_checks_multiple_values_without_match(self):
+    def test_greater_or_equal_checks_multiple_values_without_match(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"rank": [1, 2]})
         filter_object = pureldap.LDAPFilter_greaterOrEqual(
             attributeDesc=pureldap.LDAPAttributeDescription("rank"),
@@ -618,14 +618,14 @@ class TestEntryMatch:
         )
         assert not (entry.match(filter_object))
 
-    def test_extensible_match_uses_entry_attribute(self):
+    def test_extensible_match_uses_entry_attribute(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"uid": ["Alice"]})
         filter_object = pureldap.LDAPFilter_extensibleMatch(
             type="uid", matchValue="alice"
         )
         assert entry.match(filter_object)
 
-    def test_extensible_matching_rule_is_explicitly_unsupported(self):
+    def test_extensible_matching_rule_is_explicitly_unsupported(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"uid": ["Alice"]})
         filter_object = pureldap.LDAPFilter_extensibleMatch(
             matchingRule="caseIgnoreMatch", type="uid", matchValue="alice"
@@ -633,7 +633,7 @@ class TestEntryMatch:
         with pytest.raises(ldapsyntax.MatchNotImplemented):
             entry.match(filter_object)
 
-    async def test_search_combines_text_and_object_filters(self):
+    async def test_search_combines_text_and_object_filters(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
         _result = await entry.search(
             filterText="(cn=foo)",
@@ -642,7 +642,7 @@ class TestEntryMatch:
         )
         assert _result == [entry]
 
-    async def test_search_accepts_object_filter_without_text(self):
+    async def test_search_accepts_object_filter_without_text(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
         _result = await entry.search(
             filterObject=pureldap.LDAPFilter_present("cn"),
@@ -650,7 +650,7 @@ class TestEntryMatch:
         )
         assert _result == [entry]
 
-    async def test_search_rejects_unknown_scope(self):
+    async def test_search_rejects_unknown_scope(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
         with pytest.raises(ldapsyntax.ldaperrors.LDAPProtocolError):
             await entry.search(scope=999)
@@ -705,7 +705,7 @@ _VALUE = pureldap.LDAPAssertionValue("alice")
     ],
     ids=lambda f: type(f).__name__,
 )
-def test_match_survives_the_wire(filt):
+def test_match_survives_the_wire(filt) -> None:
     """An entry matches a filter the same whether it was built or decoded.
 
     A filter off the wire holds its values as bytes while an entry loaded

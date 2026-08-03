@@ -18,7 +18,7 @@ pytestmark = pytest.mark.anyio
         ("alice", None, None),
     ],
 )
-def test_make_filter(name, template, expected):
+def test_make_filter(name, template, expected) -> None:
     result = checkers.makeFilter(name, template)
     assert (result.asText() if result is not None else None) == expected
 
@@ -64,7 +64,7 @@ def install_search(monkeypatch, results):
     monkeypatch.setattr(checkers.ldapsyntax, "LDAPEntry", Entry)
 
 
-async def test_binding_checker_success(monkeypatch):
+async def test_binding_checker_success(monkeypatch: pytest.MonkeyPatch) -> None:
     entry = FakeEntry()
     install_search(monkeypatch, [entry])
     checker = checkers.LDAPBindingChecker(FakeConfig())
@@ -77,7 +77,7 @@ async def test_binding_checker_success(monkeypatch):
     ("results", "message"),
     [([], "Invalid credentials"), ([FakeEntry(), FakeEntry()], "single identity")],
 )
-async def test_binding_checker_result_errors(monkeypatch, results, message):
+async def test_binding_checker_result_errors(monkeypatch: pytest.MonkeyPatch, results, message) -> None:
     install_search(monkeypatch, results)
     checker = checkers.LDAPBindingChecker(FakeConfig())
     with pytest.raises(checkers.UnauthorizedLogin, match=message):
@@ -87,20 +87,20 @@ async def test_binding_checker_result_errors(monkeypatch, results, message):
 @pytest.mark.parametrize(
     "error", [ldaperrors.LDAPInvalidCredentials(), ldaperrors.LDAPUnwillingToPerform()]
 )
-async def test_binding_checker_bind_errors(monkeypatch, error):
+async def test_binding_checker_bind_errors(monkeypatch: pytest.MonkeyPatch, error) -> None:
     install_search(monkeypatch, [FakeEntry(error)])
     checker = checkers.LDAPBindingChecker(FakeConfig())
     with pytest.raises(checkers.UnauthorizedLogin):
         await checker.requestAvatarId_async(SimpleNamespace(username=b"alice", password=b"bad"))
 
 
-async def test_binding_checker_rejects_anonymous():
+async def test_binding_checker_rejects_anonymous() -> None:
     checker = checkers.LDAPBindingChecker(FakeConfig())
     with pytest.raises(checkers.UnauthorizedLogin, match="Anonymous"):
         await checker.requestAvatarId_async(SimpleNamespace(username=b"", password=b""))
 
 
-async def test_binding_checker_missing_configuration():
+async def test_binding_checker_missing_configuration() -> None:
     cfg = FakeConfig()
     cfg.getIdentityBaseDN = lambda: (_ for _ in ()).throw(config.MissingBaseDNError())
     checker = checkers.LDAPBindingChecker(cfg)
@@ -108,7 +108,7 @@ async def test_binding_checker_missing_configuration():
         await checker.requestAvatarId_async(SimpleNamespace(username=b"alice", password=b""))
 
 
-async def test_binding_checker_invalid_filter():
+async def test_binding_checker_invalid_filter() -> None:
     cfg = FakeConfig()
     cfg.getIdentitySearch = lambda username: "invalid"
     checker = checkers.LDAPBindingChecker(cfg)
@@ -116,7 +116,7 @@ async def test_binding_checker_invalid_filter():
         await checker.requestAvatarId_async(SimpleNamespace(username=b"alice", password=b""))
 
 
-async def test_binding_checker_requestAvatarId_alias(monkeypatch):
+async def test_binding_checker_requestAvatarId_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     """`requestAvatarId` is another spelling of the same async method."""
     async def request(credentials):
         return credentials.username

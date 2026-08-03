@@ -67,7 +67,7 @@ class TestDes:
         (0xFEDCBA9876543210, 0xFFFFFFFFFFFFFFFF, 0x2A2BB008DF97C2F2),
     ]
 
-    def test_01_expand(self):
+    def test_01_expand(self) -> None:
         """expand_des_key()"""
         # make sure test vectors are preserved (sans parity bits)
         # uses ints, bytes are tested under # 02
@@ -93,7 +93,7 @@ class TestDes:
         with pytest.raises(ValueError):
             expand_des_key(b"\x00" * 6)
 
-    def test_02_shrink(self):
+    def test_02_shrink(self) -> None:
         """shrink_des_key()"""
         rng = random.Random(1234)
 
@@ -125,7 +125,7 @@ class TestDes:
         """randomize parity bits"""
         return (key & _KDATA_MASK) | (rng.randint(0, INT_64_MASK) & _KPARITY_MASK)
 
-    def test_03_encrypt_bytes(self):
+    def test_03_encrypt_bytes(self) -> None:
         """des_encrypt_block()"""
         rng = random.Random(5678)
 
@@ -178,7 +178,7 @@ class TestDes:
         with pytest.raises(ValueError):
             des_encrypt_block(stub, stub, 0, rounds=0)
 
-    def test_04_encrypt_ints(self):
+    def test_04_encrypt_ints(self) -> None:
         """des_encrypt_int_block()"""
         rng = random.Random(9012)
 
