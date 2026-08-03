@@ -448,11 +448,25 @@ class IServerBackedLDAPEntry(IConnectedLDAPEntry):
         """
 
 
-class LDAPConfigLike(Protocol):
-    """What a consumer needs of a configuration.
+class LDAPBaseConfigLike(Protocol):
+    """What something reads off a configuration to reach a directory.
 
     ILDAPConfig is what a configuration declares itself to be; this is what
     reading one looks like, which is what lets a test supply its own.
+    """
+
+    def getBaseDN(self) -> DistinguishedName | str: ...
+
+    def getServiceLocationOverrides(
+        self,
+    ) -> Mapping[Any, ServiceLocation]: ...
+
+
+class LDAPConfigLike(Protocol):
+    """What something authenticating a person reads off a configuration.
+
+    Not the base DN: an identity lives under its own, which is what these
+    ask for.
     """
 
     def getIdentityBaseDN(self) -> DistinguishedName | str: ...

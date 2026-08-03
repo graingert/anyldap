@@ -4,6 +4,8 @@ Test cases for anyldap.protocols.ldap.ldapserver module.
 import base64
 import logging
 import types
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import outcome
 import pytest
@@ -14,16 +16,17 @@ from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import fetchschema, ldaperrors, ldapserver
 from anyldap.test import test_schema, util
 from anyldap.test._testing import capture_logs
+from anyldap.test.util import collected
 
 pytestmark = pytest.mark.anyio
 
 
-def observeCommits(entry):
+def observeCommits(entry: Any) -> list[outcome.Outcome[Any]]:
     """Record the outcome of every commit on `entry`, and return the log."""
-    commits = []
+    commits: list[outcome.Outcome[Any]] = []
     bound_commit = entry.commit
 
-    async def commit(self):
+    async def commit(self: Any) -> Any:
         result = await outcome.acapture(bound_commit)
         commits.append(result)
         return result.unwrap()
@@ -95,10 +98,10 @@ class TestLDAPServerTest:
         self.server = server
         self.output = b""
 
-    async def _send(self, wire_data) -> None:
+    async def _send(self, wire_data: bytes) -> None:
         self.output += await testutil.exchange_async(self.server, wire_data)
 
-    def _makeResultList(self, s):
+    def _makeResultList(self, s: bytes) -> list[bytes]:
         berdecoder = pureldap.LDAPBERDecoderContext_TopLevel(
             inherit=pureldap.LDAPBERDecoderContext_LDAPMessage(
                 fallback=pureldap.LDAPBERDecoderContext(
@@ -121,15 +124,15 @@ class TestLDAPServerTest:
 
     async def makeSearch(
         self,
-        baseObject=None,
-        scope=None,
-        derefAliases=None,
-        sizeLimit=None,
-        timeLimit=None,
-        typesOnly=None,
-        filter=None,
-        attributes=None,
-        tag=None,
+        baseObject: str | bytes | None = None,
+        scope: int | None = None,
+        derefAliases: int | None = None,
+        sizeLimit: int | None = None,
+        timeLimit: int | None = None,
+        typesOnly: int | None = None,
+        filter: pureber.BERBase | None = None,
+        attributes: Sequence[str | bytes] | None = None,
+        tag: int | None = None,
     ) -> None:
         """Shortcut for sending LDAPSearchRequest to the test server"""
         await self._send(
@@ -149,7 +152,11 @@ class TestLDAPServerTest:
             ).toWire()
         )
 
-    def assertSearchResults(self, results=None, resultCode=0) -> None:
+    def assertSearchResults(
+        self,
+        results: Sequence[dict[str, Any]] | None = None,
+        resultCode: int = 0,
+    ) -> None:
         """
         Shortcut for checking results returned by test server on LDAPSearchRequest.
         Results must be prepared as a list of dictionaries with 'objectName' and 'attributes' keys
@@ -382,7 +389,9 @@ class TestLDAPServerTest:
             ).toWire())
 
     async def test_compare_backend_type_error_becomes_other(self) -> None:
-        self.stuff["broken"] = [object()]
+        # Not an attribute value: the point is that the server answers with
+        # a result code rather than letting the error escape.
+        self.stuff["broken"] = [object()]  # type: ignore[list-item]
         await self._send(
             pureldap.LDAPMessage(
                 pureldap.LDAPCompareRequest(
@@ -398,6 +407,8 @@ class TestLDAPServerTest:
         message, _ = pureber.berDecodeObject(
             self.server.berdecoder, self.output
         )
+        assert isinstance(message, pureldap.LDAPMessage)
+        assert isinstance(message.value, pureldap.LDAPResult)
         assert message.value.resultCode == ldaperrors.other
         assert b"cannot convert" in message.value.errorMessage
 
@@ -416,6 +427,8 @@ class TestLDAPServerTest:
         message, _ = pureber.berDecodeObject(
             self.server.berdecoder, self.output
         )
+        assert isinstance(message, pureldap.LDAPMessage)
+        assert isinstance(message.value, pureldap.LDAPResult)
         assert message.value.resultCode == ldaperrors.other
         assert b"Match type not implemented" in message.value.errorMessage
 
@@ -624,7 +637,7 @@ class TestLDAPServerTest:
             ).toWire()
         )
         assert self.output == pureldap.LDAPMessage(pureldap.LDAPDelResponse(resultCode=0), id=2).toWire()
-        _result = await self.stuff.children()
+        _result = collected(await self.stuff.children())
         util.assert_permutation(_result, [self.another])
 
     async def test_add_success(self) -> None:
@@ -649,7 +662,7 @@ class TestLDAPServerTest:
                 pureldap.LDAPAddResponse(resultCode=ldaperrors.Success.resultCode), id=2
             ).toWire())
         # tree changed
-        _result = await self.stuff.children()
+        _result = collected(await self.stuff.children())
         util.assert_permutation(_result, [
                     self.thingie,
                     self.another,
@@ -686,7 +699,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
         # tree did not change
-        _result = await self.stuff.children()
+        _result = collected(await self.stuff.children())
         util.assert_permutation(_result, [self.thingie, self.another])
 
     async def test_modifyDN_rdnOnly_deleteOldRDN_success(self) -> None:
@@ -704,7 +717,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
         # tree changed
-        _result = await self.stuff.children()
+        _result = collected(await self.stuff.children())
         util.assert_permutation(_result, [
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         "%s,ou=stuff,dc=example,dc=com" % newrdn,
@@ -808,7 +821,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def _send_raw_password_modify(self, *values) -> None:
+    async def _send_raw_password_modify(self, *values: pureber.BERBase) -> None:
         request = pureldap.LDAPExtendedRequest(
             requestName=pureldap.LDAPPasswordModifyRequest.oid,
             requestValue=pureber.BERSequence(values).toWire(),
@@ -820,6 +833,8 @@ class TestLDAPServerTest:
             self.server.berdecoder, self.output
         )
         assert used == len(self.output)
+        assert isinstance(message, pureldap.LDAPMessage)
+        assert isinstance(message.value, pureldap.LDAPExtendedResponse)
         assert message.value.resultCode == ldaperrors.LDAPProtocolError.resultCode
         assert message.value.responseName == pureldap.LDAPPasswordModifyRequest.oid
 
@@ -873,6 +888,8 @@ class TestLDAPServerTest:
         message, _ = pureber.berDecodeObject(
             self.server.berdecoder, self.output
         )
+        assert isinstance(message, pureldap.LDAPMessage)
+        assert isinstance(message.value, pureldap.LDAPResult)
         assert message.value.resultCode == ldaperrors.LDAPOperationsError.resultCode
 
     async def test_passwordModify_requires_new_password(self) -> None:
@@ -883,6 +900,8 @@ class TestLDAPServerTest:
         message, _ = pureber.berDecodeObject(
             self.server.berdecoder, self.output
         )
+        assert isinstance(message, pureldap.LDAPMessage)
+        assert isinstance(message.value, pureldap.LDAPResult)
         assert message.value.resultCode == ldaperrors.LDAPOperationsError.resultCode
 
     async def test_passwordModify_simple(self) -> None:
@@ -915,7 +934,12 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire()
         )
-        assert [c.value for c in commits] == [True], "Server never committed data."
+        # Already unwrapped once by the observer, so read the recorded value.
+        committed = []
+        for commit in commits:
+            assert isinstance(commit, outcome.Value)
+            committed.append(commit.value)
+        assert committed == [True], "Server never committed data."
         assert self.output == (pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
                     resultCode=ldaperrors.Success.resultCode,
@@ -924,9 +948,10 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
         # tree changed
-        secrets = self.thingie.get("userPassword", [])
+        secrets = list(self.thingie.get("userPassword", []) or [])
         assert len(secrets) == 1
         for secret in secrets:
+            assert isinstance(secret, bytes)
             assert secret[: len(b"{SSHA}")] == b"{SSHA}"
             raw = base64.decodebytes(secret[len(b"{SSHA}") :])
             salt = raw[20:]
@@ -952,7 +977,7 @@ class TestLDAPServerTest:
                 id=4,
             ).toWire())
         self.output = b""
-        cleanups = []
+        cleanups: list[Callable[[], object]] = []
         messages = capture_logs(cleanups, level=logging.INFO)
         await self._send(
             pureldap.LDAPMessage(
@@ -974,7 +999,7 @@ class TestLDAPServerTest:
                 ),
                 id=2,
             ).toWire())
-        assert list(self.thingie.get("userPassword", [])) == list([userPassword])
+        assert list(self.thingie.get("userPassword", []) or []) == [userPassword]
 
     async def test_unknownRequest(self) -> None:
         # make server miss one of the handle_* attributes

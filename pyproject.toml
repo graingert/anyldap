@@ -96,22 +96,6 @@ ignore = [
 strict = true
 plugins = ["mypy_zope:plugin"]
 
-# Modules that predate mypy and are not annotated yet. Strict checking applies
-# to everything not listed here, so new code is covered from the start; delete
-# an entry once its module type-checks.
-[[tool.mypy.overrides]]
-ignore_errors = true
-module = [
-    "anyldap.test._anyio_helpers",
-    "anyldap.test.test_anyio_server",
-    "anyldap.test.test_autofill",
-    "anyldap.test.test_ldapclient",
-    "anyldap.test.test_ldapsyntax",
-    "anyldap.test.test_pureldap",
-    "anyldap.test.test_scripts",
-    "anyldap.test.test_server",
-]
-
 [tool.coverage.run]
 branch = true
 source_pkgs = ["anyldap"]

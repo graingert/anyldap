@@ -1,9 +1,9 @@
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 import anyio
 import pytest
-from anyio.abc import ByteStream, SocketAttribute
+from anyio.abc import ByteStream, SocketAttribute, SocketListener
 
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
@@ -11,9 +11,14 @@ from anyldap.protocols.ldap import ldapserver
 
 class MemoryByteStream(ByteStream):
     def __init__(self) -> None:
-        self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream(0)
-        self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream(0)
+        self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream[
+            bytes
+        ](0)
+        self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream[
+            bytes
+        ](0)
         self.closed = False
+        self.closed_event = anyio.Event()
 
     async def send(self, data: bytes) -> None:
         await self._outgoing_send.send(data)
@@ -28,6 +33,7 @@ class MemoryByteStream(ByteStream):
 
     async def aclose(self) -> None:
         self.closed = True
+        self.closed_event.set()
         await self._incoming_send.aclose()
         await self._incoming_recv.aclose()
         await self._outgoing_send.aclose()
@@ -43,6 +49,16 @@ class MemoryByteStream(ByteStream):
 
     async def close_input(self) -> None:
         await self._incoming_send.aclose()
+
+    async def close_output(self) -> None:
+        await self._outgoing_recv.aclose()
+
+
+def accept_one(listener: anyio.abc.Listener[Any]) -> Awaitable[ByteStream]:
+    """The next connection to a listener these tests started."""
+    inner = listener.listeners[0]  # type: ignore[attr-defined]
+    assert isinstance(inner, SocketListener)
+    return inner.accept()
 
 
 def local_address(listener: anyio.abc.Listener[Any]) -> tuple[str, int]:

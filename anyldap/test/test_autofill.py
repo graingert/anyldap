@@ -40,7 +40,7 @@ class TestLDAPAutoFill_Simple:
         """A simple autofiller that calculates sums of attributes should work.."""
         client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntryWithAutoFill(
-            client=client,  # type: ignore[arg-type]
+            client=client,
             dn="cn=foo,dc=example,dc=com",
             attributes={
                 "objectClass": ["some", "other"],

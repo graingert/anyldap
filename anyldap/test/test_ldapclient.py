@@ -1,30 +1,53 @@
 """
 Test cases for anyldap.protocols.ldap.ldapsyntax module.
 """
+from collections.abc import Callable
+from typing import Any
+
 import anyio
 import pytest
+from anyio.abc import ByteStream
 from exceptiongroup import suppress
 
+from anyldap import runtime
 from anyldap._async import ResultSlot
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapclient, ldaperrors, ldapserver
 from anyldap.runtime import Failure
-from anyldap.test._anyio_helpers import local_address
+from anyldap.test._anyio_helpers import accept_one, local_address
 
 pytestmark = pytest.mark.anyio
+
+
+def _finish(event: anyio.Event) -> Callable[..., bool]:
+    """A response handler that records the response and claims it as final."""
+
+    def handler(*args: object) -> bool:
+        event.set()
+        return True
+
+    return handler
+
+
+_finish_ex = _finish
 
 
 async def test_async_multi_response_and_no_response_paths() -> None:
     client = ldapclient.LDAPClient()
 
     class SearchServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPSearchRequest(self, request, controls, reply):
+        def handle_LDAPSearchRequest(
+            self,
+            request: Any,
+            controls: Any,
+            reply: Any,
+        ) -> Any:
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
-    server_stream = await listener.listeners[0].accept()
+    server_stream = await accept_one(listener)
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(ldapserver.serve_stream, server_stream, SearchServer)
         await client.attach_stream(client_stream, task_group)
@@ -32,7 +55,7 @@ async def test_async_multi_response_and_no_response_paths() -> None:
         response_received = anyio.Event()
 
         result = await client.send_multiResponse_async(
-            request, lambda response: response_received.set() or True
+            request, _finish(response_received)
         )
         assert isinstance(result, pureldap.LDAPSearchResultDone)
         await response_received.wait()
@@ -41,8 +64,9 @@ async def test_async_multi_response_and_no_response_paths() -> None:
         result = await client.send_multiResponse_ex_async(
             request,
             controls=[],
-            handler=lambda response, controls: response_received.set() or True,
+            handler=_finish_ex(response_received),
         )
+        assert isinstance(result, tuple)
         response, controls = result
         assert isinstance(response, pureldap.LDAPSearchResultDone)
         assert controls is None
@@ -66,13 +90,18 @@ async def test_send_async_receives_response_from_stream() -> None:
     client = ldapclient.LDAPClient()
 
     class BindServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPBindRequest(self, request, controls, reply):
+        def handle_LDAPBindRequest(
+            self,
+            request: Any,
+            controls: Any,
+            reply: Any,
+        ) -> Any:
             return pureldap.LDAPBindResponse(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
-    server_stream = await listener.listeners[0].accept()
+    server_stream = await accept_one(listener)
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(ldapserver.serve_stream, server_stream, BindServer)
         await client.attach_stream(client_stream, task_group)
@@ -86,15 +115,27 @@ async def test_client_methods_use_real_socket_stream() -> None:
     closed = anyio.Event()
 
     class Client(ldapclient.LDAPClient):
-        def connectionLost(self, reason) -> None:
+        def connectionLost(
+            self, reason: BaseException = runtime.Protocol.connectionDone
+        ) -> None:
             super().connectionLost(reason)
             closed.set()
 
     class Server(ldapserver.BaseLDAPServer):
-        def handle_LDAPBindRequest(self, request, controls, reply):
+        def handle_LDAPBindRequest(
+            self,
+            request: Any,
+            controls: Any,
+            reply: Any,
+        ) -> Any:
             return pureldap.LDAPBindResponse(resultCode=0)
 
-        def handle_LDAPSearchRequest(self, request, controls, reply):
+        def handle_LDAPSearchRequest(
+            self,
+            request: Any,
+            controls: Any,
+            reply: Any,
+        ) -> Any:
             reply(pureldap.LDAPSearchResultEntry("cn=entry", []))
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
@@ -103,7 +144,7 @@ async def test_client_methods_use_real_socket_stream() -> None:
     client = Client()
     client.debug = True
     client_stream = await anyio.connect_tcp(host, port)
-    server_stream = await listener.listeners[0].accept()
+    server_stream = await accept_one(listener)
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(ldapserver.serve_stream, server_stream, Server)
         await client.attach_stream(client_stream, task_group)
@@ -112,22 +153,32 @@ async def test_client_methods_use_real_socket_stream() -> None:
             pureldap.LDAPBindResponse,
         )
         assert await client.bind_async() == (b"", None)
-        responses = []
+        responses: list[object] = []
+
+        def collect(response: object) -> bool:
+            """Gather each response, and say when the search is done."""
+            responses.append(response)
+            return isinstance(response, pureldap.LDAPSearchResultDone)
+
         assert isinstance(
             await client.send_multiResponse(
-                pureldap.LDAPSearchRequest(),
-                lambda response: responses.append(response)
-                or isinstance(response, pureldap.LDAPSearchResultDone),
+                pureldap.LDAPSearchRequest(), collect
             ),
             pureldap.LDAPSearchResultDone,
         )
-        controlled = []
-        response, controls = await client.send_multiResponse_ex(
+        controlled: list[object] = []
+
+        def collect_with_controls(response: object, response_controls: object) -> bool:
+            controlled.append(response)
+            return isinstance(response, pureldap.LDAPSearchResultDone)
+
+        result = await client.send_multiResponse_ex(
             pureldap.LDAPSearchRequest(),
             controls=[],
-            handler=lambda response, response_controls: controlled.append(response)
-            or isinstance(response, pureldap.LDAPSearchResultDone),
+            handler=collect_with_controls,
         )
+        assert isinstance(result, tuple)
+        response, controls = result
         assert isinstance(response, pureldap.LDAPSearchResultDone)
         assert controls is None
         assert len(responses) == len(controlled) == 2
@@ -137,10 +188,10 @@ async def test_client_methods_use_real_socket_stream() -> None:
 
 
 async def test_prebuffered_stream_delegates_to_real_socket() -> None:
-    received = []
+    received: list[bytes] = []
     peer_done = anyio.Event()
 
-    async def peer(stream) -> None:
+    async def peer(stream: ByteStream) -> None:
         received.append(await stream.receive())
         await stream.send(b"pong")
         with suppress(anyio.EndOfStream):
@@ -151,7 +202,7 @@ async def test_prebuffered_stream_delegates_to_real_socket() -> None:
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
-    server_stream = await listener.listeners[0].accept()
+    server_stream = await accept_one(listener)
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(peer, server_stream)
         stream = ldapclient._PrebufferedStream(client_stream, b"buffered")
@@ -230,11 +281,13 @@ async def test_attach_stream_reads_until_end() -> None:
     disconnected = anyio.Event()
 
     class Client(ldapclient.LDAPClient):
-        def connectionLost(self, reason) -> None:
+        def connectionLost(
+            self, reason: BaseException = runtime.Protocol.connectionDone
+        ) -> None:
             super().connectionLost(reason)
             disconnected.set()
 
-    async def send_notification(stream) -> None:
+    async def send_notification(stream: ByteStream) -> None:
         await stream.send(
             pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(0), id=0).toWire()
         )
@@ -255,7 +308,7 @@ async def test_attach_stream_reads_until_end() -> None:
 async def test_async_close_and_empty_stream_disconnect() -> None:
     peer_closed = anyio.Event()
 
-    async def wait_for_close(stream) -> None:
+    async def wait_for_close(stream: ByteStream) -> None:
         async with stream:
             with suppress(anyio.EndOfStream):
                 await stream.receive()
@@ -274,10 +327,11 @@ async def test_async_close_and_empty_stream_disconnect() -> None:
 
 
 async def test_invalid_starttls_response_over_real_socket() -> None:
-    async def peer(stream) -> None:
+    async def peer(stream: ByteStream) -> None:
         request, _ = pureber.berDecodeObject(
             ldapclient.LDAPClient.berdecoder, await stream.receive()
         )
+        assert isinstance(request, pureldap.LDAPMessage)
         await stream.send(
             pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(resultCode=0, responseName=b"wrong"),
@@ -289,7 +343,7 @@ async def test_invalid_starttls_response_over_real_socket() -> None:
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
-    server_stream = await listener.listeners[0].accept()
+    server_stream = await accept_one(listener)
     client = ldapclient.LDAPClient()
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(peer, server_stream)
@@ -300,10 +354,11 @@ async def test_invalid_starttls_response_over_real_socket() -> None:
 
 
 async def test_partial_starttls_response_and_failed_upgrade_over_real_socket() -> None:
-    async def peer(stream) -> None:
+    async def peer(stream: ByteStream) -> None:
         request, _ = pureber.berDecodeObject(
             ldapclient.LDAPClient.berdecoder, await stream.receive()
         )
+        assert isinstance(request, pureldap.LDAPMessage)
         response = pureldap.LDAPMessage(
             pureldap.LDAPStartTLSResponse(resultCode=0), id=request.id
         ).toWire()
@@ -315,7 +370,7 @@ async def test_partial_starttls_response_and_failed_upgrade_over_real_socket() -
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
-    server_stream = await listener.listeners[0].accept()
+    server_stream = await accept_one(listener)
     client = ldapclient.LDAPClient()
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(peer, server_stream)
@@ -328,13 +383,21 @@ async def test_partial_starttls_response_and_failed_upgrade_over_real_socket() -
 async def test_client_stream_state_guards_and_closed_socket_write() -> None:
     client = ldapclient.LDAPClient()
     client.connectionMade()
-    client.onwire[1] = object()
+    # Anything on the wire is enough to refuse a STARTTLS.
+    client.onwire[1] = (ResultSlot(), False, None, None, None)
     with pytest.raises(ldapclient.LDAPStartTLSBusyError):
         await client.startTLS_async()
     client.onwire.clear()
 
     tls_event = anyio.Event()
-    client._tls_upgrade = {"event": tls_event}
+    client._tls_upgrade = {
+        "context": None,
+        "hostname": None,
+        "event": tls_event,
+        "message_id": 1,
+        "response_received": False,
+        "error": None,
+    }
     client.connectionLost()
     assert tls_event.is_set()
 
@@ -354,7 +417,7 @@ async def test_client_stream_state_guards_and_closed_socket_write() -> None:
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     stream = await anyio.connect_tcp(host, port)
-    peer = await listener.listeners[0].accept()
+    peer = await accept_one(listener)
     await stream.aclose()
     client.connectionMade()
     client._anyio_stream = stream
@@ -367,14 +430,16 @@ async def test_client_stream_state_guards_and_closed_socket_write() -> None:
     disconnected = anyio.Event()
 
     class NotifyingClient(ldapclient.LDAPClient):
-        def connectionLost(self, reason) -> None:
+        def connectionLost(
+            self, reason: BaseException = runtime.Protocol.connectionDone
+        ) -> None:
             super().connectionLost(reason)
             disconnected.set()
 
     client = NotifyingClient()
     peer_closed = anyio.Event()
 
-    async def close_peer(stream) -> None:
+    async def close_peer(stream: ByteStream) -> None:
         await stream.aclose()
         peer_closed.set()
 
@@ -402,7 +467,8 @@ def test_clientConnectionLost_rep() -> None:
 
 
 def test_startTLSBusyError_rep() -> None:
-    error = ldapclient.LDAPStartTLSBusyError("xyzzy")
+    # Whatever was on the wire is repr'd into the message.
+    error = ldapclient.LDAPStartTLSBusyError("xyzzy")  # type: ignore[arg-type]
     assert b"Cannot STARTTLS while operations on wire: 'xyzzy'" == error.toWire()
 
 

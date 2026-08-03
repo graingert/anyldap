@@ -1,10 +1,12 @@
 import ssl
+from typing import Any
 
 import anyio
 import anyio.lowlevel
 import anyio.streams.tls
 import pytest
 import trustme
+from anyio.abc import ByteStream
 
 from anyldap import config, inmemory, testutil
 from anyldap.protocols import pureber, pureldap
@@ -19,47 +21,20 @@ from anyldap.protocols.ldap import (
     svcbindproxy,
 )
 from anyldap.runtime import ConnectionDone, Failure
-from anyldap.test._anyio_helpers import AsyncLDAPClientDriver, local_address
+from anyldap.test._anyio_helpers import (
+    AsyncLDAPClientDriver,
+    MemoryByteStream,
+    local_address,
+)
 
 pytestmark = pytest.mark.anyio
 
 
-class MemoryByteStream:
-    def __init__(self) -> None:
-        self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream(0)
-        self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream(0)
-        self.closed = False
-        self.closed_event = anyio.Event()
-
-    async def send(self, data) -> None:
-        await self._outgoing_send.send(data)
-
-    async def receive(self):
-        return await self._incoming_recv.receive()
-
-    async def aclose(self) -> None:
-        self.closed = True
-        self.closed_event.set()
-        await self._incoming_send.aclose()
-        await self._incoming_recv.aclose()
-        await self._outgoing_send.aclose()
-        await self._outgoing_recv.aclose()
-
-    async def feed(self, data) -> None:
-        await self._incoming_send.send(data)
-
-    async def next_write(self):
-        return await self._outgoing_recv.receive()
-
-    async def close_input(self) -> None:
-        await self._incoming_send.aclose()
-
-    async def close_output(self) -> None:
-        await self._outgoing_recv.aclose()
-
-
-def decode_message(wire_bytes):
-    message, _ = pureber.berDecodeObject(ldapserver.BaseLDAPServer.berdecoder, wire_bytes)
+def decode_message(wire_bytes: bytes) -> pureldap.LDAPMessage:
+    message, _ = pureber.berDecodeObject(
+        ldapserver.BaseLDAPServer.berdecoder, wire_bytes
+    )
+    assert isinstance(message, pureldap.LDAPMessage)
     return message
 
 
@@ -72,12 +47,22 @@ async def test_starttls_upgrades_real_socket_stream() -> None:
     authority.configure_trust(client_context)
 
     class StartTLSServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPExtendedRequest(self, request, controls, reply) -> None:
+        def handle_LDAPExtendedRequest(
+            self,
+            request: Any,
+            controls: Any,
+            reply: Any,
+        ) -> Any:
             assert request.requestName == pureldap.LDAPStartTLSRequest.oid
             self.start_tls(server_context)
             reply(pureldap.LDAPStartTLSResponse(resultCode=0))
 
-        def handle_LDAPBindRequest(self, request, controls, reply):
+        def handle_LDAPBindRequest(
+            self,
+            request: Any,
+            controls: Any,
+            reply: Any,
+        ) -> Any:
             return pureldap.LDAPBindResponse(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
@@ -94,6 +79,7 @@ async def test_starttls_upgrades_real_socket_stream() -> None:
             )
         with anyio.fail_after(5):
             response = await client.send_async(pureldap.LDAPBindRequest())
+        assert isinstance(response, pureldap.LDAPResult)
         assert response.resultCode == 0
         await client.aclose()
         await listener.aclose()
@@ -116,6 +102,7 @@ async def test_ldap_server_attach_stream_bind_response() -> None:
         response = decode_message(await stream.next_write())
         assert isinstance(response.value, pureldap.LDAPBindResponse)
         assert response.id == 7
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         await server.aclose()
 
@@ -132,6 +119,7 @@ async def test_base_server_real_stream_partial_message_and_close_lifecycle() -> 
         await stream.feed(request[1:])
         response = decode_message(await stream.next_write())
         assert response.id == 12
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.LDAPProtocolError.resultCode
         await stream.feed(
             pureldap.LDAPMessage(pureldap.LDAPUnbindRequest(), id=0).toWire()
@@ -174,10 +162,12 @@ async def test_ldap_server_accepts_factory_with_root_attribute() -> None:
     )
 
     class RootFactory:
-        pass
+        """What a server is served by: something holding the tree."""
 
-    factory = RootFactory()
-    factory.root = root
+        def __init__(self, root: inmemory.ReadOnlyInMemoryLDAPEntry) -> None:
+            self.root = root
+
+    factory = RootFactory(root)
     server = ldapserver.LDAPServer()
     server.factory = factory
     stream = MemoryByteStream()
@@ -188,6 +178,7 @@ async def test_ldap_server_accepts_factory_with_root_attribute() -> None:
             pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=16).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         assert server._get_root() is root
         await server.aclose()
@@ -195,14 +186,16 @@ async def test_ldap_server_accepts_factory_with_root_attribute() -> None:
 
 async def test_extended_request_handler_without_decoder_receives_raw_value() -> None:
     class ExtendedServer(ldapserver.LDAPServer):
-        def extendedRequest_echo(self, value, reply):
+        def extendedRequest_echo(
+            self, value: str | bytes | None, reply: object
+        ) -> pureldap.LDAPExtendedResponse:
             return pureldap.LDAPExtendedResponse(
                 resultCode=0,
-                responseName=self.extendedRequest_echo.oid,
+                responseName=b"1.2.3.4",
                 response=value,
             )
 
-    ExtendedServer.extendedRequest_echo.oid = b"1.2.3.4"
+    ExtendedServer.extendedRequest_echo.oid = b"1.2.3.4"  # type: ignore[attr-defined]
     server = ExtendedServer()
     stream = MemoryByteStream()
 
@@ -218,6 +211,7 @@ async def test_extended_request_handler_without_decoder_receives_raw_value() -> 
             ).toWire()
         )
         response = decode_message(await stream.next_write())
+        assert isinstance(response.value, pureldap.LDAPExtendedResponse)
         assert response.value.resultCode == 0
         assert response.value.response == b"raw value"
         await server.aclose()
@@ -225,7 +219,12 @@ async def test_extended_request_handler_without_decoder_receives_raw_value() -> 
 
 async def test_server_async_handler_error_uses_protocol_error_response() -> None:
     class FailingServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPBindRequest(self, request, controls, reply) -> None:
+        async def handle_LDAPBindRequest(
+            self,
+            request: Any,
+            controls: Any,
+            reply: Any,
+        ) -> Any:
             raise RuntimeError("real handler failed")
 
     server = FailingServer()
@@ -237,6 +236,7 @@ async def test_server_async_handler_error_uses_protocol_error_response() -> None
         )
         response = decode_message(await stream.next_write())
         assert response.id == 14
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.LDAPProtocolError.resultCode
         assert response.value.errorMessage == b"real handler failed"
         await server.aclose()
@@ -274,6 +274,7 @@ async def test_proxybase_attach_stream_forwards_bind() -> None:
         )
         response = decode_message(await downstream.next_write())
         assert isinstance(response.value, pureldap.LDAPBindResponse)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         assert isinstance(forwarded.value, pureldap.LDAPBindRequest)
         await downstream.feed(
@@ -292,7 +293,7 @@ async def test_proxy_queues_until_real_upstream_client_is_ready() -> None:
     upstream = MemoryByteStream()
     downstream = MemoryByteStream()
 
-    async def connector():
+    async def connector() -> ldapclient.LDAPClient:
         await connect.wait()
         return client
 
@@ -314,6 +315,7 @@ async def test_proxy_queues_until_real_upstream_client_is_ready() -> None:
         )
         response = decode_message(await downstream.next_write())
         assert response.id == 16
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == 0
         await server.aclose()
         await client.aclose()
@@ -321,7 +323,12 @@ async def test_proxy_queues_until_real_upstream_client_is_ready() -> None:
 
 async def test_proxy_public_interception_hook_can_answer_without_forwarding() -> None:
     class InterceptingProxy(proxybase.ProxyBase):
-        def handleBeforeForwardRequest(self, request, controls, reply):
+        def handleBeforeForwardRequest(
+            self,
+            request: pureldap.LDAPProtocolRequest,
+            controls: Any,
+            reply: Any,
+        ) -> None:
             reply(pureldap.LDAPBindResponse(resultCode=0))
             return None
 
@@ -338,6 +345,7 @@ async def test_proxy_public_interception_hook_can_answer_without_forwarding() ->
         )
         response = decode_message(await downstream.next_write())
         assert response.id == 17
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == 0
         assert client.onwire == {}
         await server.aclose()
@@ -345,7 +353,7 @@ async def test_proxy_public_interception_hook_can_answer_without_forwarding() ->
 
 
 async def test_proxy_reports_real_connector_failure_and_closes_downstream() -> None:
-    async def connector() -> None:
+    async def connector() -> ldapclient.LDAPClient:
         raise OSError("connection refused")
 
     server = proxybase.ProxyBase()
@@ -364,7 +372,7 @@ async def test_proxy_closes_real_upstream_when_downstream_disconnects_while_conn
     upstream = MemoryByteStream()
     downstream = MemoryByteStream()
 
-    async def connector():
+    async def connector() -> ldapclient.LDAPClient:
         connector_started.set()
         await release.wait()
         return client
@@ -389,10 +397,10 @@ async def test_merged_server_attach_stream_merges_real_upstream_bind_responses()
     first_upstream = MemoryByteStream()
     second_upstream = MemoryByteStream()
 
-    def connect_first(protocol_factory):
+    def connect_first(protocol_factory: object) -> Any:
         return first_client
 
-    def connect_second(protocol_factory):
+    def connect_second(protocol_factory: object) -> Any:
         return second_client
 
     server = merger.MergedLDAPServer(
@@ -425,12 +433,13 @@ async def test_merged_server_attach_stream_merges_real_upstream_bind_responses()
         )
         response = decode_message(await downstream.next_write())
         assert isinstance(response.value, pureldap.LDAPBindResponse)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         await server.aclose()
 
 
 async def test_merged_server_reports_real_async_connector_failure() -> None:
-    def refuse_connection(protocol_factory) -> None:
+    def refuse_connection(protocol_factory: object) -> Any:
         raise OSError("connection refused")
 
     server = merger.MergedLDAPServer(
@@ -452,10 +461,10 @@ async def test_merged_server_sends_unbind_through_real_async_client() -> None:
     client = ldapclient.LDAPClient()
     server = merger.MergedLDAPServer([], [])
     server.clients = [client]
-    received = []
+    received: list[pureldap.LDAPMessage] = []
     server_stopped = anyio.Event()
 
-    async def receive_unbind(peer) -> None:
+    async def receive_unbind(peer: ByteStream) -> None:
         received.append(decode_message(await peer.receive()))
         await peer.aclose()
         server_stopped.set()
@@ -481,7 +490,7 @@ async def test_proxy_attach_stream_forwards_bind() -> None:
     )
     client.connectionMade()
 
-    def connect_client(protocol_factory):
+    def connect_client(protocol_factory: object) -> Any:
         return client
 
     server = proxy.Proxy(
@@ -495,12 +504,15 @@ async def test_proxy_attach_stream_forwards_bind() -> None:
         )
         response = decode_message(await stream.next_write())
         assert isinstance(response.value, pureldap.LDAPBindResponse)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         client.assertSent(pureldap.LDAPBindRequest())
         await server.aclose()
 
 
-async def test_service_binding_proxy_attach_stream_intercepts_bind() -> None:
+async def test_service_binding_proxy_attach_stream_intercepts_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     client = testutil.LDAPClientTestDriver(
         [
             pureldap.LDAPSearchResultEntry(
@@ -513,7 +525,7 @@ async def test_service_binding_proxy_attach_stream_intercepts_bind() -> None:
     )
     client.connectionMade()
 
-    def connect_client(protocol_factory):
+    def connect_client(protocol_factory: object) -> Any:
         return client
 
     server = svcbindproxy.ServiceBindingProxy(
@@ -524,7 +536,7 @@ async def test_service_binding_proxy_attach_stream_intercepts_bind() -> None:
         services=["svc1"],
         fallback=False,
     )
-    server.timestamp = lambda: "20050213140302Z"
+    monkeypatch.setattr(server, "timestamp", lambda: "20050213140302Z")
     stream = MemoryByteStream()
     async with anyio.create_task_group() as task_group:
         await server.attach_stream(stream, task_group)
@@ -539,6 +551,7 @@ async def test_service_binding_proxy_attach_stream_intercepts_bind() -> None:
         )
         response = decode_message(await stream.next_write())
         assert isinstance(response.value, pureldap.LDAPBindResponse)
+        assert isinstance(response.value, pureldap.LDAPResult)
         assert response.value.resultCode == ldaperrors.Success.resultCode
         assert response.value.matchedDN == b"cn=jack,dc=example,dc=com"
         client.assertSent(
@@ -548,7 +561,7 @@ async def test_service_binding_proxy_attach_stream_intercepts_bind() -> None:
                 sizeLimit=0,
                 timeLimit=0,
                 typesOnly=0,
-                filter=svcbindproxy.pureldap.LDAPFilter_and(
+                filter=pureldap.LDAPFilter_and(
                     [
                         pureldap.LDAPFilter_equalityMatch(
                             attributeDesc=pureldap.LDAPAttributeDescription("objectClass"),
@@ -622,7 +635,7 @@ async def test_serve_stream_runs_until_eof() -> None:
             await super().connectionMade_async()
             ready.set()
 
-    def build_server():
+    def build_server() -> ldapserver.BaseLDAPServer:
         server = ObservedServer()
         server.factory = root
         return server
@@ -643,7 +656,7 @@ async def test_serve_stream_runs_until_eof() -> None:
 
 
 async def test_proxybase_failure_and_starttls_response_paths() -> None:
-    replies = []
+    replies: list[pureber.BERBase] = []
     server = proxybase.ProxyBase()
     server.queuedRequests = [
         (pureldap.LDAPBindRequest(), None, replies.append),
@@ -655,18 +668,19 @@ async def test_proxybase_failure_and_starttls_response_paths() -> None:
         pureldap.LDAPBindResponse,
         pureldap.LDAPStartTLSResponse,
     ]
-    assert {response.resultCode for response in replies} == {
-        ldaperrors.LDAPUnavailable.resultCode
-    }
+    assert {
+        response.resultCode
+        for response in replies
+        if isinstance(response, pureldap.LDAPResult)
+    } == {ldaperrors.LDAPUnavailable.resultCode}
 
     unavailable = proxybase.ProxyBase()
     unavailable.factory = object()
-    assert (
-        unavailable.handleStartTLSRequest(
-            pureldap.LDAPStartTLSRequest(), None, replies.append
-        ).resultCode
-        == ldaperrors.LDAPUnavailable.resultCode
+    refused = unavailable.handleStartTLSRequest(
+        pureldap.LDAPStartTLSRequest(), None, replies.append
     )
+    assert refused is not None
+    assert refused.resultCode == ldaperrors.LDAPUnavailable.resultCode
 
     class Factory:
         options = object()
@@ -678,12 +692,11 @@ async def test_proxybase_failure_and_starttls_response_paths() -> None:
         pureldap.LDAPStartTLSRequest(), None, replies.append
     ) is None
     assert tls_server.startTLS_initiated
-    assert (
-        tls_server.handleStartTLSRequest(
-            pureldap.LDAPStartTLSRequest(), None, replies.append
-        ).resultCode
-        == ldaperrors.LDAPOperationsError.resultCode
+    again = tls_server.handleStartTLSRequest(
+        pureldap.LDAPStartTLSRequest(), None, replies.append
     )
+    assert again is not None
+    assert again.resultCode == ldaperrors.LDAPOperationsError.resultCode
 
 
 async def test_proxybase_connection_tls_disconnect_and_backlog_paths() -> None:
@@ -692,19 +705,21 @@ async def test_proxybase_connection_tls_disconnect_and_backlog_paths() -> None:
     )
     client.connectionMade()
 
-    async def start_tls():
+    async def start_tls() -> testutil.LDAPClientTestDriver:
         return client
 
-    client.startTLS_async = start_tls
+    # The proxy upgrades its connection before forwarding anything.
+    client.startTLS_async = start_tls  # type: ignore[attr-defined]
     server = proxybase.ProxyBase()
     server.use_tls = True
     server.clientConnector = lambda: client
-    replies = []
+    replies: list[pureber.BERBase] = []
     server.queuedRequests = [
         (pureldap.LDAPBindRequest(), None, replies.append),
         (pureldap.LDAPUnbindRequest(), None, replies.append),
     ]
     await server.connectionMade_async()
+    assert isinstance(replies[0], pureldap.LDAPResult)
     assert replies[0].resultCode == ldaperrors.Success.resultCode
     client.assertSent(pureldap.LDAPBindRequest(), pureldap.LDAPUnbindRequest())
 
@@ -712,7 +727,7 @@ async def test_proxybase_connection_tls_disconnect_and_backlog_paths() -> None:
     disconnected_client.connectionMade()
     disconnected_server = proxybase.ProxyBase()
 
-    async def disconnect_during_connect():
+    async def disconnect_during_connect() -> Any:
         disconnected_server.connectionLost(ConnectionDone())
         return disconnected_client
 
@@ -737,7 +752,7 @@ async def test_proxybase_forwarding_and_example_response_paths() -> None:
     client.connectionMade()
     server = proxybase.ProxyBase()
     server.client = client
-    replies = []
+    replies: list[pureber.BERBase] = []
     await server.handleUnknown(pureldap.LDAPSearchRequest(), None, replies.append)
     await server.handle_LDAPExtendedRequest(
         pureldap.LDAPExtendedRequest(requestName=b"1.2.3"), None, replies.append
@@ -754,23 +769,31 @@ async def test_proxybase_forwarding_and_example_response_paths() -> None:
     )
     example = proxybase.ExampleProxy()
     response = pureldap.LDAPBindResponse(resultCode=0)
-    assert example.handleProxiedResponse(response, None, None) is response
+    assert (
+        example.handleProxiedResponse(response, pureldap.LDAPBindRequest(), None)
+        is response
+    )
 
 
 async def test_proxybase_queues_requests_until_connected() -> None:
     server = proxybase.ProxyBase()
     request = pureldap.LDAPSearchRequest()
-    replies = []
+    replies: list[pureber.BERBase] = []
     await server.handleUnknown(request, None, replies.append)
     assert server.queuedRequests == [(request, None, replies.append)]
 
 
 async def test_proxybase_replies_in_response_order() -> None:
     request = pureldap.LDAPSearchRequest()
-    replies = []
+    replies: list[pureber.BERBase] = []
 
     class RewritingProxy(proxybase.ProxyBase):
-        def handleProxiedResponse(self, response, request, controls):
+        def handleProxiedResponse(
+            self,
+            response: pureldap.LDAPProtocolResponse,
+            request: pureldap.LDAPProtocolRequest,
+            controls: Any,
+        ) -> Any:
             return ("rewritten", response)
 
     server = RewritingProxy()
@@ -805,13 +828,14 @@ async def test_proxybase_connection_close_and_quiet_starttls_paths() -> None:
 
     server = proxybase.ProxyBase()
     server.factory = Factory()
-    replies = []
+    replies: list[pureber.BERBase] = []
     assert (
         server.handleStartTLSRequest(
             pureldap.LDAPStartTLSRequest(), None, replies.append
         )
         is None
     )
+    assert isinstance(replies[0], pureldap.LDAPResult)
     assert replies[0].resultCode == ldaperrors.Success.resultCode
 
 
@@ -819,11 +843,11 @@ async def test_server_stream_state_guards() -> None:
     server = ldapserver.BaseLDAPServer()
     await server._send_anyio_write(b"data")
     with pytest.raises(ldapserver.LDAPServerConnectionLostException):
-        await server._upgrade_to_tls(None, b"response")
+        await server._upgrade_to_tls(None, b"response")  # type: ignore[arg-type]
     server._anyio_write_lock = anyio.Lock()
     await server._send_anyio_write(b"data")
     with pytest.raises(ldapserver.LDAPServerConnectionLostException):
-        await server._upgrade_to_tls(None, b"response")
+        await server._upgrade_to_tls(None, b"response")  # type: ignore[arg-type]
 
 
 async def test_ldaps_connects_over_tls_from_the_start() -> None:
@@ -846,7 +870,7 @@ async def test_ldaps_connects_over_tls_from_the_start() -> None:
         dn="dc=example,dc=com", attributes={"dc": ["example"]}
     )
 
-    def make_server():
+    def make_server() -> ldapserver.LDAPServer:
         server = ldapserver.LDAPServer()
         server.factory = root
         return server
@@ -870,6 +894,7 @@ async def test_ldaps_connects_over_tls_from_the_start() -> None:
         try:
             with anyio.fail_after(5):
                 response = await client.send_async(pureldap.LDAPBindRequest())
+            assert isinstance(response, pureldap.LDAPResult)
             assert response.resultCode == ldaperrors.Success.resultCode
         finally:
             await connection.aclose()

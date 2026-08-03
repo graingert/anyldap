@@ -6,7 +6,7 @@ from anyldap import config, interfaces, numberalloc, usage
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapsyntax
 
 
-async def main(cfg: interfaces.ILDAPConfig) -> None:
+async def main(cfg: interfaces.LDAPBaseConfigLike) -> None:
     try:
         base_dn = cfg.getBaseDN()
     except config.MissingBaseDNError as exc:

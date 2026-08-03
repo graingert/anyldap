@@ -1,12 +1,17 @@
+import getpass
 import io
 import pathlib
 import subprocess
 import sys
-from types import SimpleNamespace
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from types import ModuleType, SimpleNamespace
+from typing import Any, ClassVar
 
+import dns.asyncresolver
+import dns.rdatatype
 import pytest
 
-from anyldap import config, delta
+from anyldap import config, delta, generate_password, numberalloc, usage
 from anyldap._scripts import (
     fetchschema,
     find_server,
@@ -23,15 +28,16 @@ from anyldap._scripts import (
     rename,
     search,
 )
-from anyldap.protocols.ldap import ldapserver, merger, proxybase, svcbindproxy
+from anyldap.protocols.ldap import fetchschema as protocol_fetchschema
+from anyldap.protocols.ldap import ldapconnector, ldapserver, ldapsyntax, merger, proxybase, svcbindproxy
 
 pytestmark = pytest.mark.anyio
 
 
-def _returning(value):
+def _returning(value: Any) -> Callable[..., Awaitable[Any]]:
     """Build an async stand-in that ignores its arguments and returns `value`."""
 
-    async def stub(*args, **kwargs):
+    async def stub(*args: object, **kwargs: object) -> Any:
         return value
 
     return stub
@@ -41,7 +47,7 @@ def _returning(value):
     "module",
     [ldap2dhcpconf, ldap2dnszones, ldap2maradns, ldap2pdns],
 )
-async def test_unavailable_scripts_explain_status(module) -> None:
+async def test_unavailable_scripts_explain_status(module: ModuleType) -> None:
     with pytest.raises(SystemExit, match="rewritten for the AnyIO runtime"):
         module.console_script()
 
@@ -50,7 +56,7 @@ async def test_unavailable_scripts_explain_status(module) -> None:
     "module",
     [ldap2dhcpconf, ldap2dnszones, ldap2maradns, ldap2pdns],
 )
-async def test_unavailable_script_module_entrypoints(module) -> None:
+async def test_unavailable_script_module_entrypoints(module: ModuleType) -> None:
     result = subprocess.run(
         [sys.executable, "-m", module.__name__],
         check=False,
@@ -65,7 +71,7 @@ async def test_unavailable_script_module_entrypoints(module) -> None:
     "module",
     [find_server, ldifdiff, ldifpatch, namingcontexts, passwd, rename, search],
 )
-def test_script_module_entrypoints_report_missing_arguments(module) -> None:
+def test_script_module_entrypoints_report_missing_arguments(module: ModuleType) -> None:
     result = subprocess.run(
         [sys.executable, "-m", module.__name__],
         check=False,
@@ -80,7 +86,7 @@ def test_script_module_entrypoints_report_missing_arguments(module) -> None:
     "module",
     [fetchschema, getfreenumber, ldap2passwd, ldifdiff, ldifpatch, passwd, rename, search],
 )
-def test_script_module_entrypoints_report_invalid_options(module) -> None:
+def test_script_module_entrypoints_report_invalid_options(module: ModuleType) -> None:
     result = subprocess.run(
         [sys.executable, "-m", module.__name__, "--definitely-invalid"],
         check=False,
@@ -125,7 +131,9 @@ def test_script_module_entrypoints_report_invalid_options(module) -> None:
         (namingcontexts, ["127.0.0.1:1"], b""),
     ],
 )
-def test_valid_script_entrypoints_reach_real_external_interface(module, arguments, stdin) -> None:
+def test_valid_script_entrypoints_reach_real_external_interface(
+    module: ModuleType, arguments: Sequence[str], stdin: bytes
+) -> None:
     result = subprocess.run(
         [sys.executable, "-m", module.__name__, *arguments],
         input=stdin,
@@ -145,7 +153,9 @@ def test_valid_script_entrypoints_reach_real_external_interface(module, argument
         (svcbindproxy, b"packaged AnyIO examples"),
     ],
 )
-def test_legacy_protocol_module_entrypoints_explain_replacement(module, message) -> None:
+def test_legacy_protocol_module_entrypoints_explain_replacement(
+    module: ModuleType, message: bytes
+) -> None:
     result = subprocess.run(
         [sys.executable, "-m", module.__name__],
         check=False,
@@ -201,7 +211,9 @@ def test_ldifpatch_real_cli(tmp_path: pathlib.Path) -> None:
         (rename, ["cn=old", "cn=new"]),
     ],
 )
-def test_bind_password_is_read_from_real_inherited_fd(module, arguments, tmp_path: pathlib.Path) -> None:
+def test_bind_password_is_read_from_real_inherited_fd(
+    module: ModuleType, arguments: Sequence[str], tmp_path: pathlib.Path
+) -> None:
     password_file = tmp_path / "password"
     password_file.write_bytes(b"secret\n")
     with password_file.open("rb") as password_stream:
@@ -223,17 +235,20 @@ def test_bind_password_is_read_from_real_inherited_fd(module, arguments, tmp_pat
 
 
 def test_fetchschema_print_results(capsys: pytest.CaptureFixture[str]) -> None:
-    fetchschema._printResults((["one", "two"], ["three"]))
+    # Printed, not parsed: the descriptions stand in for their own repr.
+    fetchschema._printResults(
+        (["one", "two"], ["three"])  # type: ignore[list-item]
+    )
     assert capsys.readouterr().out == "attributetype one\nattributetype two\n\nobjectclass three\n"
-    fetchschema._printResults(([], ["three"]))
+    fetchschema._printResults(([], ["three"]))  # type: ignore[list-item]
     assert capsys.readouterr().out == "objectclass three\n"
 
 
 async def test_find_server_lookup_and_main(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     records = [
-        SimpleNamespace(rdtype=find_server.dns.rdatatype.A, target="ignored"),
+        SimpleNamespace(rdtype=dns.rdatatype.A, target="ignored"),
         SimpleNamespace(
-            rdtype=find_server.dns.rdatatype.SRV,
+            rdtype=dns.rdatatype.SRV,
             priority=10,
             weight=20,
             target="ldap.example.com.",
@@ -241,17 +256,17 @@ async def test_find_server_lookup_and_main(monkeypatch: pytest.MonkeyPatch, caps
         ),
     ]
 
-    async def resolve(name, kind):
+    async def resolve(name: str, kind: str) -> list[Any]:
         assert (name, kind) == ("_ldap._tcp.example.com", "SRV")
         return records
 
-    monkeypatch.setattr(find_server.dns.asyncresolver, "resolve", resolve)
+    monkeypatch.setattr(dns.asyncresolver, "resolve", resolve)
     await find_server.lookup("dc=example,dc=com")
     assert "pri=10 weight=20" in capsys.readouterr().out
 
-    seen = []
+    seen: list[str] = []
 
-    async def lookup(value) -> None:
+    async def lookup(value: str) -> None:
         seen.append(value)
 
     monkeypatch.setattr(find_server, "lookup", lookup)
@@ -260,7 +275,11 @@ async def test_find_server_lookup_and_main(monkeypatch: pytest.MonkeyPatch, caps
 
 
 @pytest.mark.parametrize("module", [find_server, namingcontexts])
-def test_positional_scripts_require_arguments(module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_positional_scripts_require_arguments(
+    module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.setattr(module.sys, "argv", ["command"])
     with pytest.raises(SystemExit) as exc:
         module.console_script()
@@ -283,12 +302,13 @@ def test_ldap2passwd_callback(capsys: pytest.CaptureFixture[str]) -> None:
         "cn": ["Alice"],
         "homeDirectory": ["/home/alice"],
     }
-    ldap2passwd._cbSearch(entry)
+    # A mapping of the attributes the script reads, which is all it touches.
+    ldap2passwd._cbSearch(entry)  # type: ignore[arg-type]
     assert capsys.readouterr().out == "alice:x:1000:100:Alice:/home/alice:\n"
 
 
 def test_search_print_results(capsys: pytest.CaptureFixture[str]) -> None:
-    search.printResults("result")
+    search.printResults("result")  # type: ignore[arg-type]
     assert capsys.readouterr().out == "result"
 
 
@@ -302,8 +322,11 @@ def test_search_print_results(capsys: pytest.CaptureFixture[str]) -> None:
         (rename.MyOptions(), ("old", "new"), {"from": "old", "to": "new"}),
     ],
 )
-def test_option_argument_parsing(options, args, expected) -> None:
-    options.parseArgs(*args)
+def test_option_argument_parsing(
+    options: usage.Options, args: Sequence[str], expected: Mapping[str, object]
+) -> None:
+    # Each script's Options defines its own; the base does not have one.
+    options.parseArgs(*args)  # type: ignore[attr-defined]
     for key, value in expected.items():
         assert options.opts[key] == value
 
@@ -318,44 +341,46 @@ def test_passwd_options_default_target() -> None:
 
 
 async def test_password_prompt_and_generation(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(passwd.getpass, "getpass", lambda prompt: "prompted")
+    monkeypatch.setattr(getpass, "getpass", lambda prompt: "prompted")
     assert await passwd._get_password("cn=user", False) == "prompted"
 
-    async def generate():
+    async def generate() -> list[str]:
         return ["generated"]
 
-    monkeypatch.setattr(passwd.generate_password, "generate_async", generate)
+    monkeypatch.setattr(generate_password, "generate_async", generate)
     assert await passwd._get_password("cn=user", True) == "generated"
 
 
 class FakeConfig:
-    def __init__(self, base="dc=example,dc=com") -> None:
+    def __init__(self, base: str | None = "dc=example,dc=com") -> None:
         self.base = base
 
-    def getBaseDN(self):
+    def getBaseDN(self) -> str:
         if self.base is None:
             raise config.MissingBaseDNError()
         return self.base
 
-    def getServiceLocationOverrides(self):
+    def getServiceLocationOverrides(self) -> dict[Any, Any]:
         return {self.base: ("ldap.example.com", 389)}
 
 
 class FakeCreator:
-    client = None
+    client: ClassVar[Any] = None
 
-    def __init__(self, *args) -> None:
+    def __init__(self, *args: object) -> None:
         pass
 
-    async def connectAnonymouslyAsync(self, **kwargs):
+    async def connectAnonymouslyAsync(self, **kwargs: object) -> Any:
         return self.client
 
-    async def connectAsync(self, **kwargs):
+    async def connectAsync(self, **kwargs: object) -> Any:
         return self.client
 
 
 @pytest.mark.parametrize("module", [fetchschema, getfreenumber, ldap2passwd, search])
-async def test_base_dependent_scripts_report_missing_base(module, capsys: pytest.CaptureFixture[str]) -> None:
+async def test_base_dependent_scripts_report_missing_base(
+    module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
     with pytest.raises(SystemExit) as exc:
         if module is ldap2passwd:
             await module.main(FakeConfig(None), None)
@@ -369,9 +394,9 @@ async def test_base_dependent_scripts_report_missing_base(module, capsys: pytest
 
 async def test_fetchschema_main(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     FakeCreator.client = object()
-    monkeypatch.setattr(fetchschema.ldapconnector, "LDAPClientCreator", FakeCreator)
+    monkeypatch.setattr(ldapconnector, "LDAPClientCreator", FakeCreator)
     monkeypatch.setattr(
-        fetchschema.fetchschema,
+        protocol_fetchschema,
         "fetch",
         _returning((["attribute"], ["object"])),
     )
@@ -381,10 +406,10 @@ async def test_fetchschema_main(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
 
 async def test_getfreenumber_main(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     FakeCreator.client = object()
-    monkeypatch.setattr(getfreenumber.ldapconnector, "LDAPClientCreator", FakeCreator)
-    monkeypatch.setattr(getfreenumber.ldapsyntax, "LDAPEntry", lambda **kwargs: "entry")
+    monkeypatch.setattr(ldapconnector, "LDAPClientCreator", FakeCreator)
+    monkeypatch.setattr(ldapsyntax, "LDAPEntry", lambda **kwargs: "entry")
     monkeypatch.setattr(
-        getfreenumber.numberalloc,
+        numberalloc,
         "getFreeNumber",
         _returning(1001),
     )
@@ -393,12 +418,12 @@ async def test_getfreenumber_main(monkeypatch: pytest.MonkeyPatch, capsys: pytes
 
 
 class SearchEntry:
-    calls = []
+    calls: ClassVar[list[dict[str, Any]]] = []
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: object, **kwargs: object) -> None:
         pass
 
-    async def search_async(self, **kwargs) -> None:
+    async def search_async(self, **kwargs: Any) -> None:
         self.calls.append(kwargs)
         callback = kwargs.get("callback")
         if callback:
@@ -420,18 +445,22 @@ async def test_search_entry_without_callback() -> None:
 async def test_search_main(monkeypatch: pytest.MonkeyPatch) -> None:
     SearchEntry.calls.clear()
     FakeCreator.client = object()
-    monkeypatch.setattr(search.ldapconnector, "LDAPClientCreator", FakeCreator)
-    monkeypatch.setattr(search.ldapsyntax, "LDAPEntry", SearchEntry)
+    monkeypatch.setattr(ldapconnector, "LDAPClientCreator", FakeCreator)
+    monkeypatch.setattr(ldapsyntax, "LDAPEntry", SearchEntry)
     await search.main(FakeConfig(), "(uid=alice)", ("uid",))
     assert SearchEntry.calls[-1]["filterText"] == "(uid=alice)"
 
 
 @pytest.mark.parametrize("filter_text", [None, "(uid=alice)"])
-async def test_ldap2passwd_main(monkeypatch: pytest.MonkeyPatch, filter_text, capsys: pytest.CaptureFixture[str]) -> None:
+async def test_ldap2passwd_main(
+    monkeypatch: pytest.MonkeyPatch,
+    filter_text: str | None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     SearchEntry.calls.clear()
     FakeCreator.client = object()
-    monkeypatch.setattr(ldap2passwd.ldapconnector, "LDAPClientCreator", FakeCreator)
-    monkeypatch.setattr(ldap2passwd.ldapsyntax, "LDAPEntry", SearchEntry)
+    monkeypatch.setattr(ldapconnector, "LDAPClientCreator", FakeCreator)
+    monkeypatch.setattr(ldapsyntax, "LDAPEntry", SearchEntry)
     await ldap2passwd.main(FakeConfig(), filter_text)
     assert SearchEntry.calls[-1]["attributes"][0] == "uid"
     assert "alice:x:1000" in capsys.readouterr().out
@@ -449,24 +478,24 @@ async def test_namingcontexts_lookup_and_main(monkeypatch: pytest.MonkeyPatch, c
 
         protocol = client
 
-    async def connect(*args, **kwargs):
+    async def connect(*args: object, **kwargs: object) -> Any:
         return Connection()
 
     class Entry:
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        async def search_async(self, **kwargs):
+        async def search_async(self, **kwargs: object) -> Any:
             return [{"namingContexts": ["dc=one", "dc=two"]}]
 
-    monkeypatch.setattr(namingcontexts.ldapconnector, "connectToLDAPEndpointAsync", connect)
-    monkeypatch.setattr(namingcontexts.ldapsyntax, "LDAPEntry", Entry)
+    monkeypatch.setattr(ldapconnector, "connectToLDAPEndpointAsync", connect)
+    monkeypatch.setattr(ldapsyntax, "LDAPEntry", Entry)
     await namingcontexts.lookup("ldap.example.com")
     assert capsys.readouterr().out == "ldap.example.com\tdc=one\nldap.example.com\tdc=two\n"
 
-    seen = []
+    seen: list[str] = []
 
-    async def lookup(server) -> None:
+    async def lookup(server: str) -> None:
         seen.append(server)
 
     monkeypatch.setattr(namingcontexts, "lookup", lookup)
@@ -475,54 +504,60 @@ async def test_namingcontexts_lookup_and_main(monkeypatch: pytest.MonkeyPatch, c
 
 
 @pytest.mark.parametrize(("binddn", "supplied"), [(None, None), ("cn=admin", "secret"), ("cn=admin", None)])
-async def test_rename_main(monkeypatch: pytest.MonkeyPatch, binddn, supplied) -> None:
+async def test_rename_main(
+    monkeypatch: pytest.MonkeyPatch, binddn: str | None, supplied: str | None
+) -> None:
     class Client:
-        binds = []
+        binds: ClassVar[list[tuple[object, ...]]] = []
 
-        async def bind_async(self, *args) -> None:
+        async def bind_async(self, *args: object) -> None:
             self.binds.append(args)
 
     class Entry:
-        destination = None
+        destination: object = None
 
-        def __init__(self, *args, **kwargs) -> None:
+        def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        async def move_async(self, destination) -> None:
+        async def move_async(self, destination: object) -> None:
             self.destination = destination
 
     client = Client()
     FakeCreator.client = client
-    monkeypatch.setattr(rename.ldapconnector, "LDAPClientCreator", FakeCreator)
-    monkeypatch.setattr(rename.ldapsyntax, "LDAPEntry", Entry)
-    monkeypatch.setattr(rename.getpass, "getpass", lambda prompt: "prompted")
+    monkeypatch.setattr(ldapconnector, "LDAPClientCreator", FakeCreator)
+    monkeypatch.setattr(ldapsyntax, "LDAPEntry", Entry)
+    monkeypatch.setattr(getpass, "getpass", lambda prompt: "prompted")
     await rename.main(FakeConfig(), "cn=old", "cn=new", binddn, supplied)
     expected = () if binddn is None else (binddn, supplied or "prompted")
     assert client.binds[-1] == expected
 
 
 @pytest.mark.parametrize("generate", [False, True])
-async def test_passwd_main(monkeypatch: pytest.MonkeyPatch, generate, capsys: pytest.CaptureFixture[str]) -> None:
+async def test_passwd_main(
+    monkeypatch: pytest.MonkeyPatch,
+    generate: bool,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     class Client:
-        async def bind_async(self, *args) -> None:
+        async def bind_async(self, *args: object) -> None:
             self.bind = args
 
-    changed = []
+    changed: list[tuple[object, object]] = []
 
     class Entry:
-        def __init__(self, client, dn) -> None:
+        def __init__(self, client: object, dn: object) -> None:
             self.dn = dn
 
-        async def setPassword_async(self, newPasswd) -> None:
+        async def setPassword_async(self, newPasswd: object) -> None:
             changed.append((self.dn, newPasswd))
 
     client = Client()
     FakeCreator.client = client
-    monkeypatch.setattr(passwd.ldapconnector, "LDAPClientCreator", FakeCreator)
-    monkeypatch.setattr(passwd.ldapsyntax, "LDAPEntry", Entry)
-    monkeypatch.setattr(passwd.getpass, "getpass", lambda prompt: "prompted")
+    monkeypatch.setattr(ldapconnector, "LDAPClientCreator", FakeCreator)
+    monkeypatch.setattr(ldapsyntax, "LDAPEntry", Entry)
+    monkeypatch.setattr(getpass, "getpass", lambda prompt: "prompted")
 
-    async def get_password(dn, generated):
+    async def get_password(dn: str, generated: bool) -> str:
         return "new-password"
 
     monkeypatch.setattr(passwd, "_get_password", get_password)

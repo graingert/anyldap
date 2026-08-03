@@ -14,7 +14,7 @@ from anyldap.protocols.ldap import (
 
 
 async def main(
-    cfg: interfaces.ILDAPConfig,
+    cfg: interfaces.LDAPBaseConfigLike,
     fromDN: str,
     toDN: str,
     binddn: str | None,

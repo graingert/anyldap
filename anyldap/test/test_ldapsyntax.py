@@ -3,6 +3,7 @@ Test cases for anyldap.protocols.ldap.ldapsyntax module.
 """
 
 import re
+from collections.abc import Sequence
 
 import pytest
 
@@ -64,10 +65,13 @@ async def test_async_entry_methods_use_the_ldap_client_interface() -> None:
     assert await entry.move_async("cn=moved,dc=example,dc=com") is entry
     child = await entry.addChild_async("cn=child", {"objectClass": ["person"]})
     assert child.dn.getText() == "cn=child,cn=moved,dc=example,dc=com"
-    assert await entry.setPassword_ExtendedOperation_async("new-secret") is entry
-    assert await entry.setPassword_Samba_async("new-secret", style="sambaSamAccount") is entry
-    assert await entry.setPasswordMaybe_Samba_async("new-secret") is entry
-    assert await entry.setPassword_async("new-secret") is entry
+    assert await entry.setPassword_ExtendedOperation_async(b"new-secret") is entry
+    assert (
+        await entry.setPassword_Samba_async(b"new-secret", style="sambaSamAccount")
+        is entry
+    )
+    assert await entry.setPasswordMaybe_Samba_async(b"new-secret") is entry
+    assert await entry.setPassword_async(b"new-secret") is entry
     context = await entry.namingContext_async()
     assert context.dn.getText() == "dc=example,dc=com"
     assert await entry.fetch_async("cn") is entry
@@ -76,6 +80,7 @@ async def test_async_entry_methods_use_the_ldap_client_interface() -> None:
         filterObject=pureldap.LDAPFilter_present("cn"),
         derefAliases=pureldap.LDAP_DEREF_neverDerefAliases,
     )
+    assert isinstance(results, Sequence)
     assert results[0].dn.getText() == "cn=user,dc=example,dc=com"
     found = await entry.lookup_async("cn=user,dc=example,dc=com")
     assert found.dn.getText() == "cn=user,dc=example,dc=com"
@@ -126,7 +131,9 @@ async def test_password_error_repr_and_non_ready_state() -> None:
 async def test_search_accepts_reference_and_nonfatal_size_limit_responses() -> None:
     client = LDAPClientTestDriver(
         [
-            pureldap.LDAPSearchResultReference(["ldap://example"]),
+            pureldap.LDAPSearchResultReference(
+                [pureldap.LDAPString("ldap://example")]
+            ),
             pureldap.LDAPSearchResultDone(
                 resultCode=ldaperrors.LDAPSizeLimitExceeded.resultCode
             ),
@@ -227,7 +234,7 @@ class TestLDAPEntryTests:
         assert "bValue" in o
         assert "foo" not in o
         assert "" not in o
-        assert None not in o
+        assert None not in o  # type: ignore[operator]
 
         assert "a" in o["objectClass"]
         assert "b" in o["objectClass"]
@@ -692,7 +699,7 @@ class TestLDAPSyntaxAttributesModificationOnWire:
 class TestLDAPSyntaxSearch:
     timeout = 3
 
-    async def _test_search(self, return_controls=False) -> None:
+    async def _test_search(self, return_controls: bool = False) -> None:
         """
         Create a test search.
         Return the response with no handler.
@@ -733,6 +740,7 @@ class TestLDAPSyntaxSearch:
             return_controls=return_controls,
         )
         if return_controls:
+            assert isinstance(val, tuple)
             val = val[0]
         client.assertSent(
             pureldap.LDAPSearchRequest(
@@ -749,6 +757,7 @@ class TestLDAPSyntaxSearch:
                 attributes=["foo", "bar"],
             )
         )
+        assert isinstance(val, Sequence)
         assert len(val) == 2
         assert val[0] == (ldapsyntax.LDAPEntry(
                 client=client,
@@ -817,6 +826,7 @@ class TestLDAPSyntaxSearch:
             return_controls=False,
         )
 
+        assert isinstance(results, Sequence)
         assert len(results) == 1
 
     async def testSearch_defaultAttributes(self) -> None:
@@ -870,6 +880,7 @@ class TestLDAPSyntaxSearch:
                 attributes=[],
             )
         )
+        assert isinstance(val, Sequence)
         assert len(val) == 2
 
         assert val[0] == (ldapsyntax.LDAPEntry(
@@ -935,6 +946,7 @@ class TestLDAPSyntaxSearch:
                 attributes=["1.1"],
             )
         )
+        assert isinstance(val, Sequence)
         assert len(val) == 2
 
         assert val[0] == ldapsyntax.LDAPEntry(client=client, dn="cn=foo,dc=example,dc=com")
@@ -970,9 +982,9 @@ class TestLDAPSyntaxSearch:
             },
         )
 
-        seen = []
+        seen: list[ldapsyntax.LDAPEntryWithClient] = []
 
-        def process(o) -> None:
+        def process(o: ldapsyntax.LDAPEntryWithClient) -> None:
             seen.append(o)
 
 
@@ -1951,7 +1963,8 @@ class TestLDAPSyntaxRDNHandling:
     def testRemovingRDNFails(self) -> None:
         """Removing RDN fails with CannotRemoveRDNError."""
         o = ldapsyntax.LDAPEntry(
-            client=None,
+            # Nothing is sent: the modification is refused before that.
+            client=None,  # type: ignore[arg-type]
             dn="cn=foo,dc=example,dc=com",
             attributes={
                 "objectClass": ["someObjectClass"],
@@ -1967,34 +1980,37 @@ class TestLDAPSyntaxRDNHandling:
             )):
             o["cn"].remove("foo")
 
-        def f() -> None:
+        def delete_attribute() -> None:
             del o["cn"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(
                 "The attribute to be removed, 'cn', "
                 "is the RDN for the object and cannot be removed."
             )):
-            f()
+            delete_attribute()
 
-        def f() -> None:
+
+        def replace_attribute() -> None:
             o["cn"] = ["thud"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(
                 "The attribute to be removed, 'cn', "
                 "is the RDN for the object and cannot be removed."
             )):
-            f()
+            replace_attribute()
+
 
         # TODO maybe this should be ok, it preserves the RDN.
         # For now, disallow it.
-        def f() -> None:
+        def replace_with_rdn() -> None:
             o["cn"] = ["foo"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(
                 "The attribute to be removed, 'cn', "
                 "is the RDN for the object and cannot be removed."
             )):
-            f()
+            replace_with_rdn()
+
 
 
 class TestLDAPSyntaxMove:

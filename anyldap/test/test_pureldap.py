@@ -1,23 +1,36 @@
 """
 Test cases for anyldap.protocols.pureldap module.
 """
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 import pytest
 
 from anyldap.protocols import pureber, pureldap
 
 
-def s(*l):
+def s(*l: int | bytes) -> bytes:
     """Join all members of list to a byte string. Integer members are chr()ed"""
     return b"".join([bytes((e,)) if isinstance(e, int) else e for e in l])
 
 
-def l(s):
+def l(s: bytes) -> list[int]:
     """Split a byte string to ord's of chars."""
     return [[x][0] for x in s]
 
 
+# A class, how to build one, the decoder its wire form needs, and that form.
+KnownValue = tuple[
+    type[Any],
+    Sequence[Any],
+    Mapping[str, Any],
+    pureber.BERDecoderContext | None,
+    Sequence[int | bytes],
+]
+
+
 class TestKnownValues:
-    knownValues = (  # class, args, kwargs, expected_result
+    knownValues: tuple[KnownValue, ...] = (  # class, args, kwargs, expected_result
         (
             pureldap.LDAPModifyRequest,
             [],
@@ -744,9 +757,7 @@ class TestKnownValues:
     def testToLDAP(self) -> None:
         """LDAPClass(...).toWire() should give known result with known input"""
         for klass, args, kwargs, decoder, encoded in self.knownValues:
-            result = klass(*args, **kwargs)
-            result = result.toWire()
-            result = l(result)
+            result = l(klass(*args, **kwargs).toWire())
 
             message = "Class %s(*%r, **%r) doesn't encode properly: " "%r != %r" % (
                 klass.__name__,
@@ -769,6 +780,7 @@ class TestKnownValues:
             assert bytes == len(m)
 
             shouldBe = klass(*args, **kwargs)
+            assert result is not None
             assert (
                 result.toWire() == shouldBe.toWire()
             ), "Class %s(*%s, **%s) doesn't decode properly: " "%s != %s" % (
@@ -790,7 +802,7 @@ class TestKnownValues:
                 m = s(*encoded)[:i]
                 with pytest.raises(pureber.BERExceptionInsufficientData):
                     pureber.berDecodeObject(decoder, m)
-            assert (None, 0) == pureber.berDecodeObject(decoder, "")
+            assert (None, 0) == pureber.berDecodeObject(decoder, b"")
 
 
 class TestEquality:
@@ -937,14 +949,14 @@ class TestEscaping:
         ]
 
         for filt, expected in filters:
-            result = filt.asText()
-            assert expected == result
+            assert isinstance(filt, pureldap.SupportsAsText)
+            assert expected == filt.asText()
 
     def test_custom_escaper(self) -> None:
         chars = "HELLO"
         escaped_chars = "0b10010000b10001010b10011000b10011000b1001111"
 
-        def custom_escaper(s):
+        def custom_escaper(s: str) -> str:
             return "".join(bin(ord(c)) for c in s)
 
         filters = [
@@ -999,8 +1011,8 @@ class TestEscaping:
         ]
 
         for filt, expected in filters:
-            result = filt.asText()
-            assert expected == result
+            assert isinstance(filt, pureldap.SupportsAsText)
+            assert expected == filt.asText()
 
 
 class TestFilterSetEquality:
@@ -1228,7 +1240,11 @@ class TestMessageRepresentation:
                 pureber.BEROctetString(cookie),
             ]
         )
-        controls = [("1.2.840.113556.1.4.319", None, control_value)]
+        # A paged results control carries a BER sequence; this one is never
+        # encoded, only shown, so it is left as the object it renders as.
+        controls: list[pureldap.Control] = [
+            ("1.2.840.113556.1.4.319", None, control_value)  # type: ignore[list-item]
+        ]
         search_request = pureldap.LDAPSearchRequest("cn=foo,ou=baz,dc=example,dc=org")
         ldap_msg = pureldap.LDAPMessage(
             id=1, value=search_request, controls=controls, tag=1
@@ -1397,9 +1413,10 @@ class TestRepresentations:
         """LDAPSearchResultReference.__repr__"""
         assert (repr(
                 pureldap.LDAPSearchResultReference(
+                    # Referrals arrive as LDAPString; these are only repr'd.
                     uris=[
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",
+                        b"ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
+                        b"ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
                     ]
                 )
             )) == ("LDAPSearchResultReference(uris=[b'ldap://example.com/dc=foo,dc=example,dc=com', "
@@ -1407,8 +1424,8 @@ class TestRepresentations:
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        "ldap://example.com/dc=foo,dc=example,dc=com",
-                        "ldap://example.com/dc=foo,dc=example,dc=com",
+                        "ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
+                        "ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
                     ]
                 )
             )) == ("LDAPSearchResultReference(uris=['ldap://example.com/dc=foo,dc=example,dc=com', "
@@ -1419,8 +1436,8 @@ class TestRepresentations:
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",
+                        b"ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
+                        b"ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
                     ],
                     tag=42,
                 )
@@ -1429,8 +1446,8 @@ class TestRepresentations:
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        "ldap://example.com/dc=foo,dc=example,dc=com",
-                        "ldap://example.com/dc=foo,dc=example,dc=com",
+                        "ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
+                        "ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
                     ],
                     tag=42,
                 )
@@ -1910,7 +1927,9 @@ def test_optional_modify_and_password_request_paths() -> None:
     ("matching_rule", "attribute_type", "dn_attributes"),
     [("caseIgnoreMatch", "cn", True), (None, None, None)],
 )
-def test_extensible_match_decodes_real_wire_fields(matching_rule, attribute_type, dn_attributes) -> None:
+def test_extensible_match_decodes_real_wire_fields(
+    matching_rule: str | None, attribute_type: str | None, dn_attributes: bool | None
+) -> None:
     expected = pureldap.LDAPFilter_extensibleMatch(
         matchingRule=matching_rule,
         type=attribute_type,
@@ -2032,7 +2051,7 @@ def test_ldap_bind_response_server_sasl_creds_with_tag_repr() -> None:
     assert repr(sasl_creds) == expected_repr
 
 
-def _filters_for_asText():
+def _filters_for_asText() -> list[pureber.BERBase]:
     """One of each filter that can render itself as text."""
     key = pureldap.LDAPAttributeDescription("cn")
     value = pureldap.LDAPAttributeValue("Alice")
@@ -2068,7 +2087,7 @@ def _filters_for_asText():
 @pytest.mark.parametrize(
     "filt", _filters_for_asText(), ids=lambda f: type(f).__name__
 )
-def test_asText_survives_the_wire(filt) -> None:
+def test_asText_survives_the_wire(filt: pureber.BERBase) -> None:
     """A filter renders the same text whether it was built or decoded.
 
     Decoding leaves every value as the bytes that arrived, so asText used to
@@ -2082,4 +2101,7 @@ def test_asText_survives_the_wire(filt) -> None:
     decoded, used = pureber.berDecodeObject(decoder, encoded)
 
     assert used == len(encoded)
+    assert isinstance(decoded, pureldap.LDAPSearchRequest)
+    assert isinstance(decoded.filter, pureldap.SupportsAsText)
+    assert isinstance(filt, pureldap.SupportsAsText)
     assert decoded.filter.asText() == filt.asText()

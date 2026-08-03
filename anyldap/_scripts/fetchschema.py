@@ -24,7 +24,7 @@ def _printResults(
         print("objectclass", object_class)
 
 
-async def main(cfg: interfaces.ILDAPConfig) -> None:
+async def main(cfg: interfaces.LDAPBaseConfigLike) -> None:
     try:
         base_dn = cfg.getBaseDN()
     except config.MissingBaseDNError as exc:

@@ -12,7 +12,7 @@ def printResults(entry: interfaces.IConnectedLDAPEntry) -> None:
 
 
 async def main(
-    cfg: interfaces.ILDAPConfig, filter_text: str, attributes: Sequence[str]
+    cfg: interfaces.LDAPBaseConfigLike, filter_text: str, attributes: Sequence[str]
 ) -> None:
     try:
         base_dn = cfg.getBaseDN()

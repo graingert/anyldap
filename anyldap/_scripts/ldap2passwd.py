@@ -26,7 +26,7 @@ def _cbSearch(entry: interfaces.IConnectedLDAPEntry) -> None:
     )
 
 
-async def main(cfg: interfaces.ILDAPConfig, filter_text: str | None) -> None:
+async def main(cfg: interfaces.LDAPBaseConfigLike, filter_text: str | None) -> None:
     try:
         base_dn = cfg.getBaseDN()
     except config.MissingBaseDNError as exc:
