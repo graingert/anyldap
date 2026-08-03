@@ -3,11 +3,10 @@ Test cases for anyldap.protocols.ldap.ldapserver module.
 """
 import base64
 import logging
-import types
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import TypedDict
+from unittest import mock
 
-import outcome
 import pytest
 
 from anyldap import delta, entry, inmemory, schema, testutil
@@ -21,18 +20,11 @@ from anyldap.test.util import collected
 pytestmark = pytest.mark.anyio
 
 
-def observeCommits(entry: Any) -> list[outcome.Outcome[Any]]:
-    """Record the outcome of every commit on `entry`, and return the log."""
-    commits: list[outcome.Outcome[Any]] = []
-    bound_commit = entry.commit
+class SearchResult(TypedDict):
+    """One entry a search is expected to return."""
 
-    async def commit(self: Any) -> Any:
-        result = await outcome.acapture(bound_commit)
-        commits.append(result)
-        return result.unwrap()
-
-    entry.commit = types.MethodType(commit, entry)
-    return commits
+    objectName: str
+    attributes: Sequence[tuple[str, Sequence[str | bytes]]]
 
 
 class TestLDAPServerTest:
@@ -154,7 +146,7 @@ class TestLDAPServerTest:
 
     def assertSearchResults(
         self,
-        results: Sequence[dict[str, Any]] | None = None,
+        results: Sequence[SearchResult] | None = None,
         resultCode: int = 0,
     ) -> None:
         """
@@ -904,8 +896,9 @@ class TestLDAPServerTest:
         assert isinstance(message.value, pureldap.LDAPResult)
         assert message.value.resultCode == ldaperrors.LDAPOperationsError.resultCode
 
-    async def test_passwordModify_simple(self) -> None:
-        commits = observeCommits(self.thingie)
+    async def test_passwordModify_simple(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        commit = mock.MagicMock(wraps=self.thingie.commit)
+        monkeypatch.setattr(self.thingie, "commit", commit)
         # first bind to some entry
         self.thingie["userPassword"] = [
             "{SSHA}yVLLj62rFf3kDAbzwEU0zYAVvbWrze8="
@@ -934,12 +927,7 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire()
         )
-        # Already unwrapped once by the observer, so read the recorded value.
-        committed = []
-        for commit in commits:
-            assert isinstance(commit, outcome.Value)
-            committed.append(commit.value)
-        assert committed == [True], "Server never committed data."
+        commit.assert_called_once_with()
         assert self.output == (pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
                     resultCode=ldaperrors.Success.resultCode,
@@ -957,8 +945,11 @@ class TestLDAPServerTest:
             salt = raw[20:]
             assert entry.sshaDigest(b"hushhush", salt) == secret
 
-    async def test_passwordModify_someoneElse(self) -> None:
-        commits = observeCommits(self.thingie)
+    async def test_passwordModify_someoneElse(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        commit = mock.MagicMock(wraps=self.thingie.commit)
+        monkeypatch.setattr(self.thingie, "commit", commit)
         # first bind to some entry
         userPassword = b"{SSHA}yVLLj62rFf3kDAbzwEU0zYAVvbWrze8="  # secret
         self.thingie["userPassword"] = [userPassword]
@@ -991,7 +982,7 @@ class TestLDAPServerTest:
         assert messages[0] == ("User cn=thingie,ou=stuff,dc=example,dc=com "
             "tried to change password of "
             "cn=another,ou=stuff,dc=example,dc=com")
-        assert commits == [], "Server committed data."
+        commit.assert_not_called()
         assert self.output == (pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
                     resultCode=ldaperrors.LDAPInsufficientAccessRights.resultCode,

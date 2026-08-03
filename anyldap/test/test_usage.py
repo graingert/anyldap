@@ -145,12 +145,15 @@ class TestCompleteOptions:
         assert options.parseOptions(["--", "ignored"]) == {}
 
     def test_positional_arguments_are_dispatched(self) -> None:
-        options = HandlerOptions()
         received: list[str] = []
-        # parseOptions looks for this by name; the Options it is mixed into
-        # does not declare one.
-        options.parseArgs = lambda *args: received.extend(args)  # type: ignore[attr-defined]
-        options.parseOptions(["first", "second"])
+
+        class ArgumentOptions(HandlerOptions):
+            """Defining parseArgs is what makes an Options take arguments."""
+
+            def parseArgs(self, *args: str) -> None:
+                received.extend(args)
+
+        ArgumentOptions().parseOptions(["first", "second"])
         assert received == ["first", "second"]
 
     def test_option_errors(self) -> None:

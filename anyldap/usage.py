@@ -3,7 +3,7 @@ Command line argument/options available to various anyldap tools.
 """
 import sys
 from collections.abc import Iterator, Sequence
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import distinguishedname
@@ -15,6 +15,7 @@ OptionValue = Any
 
 __all__ = [
     "Options",
+    "TakesArguments",
     "Options_base",
     "Options_base_optional",
     "Options_bind",
@@ -23,6 +24,17 @@ __all__ = [
     "Options_service_location",
     "UsageError",
 ]
+
+
+@runtime_checkable
+class TakesArguments(Protocol):
+    """An Options that accepts positional arguments.
+
+    Defining parseArgs is what says a tool takes arguments at all; an Options
+    without one rejects them.
+    """
+
+    def parseArgs(self, *args: str) -> None: ...
 
 
 class UsageError(Exception):
@@ -148,10 +160,9 @@ class Options:
 
             index += 1
 
-        parse_args = getattr(self, "parseArgs", None)
-        if parse_args is not None:
+        if isinstance(self, TakesArguments):
             try:
-                parse_args(*positional)
+                self.parseArgs(*positional)
             except TypeError as exc:
                 raise UsageError(f"Invalid arguments: {exc}") from exc
         elif positional and option != "--":

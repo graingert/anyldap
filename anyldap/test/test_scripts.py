@@ -328,7 +328,8 @@ def test_option_argument_parsing(
     options: usage.Options, args: Sequence[str], expected: Mapping[str, object]
 ) -> None:
     # Each script's Options defines its own; the base does not have one.
-    options.parseArgs(*args)  # type: ignore[attr-defined]
+    assert isinstance(options, usage.TakesArguments)
+    options.parseArgs(*args)
     for key, value in expected.items():
         assert options.opts[key] == value
 
