@@ -297,7 +297,7 @@ class EditableLDAPEntry(BaseLDAPEntry):
     def undo(self) -> None:
         raise NotImplementedError()
 
-    async def commit(self) -> bool:
+    async def commit(self) -> object:
         raise NotImplementedError()
 
     async def move(self, newDN: interfaces.AnyDN) -> object:

@@ -216,11 +216,12 @@ class IEditableLDAPEntry(ILDAPEntry):
         Forget all pending changes.
         """
 
-    def commit() -> Awaitable[bool]:
+    def commit() -> Awaitable[object]:
         """
         Send all pending changes to the LDAP server.
 
-        @returns: True (operation succeeded) or False (operation failed).
+        @returns: The backends that hold the tree answer whether it
+        succeeded; the server-backed entry answers with itself.
         """
 
     def move(newDN: AnyDN) -> Awaitable[object]:
@@ -272,16 +273,18 @@ class IConnectedLDAPEntry(ILDAPEntry):
     def search(
         filterText: str | None = None,
         filterObject: BERBase | None = None,
-        attributes: Iterable[str | bytes] = (),
+        attributes: Sequence[str | bytes] | None = (),
         scope: int | None = None,
         derefAliases: int | None = None,
         sizeLimit: int = 0,
         timeLimit: int = 0,
         typesOnly: int = 0,
         callback: Callable[["IConnectedLDAPEntry"], object] | None = None,
-        # A sequence rather than a list: a tree that walks itself hands back
-        # its own kind of entry, and a list of those is not a list of these.
-    ) -> Awaitable[Sequence["IConnectedLDAPEntry"] | None]:
+        # What comes back depends on how it was called -- the results, or
+        # nothing when a callback took them, or the server's response
+        # controls -- so a caller that wants the results says so. The
+        # backends narrow this to what they actually return.
+    ) -> Awaitable[object]:
         """
 
         Perform an LDAP search with this object as the base.

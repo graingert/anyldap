@@ -1,4 +1,4 @@
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, Protocol
 
 from anyldap import delta, interfaces, ldapfilter
@@ -312,7 +312,7 @@ class SearchByTreeWalkingMixin:
         self: Walkable,
         filterText: str | None = None,
         filterObject: pureber.BERBase | None = None,
-        attributes: Iterable[AttributeText] = (),
+        attributes: Sequence[AttributeText] | None = (),
         scope: int | None = None,
         derefAliases: int | None = None,
         sizeLimit: int = 0,

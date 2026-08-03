@@ -28,6 +28,9 @@ from anyldap.protocols.pureber import (
 
 next_ldap_message_id = 1
 
+# A control as callers spell it: type, criticality, value.
+Control = tuple[str | bytes, int | None, str | bytes | None]
+
 
 @runtime_checkable
 class SupportsAsText(Protocol):
@@ -126,7 +129,7 @@ class LDAPMessage(BERSequence):
         id_ = l[0]
         assert isinstance(id_, BERInteger)
         value = l[1]
-        controls: list[tuple[str | bytes, int | None, str | bytes | None]] | None
+        controls: list[Control] | None
         if l[2:]:
             controls = []
             wrapper = l[2]
@@ -150,9 +153,7 @@ class LDAPMessage(BERSequence):
     def __init__(
         self,
         value: BERBase | None = None,
-        controls: Iterable[
-            tuple[str | bytes, int | None, str | bytes | None]
-        ] | None = None,
+        controls: Iterable[Control] | None = None,
         id: int | None = None,
         tag: int | None = None,
     ) -> None:

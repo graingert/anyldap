@@ -1,6 +1,6 @@
 """Find an available uidNumber/gidNumber/other similar number."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 
 from anyldap import interfaces
 from anyldap.protocols import pureldap
@@ -53,7 +53,8 @@ class ldapGuesser:
             ),
             sizeLimit=1,
         )
-        assert results is not None
+        # No callback was given, so the search hands back its results.
+        assert isinstance(results, Sequence)
         return len(results)
 
 
