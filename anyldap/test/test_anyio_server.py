@@ -854,13 +854,15 @@ async def test_proxybase_connection_close_and_quiet_starttls_paths() -> None:
 
 async def test_server_stream_state_guards() -> None:
     server = ldapserver.BaseLDAPServer()
+    # Never reached: there is no connection left to upgrade.
+    context = ssl.create_default_context()
     await server._send_anyio_write(b"data")
     with pytest.raises(ldapserver.LDAPServerConnectionLostException):
-        await server._upgrade_to_tls(None, b"response")  # type: ignore[arg-type]
+        await server._upgrade_to_tls(context, b"response")
     server._anyio_write_lock = anyio.Lock()
     await server._send_anyio_write(b"data")
     with pytest.raises(ldapserver.LDAPServerConnectionLostException):
-        await server._upgrade_to_tls(None, b"response")  # type: ignore[arg-type]
+        await server._upgrade_to_tls(context, b"response")
 
 
 async def test_ldaps_connects_over_tls_from_the_start() -> None:

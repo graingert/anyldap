@@ -299,18 +299,18 @@ def test_ldifdiff_output() -> None:
 def test_ldap2passwd_callback(capsys: pytest.CaptureFixture[str]) -> None:
     entry = {
         "uid": ["alice"],
-        "uidNumber": [1000],
-        "gidNumber": [100],
+        "uidNumber": ["1000"],
+        "gidNumber": ["100"],
         "cn": ["Alice"],
         "homeDirectory": ["/home/alice"],
     }
     # A mapping of the attributes the script reads, which is all it touches.
-    ldap2passwd._cbSearch(entry)  # type: ignore[arg-type]
+    ldap2passwd._cbSearch(entry)
     assert capsys.readouterr().out == "alice:x:1000:100:Alice:/home/alice:\n"
 
 
 def test_search_print_results(capsys: pytest.CaptureFixture[str]) -> None:
-    search.printResults("result")  # type: ignore[arg-type]
+    search.printResults("result")
     assert capsys.readouterr().out == "result"
 
 

@@ -7,7 +7,7 @@ from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapsyntax
 
 
-def _cbSearch(entry: interfaces.IConnectedLDAPEntry) -> None:
+def _cbSearch(entry: interfaces.Attributes) -> None:
     attributes: dict[str, list[str]] = {}
     for attr, vals in entry.items():
         attributes[str(attr)] = [str(val) for val in vals]

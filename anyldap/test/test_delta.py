@@ -4,7 +4,7 @@ Test cases for anyldap.protocols.ldap.delta
 
 import pytest
 
-from anyldap import attributeset, delta, entry, inmemory
+from anyldap import attributeset, delta, entry, inmemory, testutil
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldapsyntax
 
@@ -45,9 +45,11 @@ def test_modify_op_survives_its_own_request() -> None:
 
 class TestModifications:
     def setup_method(self) -> None:
+        self.client = testutil.LDAPClientTestDriver()
         self.foo = ldapsyntax.LDAPEntry(
-            # These modifications are journalled, never sent.
-            None,  # type: ignore[arg-type]
+            # These modifications are journalled, never sent, which the
+            # driver enforces: it has no responses to give.
+            self.client,
             dn="cn=foo,dc=example,dc=com",
             attributes={
                 "objectClass": ["person"],

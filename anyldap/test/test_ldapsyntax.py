@@ -1962,9 +1962,11 @@ class TestLDAPSyntaxFetch:
 class TestLDAPSyntaxRDNHandling:
     def testRemovingRDNFails(self) -> None:
         """Removing RDN fails with CannotRemoveRDNError."""
+        client = LDAPClientTestDriver()
         o = ldapsyntax.LDAPEntry(
-            # Nothing is sent: the modification is refused before that.
-            client=None,  # type: ignore[arg-type]
+            # Nothing is sent: the modification is refused before that, and
+            # the driver has no responses to give if it were.
+            client=client,
             dn="cn=foo,dc=example,dc=com",
             attributes={
                 "objectClass": ["someObjectClass"],
@@ -2011,6 +2013,7 @@ class TestLDAPSyntaxRDNHandling:
             )):
             replace_with_rdn()
 
+        client.assertNothingSent()
 
 
 class TestLDAPSyntaxMove:

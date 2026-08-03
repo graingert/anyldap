@@ -7,7 +7,8 @@ from anyldap import config, interfaces, usage
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapsyntax
 
 
-def printResults(entry: interfaces.IConnectedLDAPEntry) -> None:
+def printResults(entry: object) -> None:
+    """Print an entry however it renders itself."""
     sys.stdout.write(str(entry))
 
 
