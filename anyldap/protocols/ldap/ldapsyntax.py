@@ -879,11 +879,17 @@ LDAPEntry = LDAPEntryWithClient
 
 
 class Autofiller(Protocol):
-    """Something that fills in attributes as an entry is built."""
+    """Something that fills in attributes as an entry is built.
 
-    def start(self, ldapObject: object) -> object: ...
+    It is handed the entry it was added to, both when it starts and for
+    every modification journalled afterwards.
+    """
 
-    def notify(self, ldapObject: object, attributeType: AttributeText) -> object: ...
+    def start(self, ldapObject: "LDAPEntryWithAutoFill") -> object: ...
+
+    def notify(
+        self, ldapObject: "LDAPEntryWithAutoFill", attributeType: AttributeText
+    ) -> object: ...
 
 
 class LDAPEntryWithAutoFill(LDAPEntry):

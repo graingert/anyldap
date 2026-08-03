@@ -11,12 +11,13 @@ import shutil
 import subprocess
 import sys
 import unittest as stdlib_unittest
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from unittest import mock
 
 import anyio
 import pytest
 
-from anyldap import delta, entry, ldiftree
+from anyldap import delta, entry, interfaces, ldiftree
 from anyldap.entry import BaseLDAPEntry
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
 from anyldap.test import util
@@ -25,15 +26,15 @@ from anyldap.test._testing import capture_logs
 pytestmark = pytest.mark.anyio
 
 
-async def writeFile(path, content) -> None:
+async def writeFile(path: str | pathlib.Path, content: bytes) -> None:
     await anyio.Path(path).write_bytes(content)
 
 
-async def _readFile(path):
+async def _readFile(path: str | pathlib.Path) -> bytes:
     return await anyio.Path(path).read_bytes()
 
 
-def _moved(dn):
+def _moved(dn: str) -> BaseLDAPEntry:
     """The entry a `ou=moved` rename is expected to produce."""
     return BaseLDAPEntry(
         dn=dn, attributes={b"objectClass": [b"a", b"b"], b"ou": [b"moved"]}
@@ -53,7 +54,7 @@ skipIfWindows = stdlib_unittest.skipIf(
 
 
 @contextlib.contextmanager
-def randomizedListdir():
+def randomizedListdir() -> Iterator[mock.MagicMock]:
     """Make directory listings come back in a random order.
 
     Patches anyio.Path.iterdir, which is what the tree walks; patching
@@ -63,7 +64,7 @@ def randomizedListdir():
     """
     real_iterdir = anyio.Path.iterdir
 
-    async def randomIterdir(path):
+    async def randomIterdir(path: anyio.Path) -> AsyncIterator[anyio.Path]:
         entries = [item async for item in real_iterdir(path)]
         random.shuffle(entries)
         for item in entries:
@@ -79,20 +80,20 @@ class RestoresModes:
     """Base class that puts back any file modes a test changed."""
 
     @pytest.fixture(autouse=True)
-    def _restore_modes_after_chmod(self):
-        self._restore_modes = []
+    def _restore_modes_after_chmod(self) -> Iterator[None]:
+        self._restore_modes: list[tuple[str | os.PathLike[str], int]] = []
         yield
         for path, mode in reversed(self._restore_modes):
             os.chmod(path, mode)
 
-    async def chmod(self, path, mode) -> None:
+    async def chmod(self, path: str | os.PathLike[str], mode: int) -> None:
         self._restore_modes.append((path, (await anyio.Path(path).stat()).st_mode))
         await anyio.Path(path).chmod(mode)
 
 
 class TestDir2LDIF(RestoresModes):
     @pytest.fixture(autouse=True)
-    async def _tree(self, tmp_path) -> None:
+    async def _tree(self, tmp_path: pathlib.Path) -> None:
         self.tree = str(tmp_path / "tree")
         await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
@@ -162,7 +163,9 @@ objectClass: top
             await ldiftree.get(self.tree, "cn=foo,dc=example,dc=com")
         assert excinfo.value.errno == errno.EACCES
 
-    async def gettingDNRaises(self, dn, exceptionClass) -> None:
+    async def gettingDNRaises(
+        self, dn: str, exceptionClass: type[BaseException]
+    ) -> None:
         with pytest.raises(exceptionClass):
             await ldiftree.get(self.tree, dn)
 
@@ -202,7 +205,7 @@ objectClass: top
 
 class TestLDIF2Dir(RestoresModes):
     @pytest.fixture(autouse=True)
-    async def _tree(self, tmp_path) -> None:
+    async def _tree(self, tmp_path: pathlib.Path) -> None:
         self.tree = str(tmp_path / "tree")
         await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
@@ -291,7 +294,7 @@ cn: create-me
         await ldiftree.put(self.tree, e)
         await self._cb_testDirExists(dirpath)
 
-    async def _cb_testDirExists(self, dirpath) -> None:
+    async def _cb_testDirExists(self, dirpath: str) -> None:
         path = os.path.join(dirpath, "cn=create-me.ldif")
         assert os.path.isfile(path)
         assert await _readFile(path) == (b"""\
@@ -343,7 +346,7 @@ class TestLDIFTreeEntry(RestoresModes):
     # TODO share the actual tests with inmemory and any other
     # implementations of the same interface
     @pytest.fixture(autouse=True)
-    async def _tree(self, tmp_path) -> None:
+    async def _tree(self, tmp_path: pathlib.Path) -> None:
         self.tree = str(tmp_path / "tree")
         await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
@@ -451,11 +454,15 @@ cn: theChild
     async def test_children_oneChild(self) -> None:
         with randomizedListdir() as iterdir:
             children = await self.oneChild.children()
+            assert children is not None
 
         assert iterdir.mock_calls == [mock.call(self.oneChild.path)]
+        assert children is not None
         self._cb_test_children_oneChild(children)
 
-    def _cb_test_children_oneChild(self, children) -> None:
+    def _cb_test_children_oneChild(
+        self, children: Sequence[interfaces.IWalkableLDAPEntry]
+    ) -> None:
         assert len(children) == 1
         got = [e.dn for e in children]
         want = ["cn=theChild,ou=oneChild,dc=example,dc=com"]
@@ -467,11 +474,16 @@ cn: theChild
         """Test that .children() returns a copy of the data so that modifying it does not affect behaviour."""
         with randomizedListdir() as iterdir:
             children1 = await self.oneChild.children()
+            assert children1 is not None
+            assert children1 is not None
             assert len(children1) == 1
 
             children1.pop()
 
-            assert len(await self.oneChild.children()) == 1
+            again = await self.oneChild.children()
+            assert again is not None
+            assert again is not None
+            assert len(again) == 1
 
         assert iterdir.mock_calls == [
             mock.call(self.oneChild.path),
@@ -481,11 +493,14 @@ cn: theChild
     async def test_children_twoChildren(self) -> None:
         with randomizedListdir() as iterdir:
             children = await self.meta.children()
+            assert children is not None
 
         assert iterdir.mock_calls == [mock.call(self.meta.path)]
         self._cb_test_children_twoChildren(children)
 
-    def _cb_test_children_twoChildren(self, children) -> None:
+    def _cb_test_children_twoChildren(
+        self, children: Sequence[interfaces.IWalkableLDAPEntry]
+    ) -> None:
         assert len(children) == 2
         want = [
             "cn=foo,ou=metasyntactic,dc=example,dc=com",
@@ -497,14 +512,18 @@ cn: theChild
         assert got == want
 
     async def test_children_twoChildren_callback(self) -> None:
-        children = []
+        children: list[interfaces.IWalkableLDAPEntry] = []
         with randomizedListdir() as iterdir:
             r = await self.meta.children(callback=children.append)
 
         assert iterdir.mock_calls == [mock.call(self.meta.path)]
         self._cb_test_children_twoChildren_callback(r, children)
 
-    def _cb_test_children_twoChildren_callback(self, r, children) -> None:
+    def _cb_test_children_twoChildren_callback(
+        self,
+        r: object,
+        children: Sequence[interfaces.IWalkableLDAPEntry],
+    ) -> None:
         assert r is None
         assert len(children) == 2
         want = [
@@ -550,9 +569,11 @@ cn: theChild
                 "a": "b",
             },
         )
-        self._cb_test_addChild(await self.empty.children())
+        children = await self.empty.children()
+        assert children is not None
+        self._cb_test_addChild(children)
 
-    def _cb_test_addChild(self, children) -> None:
+    def _cb_test_addChild(self, children: Sequence[interfaces.IWalkableLDAPEntry]) -> None:
         assert len(children) == 1
         got = [e.dn for e in children]
         want = [
@@ -599,13 +620,16 @@ cn: theChild
 
     async def test_subtree_empty(self) -> None:
         with randomizedListdir() as iterdir:
-            assert len(await self.empty.subtree()) == 1
+            entries = await self.empty.subtree()
+            assert entries is not None
+            assert len(entries) == 1
 
         assert iterdir.mock_calls == [mock.call(self.empty.path)]
 
     async def test_subtree_oneChild(self) -> None:
         with randomizedListdir() as iterdir:
             results = await self.oneChild.subtree()
+            assert results is not None
 
         assert iterdir.mock_calls == [
             mock.call(self.oneChild.path),
@@ -613,7 +637,7 @@ cn: theChild
         ]
         self._cb_test_subtree_oneChild(results)
 
-    def _cb_test_subtree_oneChild(self, results) -> None:
+    def _cb_test_subtree_oneChild(self, results: Sequence[interfaces.IWalkableLDAPEntry]) -> None:
         got = results
         want = [
             self.oneChild,
@@ -622,7 +646,7 @@ cn: theChild
         assert got == want
 
     async def test_subtree_oneChild_cb(self) -> None:
-        got = []
+        got: list[interfaces.IWalkableLDAPEntry] = []
         with randomizedListdir() as iterdir:
             r = await self.oneChild.subtree(got.append)
 
@@ -632,7 +656,7 @@ cn: theChild
         ]
         self._cb_test_subtree_oneChild_cb(r, got)
 
-    def _cb_test_subtree_oneChild_cb(self, r, got) -> None:
+    def _cb_test_subtree_oneChild_cb(self, r: object, got: Sequence[interfaces.IWalkableLDAPEntry]) -> None:
         assert r is None
 
         want = [
@@ -644,6 +668,7 @@ cn: theChild
     async def test_subtree_many(self) -> None:
         with randomizedListdir() as iterdir:
             result = await self.example.subtree()
+            assert result is not None
 
         util.assert_permutation(
             iterdir.mock_calls,
@@ -672,7 +697,7 @@ cn: theChild
         util.assert_permutation(expected, result)
 
     async def test_subtree_many_cb(self) -> None:
-        got = []
+        got: list[interfaces.IWalkableLDAPEntry] = []
         with randomizedListdir() as iterdir:
             result = await self.example.subtree(callback=got.append)
 
@@ -796,6 +821,7 @@ objectClass: top
         await ldiftree.put(otherDir, e)
 
         added = await other.lookup("cn=foo,dc=example,dc=com")
+        assert isinstance(added, ldiftree.LDIFTreeEntry)
         assert await self.root.diffTree(other) == [delta.AddOp(added)]
 
     async def test_diffTree_delChild(self, tmp_path: pathlib.Path) -> None:
@@ -804,6 +830,7 @@ objectClass: top
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
+        assert isinstance(otherEmpty, ldiftree.LDIFTreeEntry)
         await otherEmpty.delete()
 
         assert await self.root.diffTree(other) == [delta.DeleteOp(self.empty)]
@@ -814,9 +841,10 @@ objectClass: top
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
+        assert isinstance(otherEmpty, ldiftree.LDIFTreeEntry)
         otherEmpty["foo"] = ["bar"]
         await anyio.to_thread.run_sync(shutil.rmtree, otherDir)
-        cleanups = []
+        cleanups: list[Callable[[], object]] = []
         messages = capture_logs(cleanups, level=logging.ERROR)
         try:
             assert not (await otherEmpty.commit())
@@ -832,6 +860,7 @@ objectClass: top
         other = await ldiftree.LDIFTreeEntry.open(otherDir)
 
         otherEmpty = await other.lookup("ou=empty,dc=example,dc=com")
+        assert isinstance(otherEmpty, ldiftree.LDIFTreeEntry)
         otherEmpty["foo"] = ["bar"]
         await otherEmpty.commit()
 
@@ -843,7 +872,9 @@ objectClass: top
     async def test_move_noChildren_sameSuperior(self) -> None:
         await self.empty.move("ou=moved,dc=example,dc=com")
 
-        assert set(await self.example.children()) == {
+        children = await self.example.children()
+        assert children is not None
+        assert set(children) == {
             self.meta,
             _moved("ou=moved,dc=example,dc=com"),
             self.oneChild,
@@ -853,7 +884,9 @@ objectClass: top
     async def test_move_children_sameSuperior(self) -> None:
         await self.meta.move("ou=moved,dc=example,dc=com")
 
-        assert set(await self.example.children()) == {
+        children = await self.example.children()
+        assert children is not None
+        assert set(children) == {
             _moved("ou=moved,dc=example,dc=com"),
             self.empty,
             self.oneChild,
@@ -863,8 +896,12 @@ objectClass: top
     async def test_move_noChildren_newSuperior(self) -> None:
         await self.empty.move("ou=moved,ou=oneChild,dc=example,dc=com")
 
-        assert set(await self.example.children()) == {self.meta, self.oneChild}
-        assert set(await self.oneChild.children()) == {
+        top = await self.example.children()
+        assert top is not None
+        assert set(top) == {self.meta, self.oneChild}
+        children = await self.oneChild.children()
+        assert children is not None
+        assert set(children) == {
             self.theChild,
             _moved("ou=moved,ou=oneChild,dc=example,dc=com"),
         }
@@ -873,8 +910,12 @@ objectClass: top
     async def test_move_children_newSuperior(self) -> None:
         await self.meta.move("ou=moved,ou=oneChild,dc=example,dc=com")
 
-        assert set(await self.example.children()) == {self.empty, self.oneChild}
-        assert set(await self.oneChild.children()) == {
+        top = await self.example.children()
+        assert top is not None
+        assert set(top) == {self.empty, self.oneChild}
+        children = await self.oneChild.children()
+        assert children is not None
+        assert set(children) == {
             self.theChild,
             _moved("ou=moved,ou=oneChild,dc=example,dc=com"),
         }

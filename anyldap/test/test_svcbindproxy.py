@@ -36,7 +36,7 @@ def _search_request(service_name):
     )
 
 
-async def _create_server(monkeypatch, services, fallback, *responses):
+async def _create_server(monkeypatch: pytest.MonkeyPatch, services, fallback, *responses):
     client = AsyncLDAPClientDriver(*responses)
     patch_client_creator(monkeypatch, proxy, client)
     server = svcbindproxy.ServiceBindingProxy(

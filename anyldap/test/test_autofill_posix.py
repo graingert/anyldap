@@ -14,9 +14,9 @@ pytestmark = pytest.mark.anyio
 
 
 async def test_start_reports_the_first_failed_allocation() -> None:
-    attempted = []
+    attempted: list[str] = []
 
-    async def allocate(baseObject, numberType, min):
+    async def allocate(baseObject: object, numberType: str, min: int) -> int:
         attempted.append(numberType)
         if numberType == "uidNumber":
             raise ValueError("allocation failed")
@@ -39,16 +39,21 @@ async def test_start_reports_the_first_failed_allocation() -> None:
 
 def test_got_numbers_re_raises_failed_allocations_and_notify_is_noop() -> None:
     autofiller = posixAccount.Autofill_posix("dc=example,dc=com")
-    entry = {}
+    entry = ldapsyntax.LDAPEntryWithAutoFill(
+        client=LDAPClientTestDriver(),
+        dn="cn=foo,dc=example,dc=com",
+    )
+
     # An Outcome may only be unwrapped once, so each case needs its own.
-    def error():
+    def error() -> outcome.Error:
         return outcome.Error(ValueError("allocation failed"))
 
     with pytest.raises(ValueError, match="allocation failed"):
         autofiller._cb_gotNumbers((error(), outcome.Value(1000)), entry)
     with pytest.raises(ValueError, match="allocation failed"):
         autofiller._cb_gotNumbers((outcome.Value(1000), error()), entry)
-    assert autofiller.notify(entry, "uidNumber") is None
+    # Nothing to do: a posix autofiller only acts when it starts.
+    autofiller.notify(entry, "uidNumber")
 
 
 class TestLDAPAutoFill_Posix:

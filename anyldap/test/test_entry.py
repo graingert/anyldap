@@ -35,13 +35,12 @@ class TestBaseLDAPEntry:
         The operations a backend has to reach out to do are awaited.
         """
         value = entry.EditableLDAPEntry(dn="dc=foo")
-        for operation, args in [
-            (value.commit, ()),
-            (value.move, ("dc=bar",)),
-            (value.delete, ()),
-        ]:
-            with pytest.raises(NotImplementedError):
-                await operation(*args)
+        with pytest.raises(NotImplementedError):
+            await value.commit()
+        with pytest.raises(NotImplementedError):
+            await value.move("dc=bar")
+        with pytest.raises(NotImplementedError):
+            await value.delete()
 
     def testEqualitySameType(self) -> None:
         """

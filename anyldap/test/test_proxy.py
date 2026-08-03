@@ -197,7 +197,7 @@ async def test_proxy_module_is_not_a_legacy_entrypoint() -> None:
     assert "AnyIO server entrypoints" in result.stderr
 
 
-async def _create_server(monkeypatch, *responses):
+async def _create_server(monkeypatch: pytest.MonkeyPatch, *responses):
     client = AsyncLDAPClientDriver(*responses)
     patch_client_creator(monkeypatch, proxy, client)
     server = proxy.Proxy(config.LDAPConfig(serviceLocationOverrides={}))

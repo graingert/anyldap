@@ -1,4 +1,7 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from typing import TypeVar
+
+_T = TypeVar("_T")
 
 
 class FailTest(AssertionError):
@@ -20,3 +23,13 @@ def assert_permutation(first: Iterable[object], second: Iterable[object]) -> Non
         remaining.remove(item)
     if remaining:
         raise FailTest(f"{left!r} is not a permutation of {right!r}")
+
+
+def collected(result: Sequence[_T] | None) -> Sequence[_T]:
+    """What walking a tree hands back when it was given no callback.
+
+    children() and subtree() answer with the entries, or with nothing when a
+    callback took them one at a time.
+    """
+    assert result is not None
+    return result

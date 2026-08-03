@@ -5,10 +5,12 @@ from io import BytesIO
 
 import pytest
 
-from anyldap import delta, inmemory
+from anyldap import delta, inmemory, interfaces
+from anyldap import entry as entrymod
 from anyldap.protocols.ldap import distinguishedname, ldaperrors
 from anyldap.runtime import ConnectionDone, Failure
 from anyldap.test import util
+from anyldap.test.util import collected
 
 pytestmark = pytest.mark.anyio
 
@@ -93,13 +95,12 @@ class TestInMemoryDatabase:
         )
 
     async def test_children_empty(self) -> None:
-        _result = await self.empty.children()
-        util.assert_permutation(_result, [])
+        util.assert_permutation(collected(await self.empty.children()), [])
 
     async def test_children_oneChild(self) -> None:
 
 
-        children = await self.oneChild.children()
+        children = collected(await self.oneChild.children())
         assert len(children) == 1
         got = [e.dn for e in children]
         want = [
@@ -113,17 +114,17 @@ class TestInMemoryDatabase:
 
     async def test_children_repeat(self) -> None:
         """Test that .children() returns a copy of the data so that modifying it does not affect behaviour."""
-        children1 = await self.oneChild.children()
+        children1 = list(collected(await self.oneChild.children()))
         assert len(children1) == 1
 
         children1.pop()
 
-        assert len(await self.oneChild.children()) == 1
+        assert len(collected(await self.oneChild.children())) == 1
 
     async def test_children_twoChildren(self) -> None:
 
 
-        children = await self.meta.children()
+        children = collected(await self.meta.children())
         assert len(children) == 2
         want = [
             distinguishedname.DistinguishedName(
@@ -146,7 +147,7 @@ class TestInMemoryDatabase:
         )
 
 
-        children = await self.empty.children()
+        children = collected(await self.empty.children())
         assert len(children) == 1
         got = [e.dn for e in children]
         want = [
@@ -183,18 +184,18 @@ class TestInMemoryDatabase:
     async def test_subtree_empty(self) -> None:
 
 
-        entries = await self.empty.subtree()
+        entries = collected(await self.empty.subtree())
         assert len(entries) == 1
 
     async def test_subtree_oneChild(self) -> None:
-        _result = await self.oneChild.subtree()
+        _result = collected(await self.oneChild.subtree())
         util.assert_permutation(_result, [
                     self.oneChild,
                     self.theChild,
                 ])
 
     async def test_subtree_oneChild_cb(self) -> None:
-        got = []
+        got: list[interfaces.IWalkableLDAPEntry] = []
         assert await self.oneChild.subtree(got.append) is None
         util.assert_permutation(
             got,
@@ -207,7 +208,7 @@ class TestInMemoryDatabase:
     async def test_subtree_many(self) -> None:
 
 
-        results = await self.root.subtree()
+        results = collected(await self.root.subtree())
         got = results
         want = [
             self.root,
@@ -221,7 +222,7 @@ class TestInMemoryDatabase:
         util.assert_permutation(got, want)
 
     async def test_subtree_many_cb(self) -> None:
-        got = []
+        got: list[interfaces.IWalkableLDAPEntry] = []
 
 
         r = await self.root.subtree(callback=got.append)
@@ -292,14 +293,12 @@ class TestInMemoryDatabase:
     async def test_delete(self) -> None:
         _result = await self.foo.delete()
         assert _result == self.foo
-        _result = await self.meta.children()
-        util.assert_permutation(_result, [self.bar])
+        util.assert_permutation(collected(await self.meta.children()), [self.bar])
 
     async def test_deleteChild(self) -> None:
         _result = await self.meta.deleteChild("cn=bar")
         assert _result == self.bar
-        _result = await self.meta.children()
-        util.assert_permutation(_result, [self.foo])
+        util.assert_permutation(collected(await self.meta.children()), [self.foo])
 
     async def test_deleteChild_NonExisting(self) -> None:
 
@@ -319,7 +318,7 @@ class TestInMemoryDatabase:
             await self.foo.bind(b"s4krit")
 
     async def testSearch_withCallback(self) -> None:
-        got = []
+        got: list[interfaces.IWalkableLDAPEntry] = []
 
 
         r = await self.root.search(filterText="(|(cn=foo)(cn=bar))", callback=got.append)
@@ -333,7 +332,7 @@ class TestInMemoryDatabase:
 
     async def testSearch_withoutCallback(self) -> None:
         _result = await self.root.search(filterText="(|(cn=foo)(cn=bar))")
-        util.assert_permutation(_result, [
+        util.assert_permutation(collected(_result), [
                     self.bar,
                     self.foo,
                 ])
@@ -342,8 +341,7 @@ class TestInMemoryDatabase:
 
 
         _result = await self.empty.move("ou=moved,dc=example,dc=com")
-        _result = await self.root.children()
-        util.assert_permutation(_result, [
+        util.assert_permutation(collected(await self.root.children()), [
                     self.meta,
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         dn="ou=moved,dc=example,dc=com",
@@ -359,8 +357,7 @@ class TestInMemoryDatabase:
 
 
         _result = await self.meta.move("ou=moved,dc=example,dc=com")
-        _result = await self.root.children()
-        util.assert_permutation(_result, [
+        util.assert_permutation(collected(await self.root.children()), [
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         dn="ou=moved,dc=example,dc=com",
                         attributes={
@@ -378,13 +375,11 @@ class TestInMemoryDatabase:
 
 
         _result = await self.empty.move("ou=moved,ou=oneChild,dc=example,dc=com")
-        _result = await self.root.children()
-        util.assert_permutation(_result, [
+        util.assert_permutation(collected(await self.root.children()), [
                     self.meta,
                     self.oneChild,
                 ])
-        _result = await self.oneChild.children()
-        util.assert_permutation(_result, [
+        util.assert_permutation(collected(await self.oneChild.children()), [
                     self.theChild,
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         dn="ou=moved,ou=oneChild,dc=example,dc=com",
@@ -401,13 +396,11 @@ class TestInMemoryDatabase:
 
 
         _result = await self.meta.move("ou=moved,ou=oneChild,dc=example,dc=com")
-        _result = await self.root.children()
-        util.assert_permutation(_result, [
+        util.assert_permutation(collected(await self.root.children()), [
                     self.empty,
                     self.oneChild,
                 ])
-        _result = await self.oneChild.children()
-        util.assert_permutation(_result, [
+        util.assert_permutation(collected(await self.oneChild.children()), [
                     self.theChild,
                     inmemory.ReadOnlyInMemoryLDAPEntry(
                         dn="ou=moved,ou=oneChild,dc=example,dc=com",
@@ -453,38 +446,44 @@ cn: foo
 
 """
 
-    async def _load(self, protocol, data):
+    async def _load(
+        self, protocol: inmemory.InMemoryLDIFProtocol, data: bytes
+    ) -> inmemory.ReadOnlyInMemoryLDAPEntry:
         protocol.dataReceived(data)
         protocol.connectionLost(Failure(ConnectionDone()))
         return await protocol.completed()
 
     async def test_lookupFailed_can_skip_the_entry(self) -> None:
-        skipped = []
+        skipped: list[str] = []
 
         class SkipMissingParents(inmemory.InMemoryLDIFProtocol):
-            def lookupFailed(self, reason, entry) -> None:
+            def lookupFailed(
+                self, reason: Failure, entry: entrymod.BaseLDAPEntry
+            ) -> None:
                 skipped.append(entry.dn.getText())
 
         db = await self._load(SkipMissingParents(), self.orphan)
 
         assert skipped == ["cn=foo,ou=nonexisting,dc=example,dc=com"]
-        assert await db.children() == []
+        assert collected(await db.children()) == []
 
     async def test_addFailed_aborts_by_default(self) -> None:
         with pytest.raises(ldaperrors.LDAPEntryAlreadyExists):
             await self._load(inmemory.InMemoryLDIFProtocol(), self.duplicate)
 
     async def test_addFailed_can_skip_the_entry(self) -> None:
-        skipped = []
+        skipped: list[str] = []
 
         class SkipDuplicates(inmemory.InMemoryLDIFProtocol):
-            def addFailed(self, reason, entry) -> None:
+            def addFailed(
+                self, reason: Failure, entry: entrymod.BaseLDAPEntry
+            ) -> None:
                 skipped.append(entry.dn.getText())
 
         db = await self._load(SkipDuplicates(), self.duplicate)
 
         assert skipped == ["cn=foo,dc=example,dc=com"]
-        assert len(await db.children()) == 1
+        assert len(collected(await db.children())) == 1
 
 
 class TestFromLDIF:
@@ -502,7 +501,7 @@ bValue: c
         )
         db = await inmemory.fromLDIFFile(ldif)
         assert db.dn == distinguishedname.DistinguishedName("cn=foo,dc=example,dc=com")
-        assert await db.children() == []
+        assert collected(await db.children()) == []
 
     async def test_two(self) -> None:
         ldif = BytesIO(
@@ -520,7 +519,7 @@ cn: foo
         db = await inmemory.fromLDIFFile(ldif)
         assert db.dn == distinguishedname.DistinguishedName("dc=example,dc=com")
 
-        children = await db.subtree()
+        children = collected(await db.subtree())
         assert len(children) == 2
         util.assert_permutation(
             [e.dn for e in children],
