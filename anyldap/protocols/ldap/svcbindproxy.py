@@ -2,6 +2,7 @@ import datetime
 from collections.abc import Awaitable, Iterable, Sequence
 from typing import Protocol
 
+from anyldap import interfaces
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import (
     ldapclient,
@@ -56,13 +57,14 @@ class ServiceBindingProxy(proxy.Proxy):
 
     def __init__(
         self,
+        config: interfaces.ILDAPConfig,
         services: Iterable[str] | None = None,
         fallback: bool | None = None,
-        *a: object,
-        **kw: object,
     ) -> None:
         """
         Initialize the object.
+
+        @param config: The configuration.
 
         @param services: List of service names to try to bind against.
 
@@ -71,7 +73,7 @@ class ServiceBindingProxy(proxy.Proxy):
         the normal LDAP bind mechanism.
         """
 
-        proxy.Proxy.__init__(self, *a, **kw)  # type: ignore[arg-type]
+        proxy.Proxy.__init__(self, config)
         if services is not None:
             self.services = list(services)
         if fallback is not None:
