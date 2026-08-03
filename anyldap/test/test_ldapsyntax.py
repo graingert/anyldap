@@ -692,7 +692,7 @@ class TestLDAPSyntaxAttributesModificationOnWire:
 class TestLDAPSyntaxSearch:
     timeout = 3
 
-    async def _test_search(self, return_controls=False):
+    async def _test_search(self, return_controls=False) -> None:
         """
         Create a test search.
         Return the response with no handler.
@@ -972,7 +972,7 @@ class TestLDAPSyntaxSearch:
 
         seen = []
 
-        def process(o):
+        def process(o) -> None:
             seen.append(o)
 
 
@@ -1967,7 +1967,7 @@ class TestLDAPSyntaxRDNHandling:
             )):
             o["cn"].remove("foo")
 
-        def f():
+        def f() -> None:
             del o["cn"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(
@@ -1976,7 +1976,7 @@ class TestLDAPSyntaxRDNHandling:
             )):
             f()
 
-        def f():
+        def f() -> None:
             o["cn"] = ["thud"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(
@@ -1987,7 +1987,7 @@ class TestLDAPSyntaxRDNHandling:
 
         # TODO maybe this should be ok, it preserves the RDN.
         # For now, disallow it.
-        def f():
+        def f() -> None:
             o["cn"] = ["foo"]
 
         with pytest.raises(ldapsyntax.CannotRemoveRDNError, match=re.escape(

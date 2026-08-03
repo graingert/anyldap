@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from anyldap import interfaces, schema
 from anyldap._encoder import to_bytes
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldapclient, ldaperrors, ldapsyntax
+from anyldap.protocols.ldap import ldaperrors, ldapsyntax
 
 
 def _onlyResult(
@@ -17,7 +17,7 @@ def _onlyResult(
 
 
 async def _fetchCb(
-    subschemaSubentry: interfaces.AnyDN, client: ldapclient.LDAPClient
+    subschemaSubentry: interfaces.AnyDN, client: ldapsyntax.LDAPSender
 ) -> tuple[
     list[schema.AttributeTypeDescription], list[schema.ObjectClassDescription]
 ]:
@@ -43,7 +43,7 @@ async def _fetchCb(
 
 
 async def fetch(
-    client: ldapclient.LDAPClient, baseObject: interfaces.AnyDN
+    client: ldapsyntax.LDAPSender, baseObject: interfaces.AnyDN
 ) -> tuple[
     list[schema.AttributeTypeDescription], list[schema.ObjectClassDescription]
 ]:

@@ -10,7 +10,7 @@ import pytest
 from anyldap import config
 
 
-def writeFile(path, content):
+def writeFile(path, content) -> None:
     with open(path, "wb") as f:
         f.write(content)
 

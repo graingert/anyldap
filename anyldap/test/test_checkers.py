@@ -37,24 +37,24 @@ class FakeConfig:
 class FakeEntry:
     dn = "uid=alice,dc=example,dc=com"
 
-    def __init__(self, bind_error=None):
-        async def bind(dn, password):
+    def __init__(self, bind_error=None) -> None:
+        async def bind(dn, password) -> None:
             if bind_error:
                 raise bind_error
 
         self.client = SimpleNamespace(bind_async=bind)
 
 
-def install_search(monkeypatch, results):
+def install_search(monkeypatch, results) -> None:
     class Creator:
-        def __init__(self, *args):
+        def __init__(self, *args) -> None:
             pass
 
         async def connectAsync(self, *args, **kwargs):
             return object()
 
     class Entry:
-        def __init__(self, *args):
+        def __init__(self, *args) -> None:
             pass
 
         async def search_async(self, **kwargs):

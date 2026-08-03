@@ -208,7 +208,7 @@ async def test_maybe_fallback_results() -> None:
     class FallbackProxy(svcbindproxy.ServiceBindingProxy):
         forwarded = None
 
-        async def handleUnknown(self, request, controls, reply):
+        async def handleUnknown(self, request, controls, reply) -> None:
             self.forwarded = (request, controls, reply)
 
     fallback = FallbackProxy(
@@ -221,7 +221,7 @@ async def test_maybe_fallback_results() -> None:
 
 
 class ServiceEntry:
-    def __init__(self, bind_result=None):
+    def __init__(self, bind_result=None) -> None:
         self.bind_result = bind_result
 
     async def bind_async(self, password):
@@ -231,7 +231,7 @@ class ServiceEntry:
 
 
 class SearchBase:
-    def __init__(self, results):
+    def __init__(self, results) -> None:
         self.results = list(results)
         self.filters = []
 

@@ -56,7 +56,7 @@ async def test_async_client_driver_extended_and_no_response_paths() -> None:
 async def test_async_client_driver_extended_handler_error() -> None:
     driver = AsyncLDAPClientDriver([pureldap.LDAPBindResponse(resultCode=0)])
 
-    def broken(*args):
+    def broken(*args) -> None:
         raise RuntimeError("handler failed")
 
     with pytest.raises(RuntimeError, match="handler failed"):

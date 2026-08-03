@@ -37,7 +37,7 @@ async def test_result_slot_replays_an_exception() -> None:
 async def test_result_slot_waits_for_a_late_producer() -> None:
     slot = ResultSlot()
 
-    async def produce():
+    async def produce() -> None:
         slot.set_value("late")
 
     async with anyio.create_task_group() as task_group:
@@ -67,7 +67,7 @@ async def test_protocol_default_hooks() -> None:
 
 async def test_failure_handles_broken_string_and_type_matching() -> None:
     class BrokenStringError(Exception):
-        def __str__(self):
+        def __str__(self) -> None:
             raise RuntimeError("cannot stringify")
 
     error = BrokenStringError("broken")

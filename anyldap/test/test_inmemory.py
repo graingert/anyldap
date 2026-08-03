@@ -462,7 +462,7 @@ cn: foo
         skipped = []
 
         class SkipMissingParents(inmemory.InMemoryLDIFProtocol):
-            def lookupFailed(self, reason, entry):
+            def lookupFailed(self, reason, entry) -> None:
                 skipped.append(entry.dn.getText())
 
         db = await self._load(SkipMissingParents(), self.orphan)
@@ -478,7 +478,7 @@ cn: foo
         skipped = []
 
         class SkipDuplicates(inmemory.InMemoryLDIFProtocol):
-            def addFailed(self, reason, entry):
+            def addFailed(self, reason, entry) -> None:
                 skipped.append(entry.dn.getText())
 
         db = await self._load(SkipDuplicates(), self.duplicate)

@@ -1,7 +1,7 @@
 """Pythonic API for LDAP operations."""
 import functools
 from collections.abc import Callable, Iterable, Sequence
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 import outcome
 from zope.interface import implementer
@@ -14,10 +14,26 @@ from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldif
 from anyldap.runtime import Failure
 from anyldap.samba import smbpassword
 
-if TYPE_CHECKING:
-    from anyldap.protocols.ldap.ldapclient import LDAPClient
-
 AttributeText = str | bytes
+
+
+class LDAPSender(Protocol):
+    """What an entry needs of its client: somewhere to send messages.
+
+    An entry does not care which client it has, only that requests go out
+    and answers come back, which is what lets a test drive one.
+    """
+
+    async def send(self, op: pureldap.LDAPProtocolRequest) -> object: ...
+
+    async def send_multiResponse_ex(
+        self,
+        op: pureldap.LDAPProtocolRequest,
+        controls: Iterable[pureldap.Control] | None,
+        handler: Callable[..., bool] | None,
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
 
 
 class PasswordSetAggregateError(Exception):
@@ -153,7 +169,7 @@ class LDAPEntryWithClient(entry.EditableLDAPEntry):
 
     def __init__(
         self,
-        client: "LDAPClient",
+        client: LDAPSender,
         dn: interfaces.AnyDN,
         attributes: interfaces.Attributes = {},
         complete: int = 0,
@@ -873,7 +889,7 @@ class Autofiller(Protocol):
 class LDAPEntryWithAutoFill(LDAPEntry):
     def __init__(
         self,
-        client: "LDAPClient",
+        client: LDAPSender,
         dn: interfaces.AnyDN,
         attributes: interfaces.Attributes = {},
         complete: int = 0,

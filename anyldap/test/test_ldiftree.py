@@ -25,7 +25,7 @@ from anyldap.test._testing import capture_logs
 pytestmark = pytest.mark.anyio
 
 
-async def writeFile(path, content):
+async def writeFile(path, content) -> None:
     await anyio.Path(path).write_bytes(content)
 
 
@@ -85,14 +85,14 @@ class RestoresModes:
         for path, mode in reversed(self._restore_modes):
             os.chmod(path, mode)
 
-    async def chmod(self, path, mode):
+    async def chmod(self, path, mode) -> None:
         self._restore_modes.append((path, (await anyio.Path(path).stat()).st_mode))
         await anyio.Path(path).chmod(mode)
 
 
 class TestDir2LDIF(RestoresModes):
     @pytest.fixture(autouse=True)
-    async def _tree(self, tmp_path):
+    async def _tree(self, tmp_path) -> None:
         self.tree = str(tmp_path / "tree")
         await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
@@ -162,7 +162,7 @@ objectClass: top
             await ldiftree.get(self.tree, "cn=foo,dc=example,dc=com")
         assert excinfo.value.errno == errno.EACCES
 
-    async def gettingDNRaises(self, dn, exceptionClass):
+    async def gettingDNRaises(self, dn, exceptionClass) -> None:
         with pytest.raises(exceptionClass):
             await ldiftree.get(self.tree, dn)
 
@@ -202,7 +202,7 @@ objectClass: top
 
 class TestLDIF2Dir(RestoresModes):
     @pytest.fixture(autouse=True)
-    async def _tree(self, tmp_path):
+    async def _tree(self, tmp_path) -> None:
         self.tree = str(tmp_path / "tree")
         await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
@@ -239,7 +239,7 @@ objectClass: organizationalUnit
         await ldiftree.put(self.tree, e)
         await self._cb_testSimpleWrite()
 
-    async def _cb_testSimpleWrite(self):
+    async def _cb_testSimpleWrite(self) -> None:
         path = os.path.join(self.tree, "dc=com.dir", "dc=example.dir", "cn=foo.ldif")
         assert os.path.isfile(path)
         assert await _readFile(path) == (b"""\
@@ -260,7 +260,7 @@ cn: foo
         await ldiftree.put(self.tree, e)
         await self._cb_testDirCreation()
 
-    async def _cb_testDirCreation(self):
+    async def _cb_testDirCreation(self) -> None:
         path = os.path.join(
             self.tree,
             "dc=com.dir",
@@ -291,7 +291,7 @@ cn: create-me
         await ldiftree.put(self.tree, e)
         await self._cb_testDirExists(dirpath)
 
-    async def _cb_testDirExists(self, dirpath):
+    async def _cb_testDirExists(self, dirpath) -> None:
         path = os.path.join(dirpath, "cn=create-me.ldif")
         assert os.path.isfile(path)
         assert await _readFile(path) == (b"""\
@@ -324,7 +324,7 @@ cn: create-me
         await ldiftree.put(self.tree, e)
         await self._cb_testAddTopLevel()
 
-    async def _cb_testAddTopLevel(self):
+    async def _cb_testAddTopLevel(self) -> None:
         path = os.path.join(self.tree, "dc=org.ldif")
         assert os.path.isfile(path)
         assert await _readFile(path) == (b"""\
@@ -343,7 +343,7 @@ class TestLDIFTreeEntry(RestoresModes):
     # TODO share the actual tests with inmemory and any other
     # implementations of the same interface
     @pytest.fixture(autouse=True)
-    async def _tree(self, tmp_path):
+    async def _tree(self, tmp_path) -> None:
         self.tree = str(tmp_path / "tree")
         await anyio.Path(self.tree).mkdir()
         com = os.path.join(self.tree, "dc=com.dir")
@@ -455,7 +455,7 @@ cn: theChild
         assert iterdir.mock_calls == [mock.call(self.oneChild.path)]
         self._cb_test_children_oneChild(children)
 
-    def _cb_test_children_oneChild(self, children):
+    def _cb_test_children_oneChild(self, children) -> None:
         assert len(children) == 1
         got = [e.dn for e in children]
         want = ["cn=theChild,ou=oneChild,dc=example,dc=com"]
@@ -485,7 +485,7 @@ cn: theChild
         assert iterdir.mock_calls == [mock.call(self.meta.path)]
         self._cb_test_children_twoChildren(children)
 
-    def _cb_test_children_twoChildren(self, children):
+    def _cb_test_children_twoChildren(self, children) -> None:
         assert len(children) == 2
         want = [
             "cn=foo,ou=metasyntactic,dc=example,dc=com",
@@ -504,7 +504,7 @@ cn: theChild
         assert iterdir.mock_calls == [mock.call(self.meta.path)]
         self._cb_test_children_twoChildren_callback(r, children)
 
-    def _cb_test_children_twoChildren_callback(self, r, children):
+    def _cb_test_children_twoChildren_callback(self, r, children) -> None:
         assert r is None
         assert len(children) == 2
         want = [
@@ -552,7 +552,7 @@ cn: theChild
         )
         self._cb_test_addChild(await self.empty.children())
 
-    def _cb_test_addChild(self, children):
+    def _cb_test_addChild(self, children) -> None:
         assert len(children) == 1
         got = [e.dn for e in children]
         want = [
@@ -613,7 +613,7 @@ cn: theChild
         ]
         self._cb_test_subtree_oneChild(results)
 
-    def _cb_test_subtree_oneChild(self, results):
+    def _cb_test_subtree_oneChild(self, results) -> None:
         got = results
         want = [
             self.oneChild,
@@ -632,7 +632,7 @@ cn: theChild
         ]
         self._cb_test_subtree_oneChild_cb(r, got)
 
-    def _cb_test_subtree_oneChild_cb(self, r, got):
+    def _cb_test_subtree_oneChild_cb(self, r, got) -> None:
         assert r is None
 
         want = [

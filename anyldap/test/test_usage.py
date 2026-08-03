@@ -82,10 +82,10 @@ class CompleteOptions(
     optFlags = (("verbose", "v", "verbose output"),)
     optParameters = (("custom", "c", "default", "custom value"),)
 
-    def opt_custom_handler(self, value):
+    def opt_custom_handler(self, value) -> None:
         self.opts["handled"] = value
 
-    def opt_toggle(self, value):
+    def opt_toggle(self, value) -> None:
         self.opts["toggled"] = value
 
 
@@ -93,10 +93,10 @@ class HandlerOptions(Options):
     optFlags = (("verbose", "v", "verbose output"),)
     optParameters = (("custom", "c", None, "custom value"),)
 
-    def opt_verbose(self):
+    def opt_verbose(self) -> None:
         self.opts["handled-flag"] = True
 
-    def opt_custom(self, value):
+    def opt_custom(self, value) -> None:
         self.opts["handled-parameter"] = value
 
 

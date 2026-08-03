@@ -10,11 +10,11 @@ from anyldap.protocols.ldap import ldifdelta
 
 
 class LDIFDeltaDriver(ldifdelta.LDIFDelta):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.listOfCompleted = []
 
-    def gotEntry(self, obj):
+    def gotEntry(self, obj) -> None:
         self.listOfCompleted.append(obj)
 
 

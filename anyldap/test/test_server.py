@@ -95,7 +95,7 @@ class TestLDAPServerTest:
         self.server = server
         self.output = b""
 
-    async def _send(self, wire_data):
+    async def _send(self, wire_data) -> None:
         self.output += await testutil.exchange_async(self.server, wire_data)
 
     def _makeResultList(self, s):
@@ -130,7 +130,7 @@ class TestLDAPServerTest:
         filter=None,
         attributes=None,
         tag=None,
-    ):
+    ) -> None:
         """Shortcut for sending LDAPSearchRequest to the test server"""
         await self._send(
             pureldap.LDAPMessage(
@@ -149,7 +149,7 @@ class TestLDAPServerTest:
             ).toWire()
         )
 
-    def assertSearchResults(self, results=None, resultCode=0):
+    def assertSearchResults(self, results=None, resultCode=0) -> None:
         """
         Shortcut for checking results returned by test server on LDAPSearchRequest.
         Results must be prepared as a list of dictionaries with 'objectName' and 'attributes' keys
@@ -808,14 +808,14 @@ class TestLDAPServerTest:
                 id=2,
             ).toWire())
 
-    async def _send_raw_password_modify(self, *values):
+    async def _send_raw_password_modify(self, *values) -> None:
         request = pureldap.LDAPExtendedRequest(
             requestName=pureldap.LDAPPasswordModifyRequest.oid,
             requestValue=pureber.BERSequence(values).toWire(),
         )
         await self._send(pureldap.LDAPMessage(request, id=2).toWire())
 
-    def _assert_password_modify_protocol_error(self):
+    def _assert_password_modify_protocol_error(self) -> None:
         message, used = pureber.berDecodeObject(
             self.server.berdecoder, self.output
         )
@@ -852,7 +852,7 @@ class TestLDAPServerTest:
         await self._send(pureldap.LDAPMessage(request, id=2).toWire())
         self._assert_password_modify_protocol_error()
 
-    async def _bind_thingie_for_password_change(self):
+    async def _bind_thingie_for_password_change(self) -> None:
         self.thingie["userPassword"] = [
             "{SSHA}yVLLj62rFf3kDAbzwEU0zYAVvbWrze8="
         ]

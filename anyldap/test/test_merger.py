@@ -48,7 +48,7 @@ async def test_waiting_request_runs_when_real_client_connects() -> None:
         assert await server._whenConnected(lambda value: value, "connected") == "connected"
 
 
-async def _connect_later(server, client):
+async def _connect_later(server, client) -> None:
     await anyio.lowlevel.checkpoint()
     server._cbConnectionMade(client)
 

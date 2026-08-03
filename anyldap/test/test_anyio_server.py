@@ -26,19 +26,19 @@ pytestmark = pytest.mark.anyio
 
 
 class MemoryByteStream:
-    def __init__(self):
+    def __init__(self) -> None:
         self._incoming_send, self._incoming_recv = anyio.create_memory_object_stream(0)
         self._outgoing_send, self._outgoing_recv = anyio.create_memory_object_stream(0)
         self.closed = False
         self.closed_event = anyio.Event()
 
-    async def send(self, data):
+    async def send(self, data) -> None:
         await self._outgoing_send.send(data)
 
     async def receive(self):
         return await self._incoming_recv.receive()
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         self.closed = True
         self.closed_event.set()
         await self._incoming_send.aclose()
@@ -46,16 +46,16 @@ class MemoryByteStream:
         await self._outgoing_send.aclose()
         await self._outgoing_recv.aclose()
 
-    async def feed(self, data):
+    async def feed(self, data) -> None:
         await self._incoming_send.send(data)
 
     async def next_write(self):
         return await self._outgoing_recv.receive()
 
-    async def close_input(self):
+    async def close_input(self) -> None:
         await self._incoming_send.aclose()
 
-    async def close_output(self):
+    async def close_output(self) -> None:
         await self._outgoing_recv.aclose()
 
 
@@ -73,7 +73,7 @@ async def test_starttls_upgrades_real_socket_stream() -> None:
     authority.configure_trust(client_context)
 
     class StartTLSServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPExtendedRequest(self, request, controls, reply):
+        def handle_LDAPExtendedRequest(self, request, controls, reply) -> None:
             assert request.requestName == pureldap.LDAPStartTLSRequest.oid
             self.start_tls(server_context)
             reply(pureldap.LDAPStartTLSResponse(resultCode=0))
@@ -226,7 +226,7 @@ async def test_extended_request_handler_without_decoder_receives_raw_value() -> 
 
 async def test_server_async_handler_error_uses_protocol_error_response() -> None:
     class FailingServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPBindRequest(self, request, controls, reply):
+        async def handle_LDAPBindRequest(self, request, controls, reply) -> None:
             raise RuntimeError("real handler failed")
 
     server = FailingServer()
@@ -346,7 +346,7 @@ async def test_proxy_public_interception_hook_can_answer_without_forwarding() ->
 
 
 async def test_proxy_reports_real_connector_failure_and_closes_downstream() -> None:
-    async def connector():
+    async def connector() -> None:
         raise OSError("connection refused")
 
     server = proxybase.ProxyBase()
@@ -431,7 +431,7 @@ async def test_merged_server_attach_stream_merges_real_upstream_bind_responses()
 
 
 async def test_merged_server_reports_real_async_connector_failure() -> None:
-    def refuse_connection(protocol_factory):
+    def refuse_connection(protocol_factory) -> None:
         raise OSError("connection refused")
 
     server = merger.MergedLDAPServer(
@@ -456,7 +456,7 @@ async def test_merged_server_sends_unbind_through_real_async_client() -> None:
     received = []
     server_stopped = anyio.Event()
 
-    async def receive_unbind(peer):
+    async def receive_unbind(peer) -> None:
         received.append(decode_message(await peer.receive()))
         await peer.aclose()
         server_stopped.set()
@@ -619,7 +619,7 @@ async def test_serve_stream_runs_until_eof() -> None:
     ready = anyio.Event()
 
     class ObservedServer(ldapserver.LDAPServer):
-        async def connectionMade_async(self):
+        async def connectionMade_async(self) -> None:
             await super().connectionMade_async()
             ready.set()
 
@@ -629,7 +629,7 @@ async def test_serve_stream_runs_until_eof() -> None:
         return server
 
     async with anyio.create_task_group() as task_group:
-        async def runner():
+        async def runner() -> None:
             result["server"] = await ldapserver.serve_stream(stream, build_server)
 
         task_group.start_soon(runner)

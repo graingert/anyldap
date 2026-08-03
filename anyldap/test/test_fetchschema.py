@@ -90,7 +90,7 @@ class TestOnWire:
         val = await fetchschema.fetch(client, "dc=example,dc=com")
         self._cb_testSimple(val, client)
 
-    def _cb_testSimple(self, val, client):
+    def _cb_testSimple(self, val, client) -> None:
         client.assertSent(
             pureldap.LDAPSearchRequest(
                 baseObject="dc=example,dc=com",

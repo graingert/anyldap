@@ -21,16 +21,16 @@ pytestmark = pytest.mark.anyio
 class StubClient:
     connected = True
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.calls = []
 
-    async def send_multiResponse_async(self, request, callback, reply):
+    async def send_multiResponse_async(self, request, callback, reply) -> None:
         self.calls.append(("multi", request, callback, reply))
 
-    async def send_noResponse_async(self, request):
+    async def send_noResponse_async(self, request) -> None:
         self.calls.append(("none", request))
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         self.connected = False
 
 
@@ -46,7 +46,7 @@ def _legacy_server(client=None):
     return server
 
 
-async def _connect_after_checkpoint(server):
+async def _connect_after_checkpoint(server) -> None:
     """Let the waiter block first, then complete the connection."""
     await anyio.lowlevel.checkpoint()
     server._cbConnectionMade(StubClient())
@@ -66,7 +66,7 @@ async def test_waits_for_connection_and_forwards_result() -> None:
 async def test_waits_for_connection_and_forwards_failure() -> None:
     server = _legacy_server()
 
-    def broken():
+    def broken() -> None:
         raise ValueError("broken")
 
     async with anyio.create_task_group() as task_group:
@@ -85,13 +85,13 @@ async def test_async_queue_uses_client_async_interface() -> None:
 
 async def test_async_queue_uses_async_client_methods() -> None:
     class AsyncClient:
-        def __init__(self):
+        def __init__(self) -> None:
             self.calls = []
 
-        async def send_multiResponse_async(self, request, callback, reply):
+        async def send_multiResponse_async(self, request, callback, reply) -> None:
             self.calls.append(("multi", request, callback, reply))
 
-        async def send_noResponse_async(self, request):
+        async def send_noResponse_async(self, request) -> None:
             self.calls.append(("none", request))
 
     client = AsyncClient()
@@ -135,7 +135,7 @@ async def test_async_connection_made_uses_configured_override() -> None:
 
 
 async def test_async_connection_made_handles_override_failure() -> None:
-    def fail_to_connect(factory):
+    def fail_to_connect(factory) -> None:
         raise OSError("unreachable")
 
     configured = config.LDAPConfig(serviceLocationOverrides={"": fail_to_connect})
@@ -149,10 +149,10 @@ async def test_connection_lost_schedules_async_close_paths() -> None:
     class AsyncCloseClient:
         connected = True
 
-        def __init__(self):
+        def __init__(self) -> None:
             self.closed = False
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             self.closed = True
 
     first_client = AsyncCloseClient()

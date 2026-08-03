@@ -102,7 +102,7 @@ class LDAPClientTestDriver:
         op: Any,
         controls: object,
         return_controls: bool,
-        handler: Callable[..., object],
+        handler: Callable[..., object] | None,
         *args: object,
         **kwargs: object,
     ) -> None:
@@ -113,6 +113,7 @@ class LDAPClientTestDriver:
             r = responses.pop(0)
             if isinstance(r, Failure):
                 r.raiseException()
+            assert handler is not None
             if return_controls:
                 ret = handler(r, response_controls, *args, **kwargs)
             else:
@@ -140,8 +141,8 @@ class LDAPClientTestDriver:
     async def send_multiResponse_ex(
         self,
         op: Any,
-        controls: object,
-        handler: Callable[..., object],
+        controls: object = None,
+        handler: Callable[..., object] | None = None,
         *args: object,
         **kwargs: object,
     ) -> None:

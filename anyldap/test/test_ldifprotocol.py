@@ -58,11 +58,11 @@ class TestLDIFParseError:
 
 
 class LDIFDriver(ldifprotocol.LDIF):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.listOfCompleted = []
 
-    def gotEntry(self, obj):
+    def gotEntry(self, obj) -> None:
         self.listOfCompleted.append(obj)
 
 

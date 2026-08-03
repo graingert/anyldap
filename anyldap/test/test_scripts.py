@@ -251,7 +251,7 @@ async def test_find_server_lookup_and_main(monkeypatch: pytest.MonkeyPatch, caps
 
     seen = []
 
-    async def lookup(value):
+    async def lookup(value) -> None:
         seen.append(value)
 
     monkeypatch.setattr(find_server, "lookup", lookup)
@@ -329,7 +329,7 @@ async def test_password_prompt_and_generation(monkeypatch: pytest.MonkeyPatch) -
 
 
 class FakeConfig:
-    def __init__(self, base="dc=example,dc=com"):
+    def __init__(self, base="dc=example,dc=com") -> None:
         self.base = base
 
     def getBaseDN(self):
@@ -344,7 +344,7 @@ class FakeConfig:
 class FakeCreator:
     client = None
 
-    def __init__(self, *args):
+    def __init__(self, *args) -> None:
         pass
 
     async def connectAnonymouslyAsync(self, **kwargs):
@@ -395,10 +395,10 @@ async def test_getfreenumber_main(monkeypatch: pytest.MonkeyPatch, capsys: pytes
 class SearchEntry:
     calls = []
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         pass
 
-    async def search_async(self, **kwargs):
+    async def search_async(self, **kwargs) -> None:
         self.calls.append(kwargs)
         callback = kwargs.get("callback")
         if callback:
@@ -439,7 +439,7 @@ async def test_ldap2passwd_main(monkeypatch: pytest.MonkeyPatch, filter_text, ca
 
 async def test_namingcontexts_lookup_and_main(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     class Client:
-        async def bind_async(self):
+        async def bind_async(self) -> None:
             self.bound = True
 
     client = Client()
@@ -453,7 +453,7 @@ async def test_namingcontexts_lookup_and_main(monkeypatch: pytest.MonkeyPatch, c
         return Connection()
 
     class Entry:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             pass
 
         async def search_async(self, **kwargs):
@@ -466,7 +466,7 @@ async def test_namingcontexts_lookup_and_main(monkeypatch: pytest.MonkeyPatch, c
 
     seen = []
 
-    async def lookup(server):
+    async def lookup(server) -> None:
         seen.append(server)
 
     monkeypatch.setattr(namingcontexts, "lookup", lookup)
@@ -479,16 +479,16 @@ async def test_rename_main(monkeypatch: pytest.MonkeyPatch, binddn, supplied) ->
     class Client:
         binds = []
 
-        async def bind_async(self, *args):
+        async def bind_async(self, *args) -> None:
             self.binds.append(args)
 
     class Entry:
         destination = None
 
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             pass
 
-        async def move_async(self, destination):
+        async def move_async(self, destination) -> None:
             self.destination = destination
 
     client = Client()
@@ -504,16 +504,16 @@ async def test_rename_main(monkeypatch: pytest.MonkeyPatch, binddn, supplied) ->
 @pytest.mark.parametrize("generate", [False, True])
 async def test_passwd_main(monkeypatch: pytest.MonkeyPatch, generate, capsys: pytest.CaptureFixture[str]) -> None:
     class Client:
-        async def bind_async(self, *args):
+        async def bind_async(self, *args) -> None:
             self.bind = args
 
     changed = []
 
     class Entry:
-        def __init__(self, client, dn):
+        def __init__(self, client, dn) -> None:
             self.dn = dn
 
-        async def setPassword_async(self, newPasswd):
+        async def setPassword_async(self, newPasswd) -> None:
             changed.append((self.dn, newPasswd))
 
     client = Client()

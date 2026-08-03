@@ -9,14 +9,14 @@ pytestmark = pytest.mark.anyio
 
 
 class FakeStream:
-    def __init__(self, responder):
+    def __init__(self, responder) -> None:
         self._responder = responder
         self._responses = []
         self._sent = anyio.Event()
         self.sent = []
         self.closed = False
 
-    async def send(self, data):
+    async def send(self, data) -> None:
         self.sent.append(data)
         response = self._responder(data)
         if response is not None:
@@ -29,7 +29,7 @@ class FakeStream:
             return self._responses.pop(0)
         raise anyio.EndOfStream
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         self.closed = True
 
 
@@ -158,10 +158,10 @@ async def test_resolve_complete_override_and_defaults() -> None:
 
 async def test_connection_wrapper_and_connector_alias() -> None:
     class Stack:
-        def __init__(self):
+        def __init__(self) -> None:
             self.closed = False
 
-        async def aclose(self):
+        async def aclose(self) -> None:
             self.closed = True
 
     class Client:
@@ -182,7 +182,7 @@ async def test_creator_connects_to_real_endpoint() -> None:
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     port = listener.extra(SocketAttribute.local_port)
 
-    async def hold_open(stream):
+    async def hold_open(stream) -> None:
         async with stream:
             try:
                 await stream.receive()
@@ -201,10 +201,10 @@ async def test_creator_connects_to_real_endpoint() -> None:
 
 async def test_creator_legacy_and_anonymous_overrides() -> None:
     class Client:
-        def __init__(self):
+        def __init__(self) -> None:
             self.bound = False
 
-        async def bind_async(self):
+        async def bind_async(self) -> None:
             self.bound = True
 
     client = Client()

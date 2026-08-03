@@ -86,7 +86,7 @@ async def test_client_methods_use_real_socket_stream() -> None:
     closed = anyio.Event()
 
     class Client(ldapclient.LDAPClient):
-        def connectionLost(self, reason):
+        def connectionLost(self, reason) -> None:
             super().connectionLost(reason)
             closed.set()
 
@@ -140,7 +140,7 @@ async def test_prebuffered_stream_delegates_to_real_socket() -> None:
     received = []
     peer_done = anyio.Event()
 
-    async def peer(stream):
+    async def peer(stream) -> None:
         received.append(await stream.receive())
         await stream.send(b"pong")
         with suppress(anyio.EndOfStream):
@@ -230,11 +230,11 @@ async def test_attach_stream_reads_until_end() -> None:
     disconnected = anyio.Event()
 
     class Client(ldapclient.LDAPClient):
-        def connectionLost(self, reason):
+        def connectionLost(self, reason) -> None:
             super().connectionLost(reason)
             disconnected.set()
 
-    async def send_notification(stream):
+    async def send_notification(stream) -> None:
         await stream.send(
             pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(0), id=0).toWire()
         )
@@ -255,7 +255,7 @@ async def test_attach_stream_reads_until_end() -> None:
 async def test_async_close_and_empty_stream_disconnect() -> None:
     peer_closed = anyio.Event()
 
-    async def wait_for_close(stream):
+    async def wait_for_close(stream) -> None:
         async with stream:
             with suppress(anyio.EndOfStream):
                 await stream.receive()
@@ -274,7 +274,7 @@ async def test_async_close_and_empty_stream_disconnect() -> None:
 
 
 async def test_invalid_starttls_response_over_real_socket() -> None:
-    async def peer(stream):
+    async def peer(stream) -> None:
         request, _ = pureber.berDecodeObject(
             ldapclient.LDAPClient.berdecoder, await stream.receive()
         )
@@ -300,7 +300,7 @@ async def test_invalid_starttls_response_over_real_socket() -> None:
 
 
 async def test_partial_starttls_response_and_failed_upgrade_over_real_socket() -> None:
-    async def peer(stream):
+    async def peer(stream) -> None:
         request, _ = pureber.berDecodeObject(
             ldapclient.LDAPClient.berdecoder, await stream.receive()
         )
@@ -367,14 +367,14 @@ async def test_client_stream_state_guards_and_closed_socket_write() -> None:
     disconnected = anyio.Event()
 
     class NotifyingClient(ldapclient.LDAPClient):
-        def connectionLost(self, reason):
+        def connectionLost(self, reason) -> None:
             super().connectionLost(reason)
             disconnected.set()
 
     client = NotifyingClient()
     peer_closed = anyio.Event()
 
-    async def close_peer(stream):
+    async def close_peer(stream) -> None:
         await stream.aclose()
         peer_closed.set()
 
