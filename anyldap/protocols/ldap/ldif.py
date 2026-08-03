@@ -15,10 +15,11 @@ TODO implement rest of syntax from RFC2849
 import base64
 from collections.abc import Iterable
 
-from anyldap._encoder import to_bytes
+from anyldap._encoder import SupportsToWire, to_bytes
 
-# An attribute name or value is text on the way in and bytes off the wire.
-LDIFValue = str | bytes
+# An attribute name or value is text on the way in and bytes off the wire --
+# or anything that renders itself, which is what to_bytes accepts.
+LDIFValue = str | bytes | SupportsToWire
 
 
 def base64_encode(s: bytes) -> bytes:

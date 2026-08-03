@@ -1,5 +1,6 @@
 import logging
 import sys
+from collections.abc import Callable
 
 import anyio
 import pytest
@@ -56,7 +57,7 @@ async def test_async_client_driver_extended_and_no_response_paths() -> None:
 async def test_async_client_driver_extended_handler_error() -> None:
     driver = AsyncLDAPClientDriver([pureldap.LDAPBindResponse(resultCode=0)])
 
-    def broken(*args) -> None:
+    def broken(*args: object) -> None:
         raise RuntimeError("handler failed")
 
     with pytest.raises(RuntimeError, match="handler failed"):
@@ -65,7 +66,7 @@ async def test_async_client_driver_extended_handler_error() -> None:
 
 def test_clock_cancel_and_order() -> None:
     clock = Clock()
-    calls = []
+    calls: list[str] = []
     cancelled = clock.callLater(1, calls.append, "cancelled")
     cancelled.cancel()
     clock.callLater(2, calls.append, "second")
@@ -76,7 +77,7 @@ def test_clock_cancel_and_order() -> None:
 
 
 def test_capture_logs_restores_logger() -> None:
-    cleanups = []
+    cleanups: list[Callable[[], object]] = []
     logger = logging.getLogger("anyldap.helper-test")
     original_level = logger.level
     messages = capture_logs(cleanups, logger.name, logging.INFO)
@@ -88,7 +89,7 @@ def test_capture_logs_restores_logger() -> None:
 
 
 def test_capture_logs_preserves_more_verbose_logger_level() -> None:
-    cleanups = []
+    cleanups: list[Callable[[], object]] = []
     logger = logging.getLogger("anyldap.verbose-helper-test")
     original_level = logger.level
     logger.setLevel(logging.DEBUG)

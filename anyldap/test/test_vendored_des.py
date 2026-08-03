@@ -79,7 +79,7 @@ class TestDes:
 
         # type checks
         with pytest.raises(TypeError):
-            expand_des_key(1.0)
+            expand_des_key(1.0)  # type: ignore[type-var]
 
         # too large
         with pytest.raises(ValueError):
@@ -107,7 +107,7 @@ class TestDes:
 
         # type checks
         with pytest.raises(TypeError):
-            shrink_des_key(1.0)
+            shrink_des_key(1.0)  # type: ignore[type-var]
 
         # too large
         with pytest.raises(ValueError):
@@ -121,7 +121,7 @@ class TestDes:
         with pytest.raises(ValueError):
             shrink_des_key(b"\x00" * 7)
 
-    def _random_parity(self, rng, key):
+    def _random_parity(self, rng: random.Random, key: int) -> int:
         """randomize parity bits"""
         return (key & _KDATA_MASK) | (rng.randint(0, INT_64_MASK) & _KPARITY_MASK)
 
@@ -130,11 +130,11 @@ class TestDes:
         rng = random.Random(5678)
 
         # run through test vectors
-        for key, plaintext, correct in self.des_test_vectors:
+        for int_key, int_plaintext, int_correct in self.des_test_vectors:
             # convert to bytes
-            key = _pack64(key)
-            plaintext = _pack64(plaintext)
-            correct = _pack64(correct)
+            key = _pack64(int_key)
+            plaintext = _pack64(int_plaintext)
+            correct = _pack64(int_correct)
 
             # test 64-bit key
             result = des_encrypt_block(key, plaintext)
@@ -164,7 +164,7 @@ class TestDes:
 
         # check invalid input
         with pytest.raises(TypeError):
-            des_encrypt_block(stub, 0)
+            des_encrypt_block(stub, 0)  # type: ignore[arg-type]
         with pytest.raises(ValueError):
             des_encrypt_block(stub, b"\x00" * 7)
 
@@ -198,13 +198,13 @@ class TestDes:
 
         # check invalid keys
         with pytest.raises(TypeError):
-            des_encrypt_int_block(b"\x00", 0)
+            des_encrypt_int_block(b"\x00", 0)  # type: ignore[arg-type]
         with pytest.raises(ValueError):
             des_encrypt_int_block(-1, 0)
 
         # check invalid input
         with pytest.raises(TypeError):
-            des_encrypt_int_block(0, b"\x00")
+            des_encrypt_int_block(0, b"\x00")  # type: ignore[arg-type]
         with pytest.raises(ValueError):
             des_encrypt_int_block(0, -1)
 

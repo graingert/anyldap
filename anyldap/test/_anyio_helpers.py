@@ -3,6 +3,7 @@ from typing import Any
 
 import anyio
 import pytest
+from anyio.abc import SocketAttribute
 
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
@@ -39,6 +40,20 @@ class MemoryByteStream:
 
     async def close_input(self) -> None:
         await self._incoming_send.aclose()
+
+
+def local_address(listener: anyio.abc.Listener[Any]) -> tuple[str, int]:
+    """The host and port a listener bound to.
+
+    A listener's address is only a pair for the socket families these tests
+    use; anyio has to allow for the ones where it is a path.
+    """
+    address = listener.extra(SocketAttribute.local_address)
+    assert isinstance(address, tuple)
+    host, port = address
+    assert isinstance(host, str)
+    assert isinstance(port, int)
+    return host, port
 
 
 def decode_message(wire_bytes: bytes) -> pureber.BERBase | None:

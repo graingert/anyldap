@@ -7,7 +7,7 @@ import base64
 from anyldap.protocols.ldap.ldif import asLDIF, attributeAsLDIF, manyAsLDIF
 
 
-def encode(value):
+def encode(value: bytes) -> bytes:
     return b"".join(base64.encodebytes(value).split(b"\n"))
 
 
@@ -16,7 +16,7 @@ class WireableObject:
     Object with bytes representation as a constant toWire value
     """
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         return b"wire"
 
 

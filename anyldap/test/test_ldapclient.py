@@ -3,13 +3,13 @@ Test cases for anyldap.protocols.ldap.ldapsyntax module.
 """
 import anyio
 import pytest
-from anyio.abc import SocketAttribute
 from exceptiongroup import suppress
 
 from anyldap._async import ResultSlot
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapclient, ldaperrors, ldapserver
 from anyldap.runtime import Failure
+from anyldap.test._anyio_helpers import local_address
 
 pytestmark = pytest.mark.anyio
 
@@ -22,7 +22,7 @@ async def test_async_multi_response_and_no_response_paths() -> None:
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
     server_stream = await listener.listeners[0].accept()
     async with anyio.create_task_group() as task_group:
@@ -70,7 +70,7 @@ async def test_send_async_receives_response_from_stream() -> None:
             return pureldap.LDAPBindResponse(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
     server_stream = await listener.listeners[0].accept()
     async with anyio.create_task_group() as task_group:
@@ -99,7 +99,7 @@ async def test_client_methods_use_real_socket_stream() -> None:
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     client = Client()
     client.debug = True
     client_stream = await anyio.connect_tcp(host, port)
@@ -149,7 +149,7 @@ async def test_prebuffered_stream_delegates_to_real_socket() -> None:
         peer_done.set()
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
     server_stream = await listener.listeners[0].accept()
     async with anyio.create_task_group() as task_group:
@@ -241,7 +241,7 @@ async def test_attach_stream_reads_until_end() -> None:
         await stream.aclose()
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     client = Client()
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(listener.serve, send_notification)
@@ -262,7 +262,7 @@ async def test_async_close_and_empty_stream_disconnect() -> None:
         peer_closed.set()
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     client = ldapclient.LDAPClient()
     async with listener, anyio.create_task_group() as task_group:
         task_group.start_soon(listener.serve, wait_for_close)
@@ -287,7 +287,7 @@ async def test_invalid_starttls_response_over_real_socket() -> None:
         await stream.aclose()
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
     server_stream = await listener.listeners[0].accept()
     client = ldapclient.LDAPClient()
@@ -313,7 +313,7 @@ async def test_partial_starttls_response_and_failed_upgrade_over_real_socket() -
         await stream.aclose()
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
     server_stream = await listener.listeners[0].accept()
     client = ldapclient.LDAPClient()
@@ -352,7 +352,7 @@ async def test_client_stream_state_guards_and_closed_socket_write() -> None:
         await client._send_anyio_write(b"data")
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     stream = await anyio.connect_tcp(host, port)
     peer = await listener.listeners[0].accept()
     await stream.aclose()
@@ -379,7 +379,7 @@ async def test_client_stream_state_guards_and_closed_socket_write() -> None:
         peer_closed.set()
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     async with listener, anyio.create_task_group() as task_group:
         task_group.start_soon(listener.serve, close_peer)
         await client.attach_stream(await anyio.connect_tcp(host, port), task_group)

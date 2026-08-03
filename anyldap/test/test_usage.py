@@ -82,10 +82,10 @@ class CompleteOptions(
     optFlags = (("verbose", "v", "verbose output"),)
     optParameters = (("custom", "c", "default", "custom value"),)
 
-    def opt_custom_handler(self, value) -> None:
+    def opt_custom_handler(self, value: str) -> None:
         self.opts["handled"] = value
 
-    def opt_toggle(self, value) -> None:
+    def opt_toggle(self, value: str) -> None:
         self.opts["toggled"] = value
 
 
@@ -96,7 +96,7 @@ class HandlerOptions(Options):
     def opt_verbose(self) -> None:
         self.opts["handled-flag"] = True
 
-    def opt_custom(self, value) -> None:
+    def opt_custom(self, value: str) -> None:
         self.opts["handled-parameter"] = value
 
 
@@ -146,8 +146,10 @@ class TestCompleteOptions:
 
     def test_positional_arguments_are_dispatched(self) -> None:
         options = HandlerOptions()
-        received = []
-        options.parseArgs = lambda *args: received.extend(args)
+        received: list[str] = []
+        # parseOptions looks for this by name; the Options it is mixed into
+        # does not declare one.
+        options.parseArgs = lambda *args: received.extend(args)  # type: ignore[attr-defined]
         options.parseOptions(["first", "second"])
         assert received == ["first", "second"]
 

@@ -447,6 +447,22 @@ class IServerBackedLDAPEntry(IConnectedLDAPEntry):
         """
 
 
+class LDAPConfigLike(Protocol):
+    """What a consumer needs of a configuration.
+
+    ILDAPConfig is what a configuration declares itself to be; this is what
+    reading one looks like, which is what lets a test supply its own.
+    """
+
+    def getIdentityBaseDN(self) -> DistinguishedName | str: ...
+
+    def getIdentitySearch(self, name: str) -> str: ...
+
+    def getServiceLocationOverrides(
+        self,
+    ) -> Mapping[Any, ServiceLocation]: ...
+
+
 class ILDAPConfig(Interface):
     """Generic LDAP configuration retrieval."""
 

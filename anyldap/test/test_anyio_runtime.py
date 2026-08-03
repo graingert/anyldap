@@ -1,18 +1,20 @@
+from collections.abc import Sequence
+
 import anyio
 import pytest
-from anyio.abc import SocketAttribute
 
 from anyldap import inmemory, testutil
 from anyldap._async import ResultSlot, await_result
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapserver, ldapsyntax
 from anyldap.runtime import Failure, Protocol, unwrap_failure
+from anyldap.test._anyio_helpers import local_address
 
 pytestmark = pytest.mark.anyio
 
 
 async def test_await_result_accepts_all_result_shapes() -> None:
-    async def native():
+    async def native() -> str:
         return "awaitable"
 
     assert await await_result(native()) == "awaitable"
@@ -60,14 +62,15 @@ async def test_unwrap_failure_accepts_wrapped_and_bare_reasons() -> None:
 
 async def test_protocol_default_hooks() -> None:
     protocol = Protocol()
-    assert protocol.connectionMade() is None
-    assert protocol.connectionLost() is None
-    assert protocol.dataReceived(b"ignored") is None
+    # The base hooks do nothing; a protocol overrides the ones it cares about.
+    protocol.connectionMade()
+    protocol.connectionLost()
+    protocol.dataReceived(b"ignored")
 
 
 async def test_failure_handles_broken_string_and_type_matching() -> None:
     class BrokenStringError(Exception):
-        def __str__(self) -> None:
+        def __str__(self) -> str:
             raise RuntimeError("cannot stringify")
 
     error = BrokenStringError("broken")
@@ -87,11 +90,16 @@ async def test_ldap_client_bind_async() -> None:
     creds = (b"cn=foo,dc=example,dc=com", b"secret")
 
     class BindServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPBindRequest(self, request, controls, reply):
+        def handle_LDAPBindRequest(
+            self,
+            request: pureldap.LDAPBindRequest,
+            controls: object,
+            reply: object,
+        ) -> pureldap.LDAPBindResponse:
             return pureldap.LDAPBindResponse(resultCode=0, matchedDN=request.dn)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(ldapserver.serve, listener, BindServer)
         client_stream = await anyio.connect_tcp(host, port)
@@ -131,6 +139,7 @@ async def test_ldapsyntax_search_async() -> None:
 
     results = await entry.search_async()
 
+    assert isinstance(results, Sequence)
     assert [item.dn.getText() for item in results] == ["cn=foo,dc=example,dc=com"]
 
 

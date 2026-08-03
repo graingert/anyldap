@@ -2,20 +2,25 @@
 Test cases for the anyldap.config module.
 """
 
+import configparser
 import os
 import pathlib
+from collections.abc import Iterator
 
 import pytest
 
 from anyldap import config
+from anyldap.protocols.ldap import distinguishedname
 
 
-def writeFile(path, content) -> None:
+def writeFile(path: str | pathlib.Path, content: bytes) -> None:
     with open(path, "wb") as f:
         f.write(content)
 
 
-def reloadFromContent(base_path, content):
+def reloadFromContent(
+    base_path: str | pathlib.Path, content: bytes
+) -> configparser.ConfigParser:
     """
     Reload the global configuration file with raw `content`.
 
@@ -31,7 +36,7 @@ def reloadFromContent(base_path, content):
 
 
 @pytest.fixture(autouse=True)
-def _reset_config():
+def _reset_config() -> Iterator[None]:
     yield
     config.loadConfig(configFiles=[], reload=True)
 
@@ -236,8 +241,14 @@ identity-search = (something=%(name)s)
             identitySearch="(mail=%(name)s)",
             serviceLocationOverrides={"dc=example,dc=com": ("explicit", 1389)},
         )
-        assert "dc=example,dc=com" == sut.getBaseDN().getText()
-        assert "ou=people,dc=example,dc=com" == sut.getIdentityBaseDN().getText()
+        # Built with DNs rather than read from a file, so they come back as
+        # DistinguishedName rather than the raw string.
+        base = sut.getBaseDN()
+        identity = sut.getIdentityBaseDN()
+        assert isinstance(base, distinguishedname.DistinguishedName)
+        assert isinstance(identity, distinguishedname.DistinguishedName)
+        assert "dc=example,dc=com" == base.getText()
+        assert "ou=people,dc=example,dc=com" == identity.getText()
         assert "(mail=alice)" == sut.getIdentitySearch("alice")
         overrides = sut.getServiceLocationOverrides()
         assert ("explicit", 1389) == next(iter(overrides.values()))
@@ -280,15 +291,19 @@ host=ignored
         assert copied.serviceLocationOverrides == original.serviceLocationOverrides
 
     def testCopyAcceptsAllExplicitValues(self) -> None:
-        values = {
-            "baseDN": "dc=new",
-            "identityBaseDN": "ou=people,dc=new",
-            "identitySearch": "(mail=%(name)s)",
-            "serviceLocationOverrides": {"dc=new": ("new.example", 1389)},
-        }
-        copied = config.LDAPConfig().copy(**values)
-        for name, value in values.items():
-            assert getattr(copied, name) == value
+        overrides = {"dc=new": ("new.example", 1389)}
+
+        copied = config.LDAPConfig().copy(
+            baseDN="dc=new",
+            identityBaseDN="ou=people,dc=new",
+            identitySearch="(mail=%(name)s)",
+            serviceLocationOverrides=overrides,
+        )
+
+        assert copied.baseDN == "dc=new"
+        assert copied.identityBaseDN == "ou=people,dc=new"
+        assert copied.identitySearch == "(mail=%(name)s)"
+        assert copied.serviceLocationOverrides == overrides
 
     def testUseLMHash(self, tmp_path: pathlib.Path) -> None:
         reloadFromContent(

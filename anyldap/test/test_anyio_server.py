@@ -5,7 +5,6 @@ import anyio.lowlevel
 import anyio.streams.tls
 import pytest
 import trustme
-from anyio.abc import SocketAttribute
 
 from anyldap import config, inmemory, testutil
 from anyldap.protocols import pureber, pureldap
@@ -20,7 +19,7 @@ from anyldap.protocols.ldap import (
     svcbindproxy,
 )
 from anyldap.runtime import ConnectionDone, Failure
-from anyldap.test._anyio_helpers import AsyncLDAPClientDriver
+from anyldap.test._anyio_helpers import AsyncLDAPClientDriver, local_address
 
 pytestmark = pytest.mark.anyio
 
@@ -82,7 +81,7 @@ async def test_starttls_upgrades_real_socket_stream() -> None:
             return pureldap.LDAPBindResponse(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(ldapserver.serve, listener, StartTLSServer)
         client_stream = await anyio.connect_tcp(host, port)
@@ -462,7 +461,7 @@ async def test_merged_server_sends_unbind_through_real_async_client() -> None:
         server_stopped.set()
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
     async with listener, anyio.create_task_group() as task_group:
         task_group.start_soon(listener.serve, receive_unbind)
         upstream = await anyio.connect_tcp(host, port)
@@ -856,7 +855,7 @@ async def test_ldaps_connects_over_tls_from_the_start() -> None:
     tls_listener = anyio.streams.tls.TLSListener(
         listener, server_context, standard_compatible=False
     )
-    host, port = listener.extra(SocketAttribute.local_address)
+    host, port = local_address(listener)
 
     async with anyio.create_task_group() as task_group:
         task_group.start_soon(ldapserver.serve, tls_listener, make_server)

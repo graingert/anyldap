@@ -103,23 +103,16 @@ plugins = ["mypy_zope:plugin"]
 ignore_errors = true
 module = [
     "anyldap.test._anyio_helpers",
-    "anyldap.test.test_anyio_runtime",
     "anyldap.test.test_anyio_server",
-    "anyldap.test.test_attributeset",
     "anyldap.test.test_autofill",
     "anyldap.test.test_autofill_posix",
     "anyldap.test.test_autofill_samba",
-    "anyldap.test.test_checkers",
-    "anyldap.test.test_config",
     "anyldap.test.test_connector",
     "anyldap.test.test_delta",
-    "anyldap.test.test_distinguishedname",
     "anyldap.test.test_entry",
-    "anyldap.test.test_fetchschema",
     "anyldap.test.test_inmemory",
     "anyldap.test.test_ldapclient",
     "anyldap.test.test_ldapsyntax",
-    "anyldap.test.test_ldif",
     "anyldap.test.test_ldifdelta",
     "anyldap.test.test_ldifprotocol",
     "anyldap.test.test_ldiftree",
@@ -132,9 +125,6 @@ module = [
     "anyldap.test.test_scripts",
     "anyldap.test.test_server",
     "anyldap.test.test_svcbindproxy",
-    "anyldap.test.test_test_helpers",
-    "anyldap.test.test_usage",
-    "anyldap.test.test_vendored_des",
 ]
 
 [tool.coverage.run]

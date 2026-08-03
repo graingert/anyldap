@@ -98,7 +98,9 @@ class TestLDAPAttributeSet:
         """
         Adding existing value as a byte or unicode string
         """
-        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
+        a: attributeset.LDAPAttributeSet[str | bytes] = attributeset.LDAPAttributeSet(
+            "k", ["b", "c", "d"]
+        )
 
         a.add(b"b")
         assert a == {"b", "c", "d"}
@@ -110,7 +112,9 @@ class TestLDAPAttributeSet:
         """
         Removing existing value as a byte or unicode string
         """
-        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d"])
+        a: attributeset.LDAPAttributeSet[str | bytes] = attributeset.LDAPAttributeSet(
+            "k", ["b", "c", "d"]
+        )
         a.remove(b"b")
         a.remove("c")
 
@@ -142,16 +146,18 @@ class TestLDAPAttributeSet:
 
     def testCopy(self) -> None:
         class Magic:
-            def __lt__(self, other):
+            def __lt__(self, other: object) -> bool:
                 return False
 
-            def __gt__(self, other):
+            def __gt__(self, other: object) -> bool:
                 return True
 
         m1 = Magic()
         assert not (m1 < object())
         assert m1 > object()
-        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d", m1])
+        # Not an attribute value: the point is that copying keeps whatever
+        # objects the set was given, by identity.
+        a = attributeset.LDAPAttributeSet("k", ["b", "c", "d", m1])  # type: ignore[type-var]
         b = a.__copy__()
         assert a == b
         assert a is not b
@@ -168,17 +174,17 @@ class TestLDAPAttributeSet:
     def testDeepCopy(self) -> None:
         @total_ordering
         class Magic:
-            def __eq__(self, other):
+            def __eq__(self, other: object) -> bool:
                 return isinstance(other, self.__class__)
 
-            def __hash__(self):
+            def __hash__(self) -> int:
                 return 42
 
-            def __lt__(self, other):
+            def __lt__(self, other: object) -> bool:
                 return False
 
         m1 = Magic()
-        a = attributeset.LDAPAttributeSet("k", ["a", m1])
+        a = attributeset.LDAPAttributeSet("k", ["a", m1])  # type: ignore[type-var]
         b = a.__deepcopy__({})
         assert a == b
         assert a is not b

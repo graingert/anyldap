@@ -58,7 +58,7 @@ class LDAPBindingChecker:
 
     credentialInterfaces = ("username-password",)
 
-    def __init__(self, cfg: interfaces.ILDAPConfig) -> None:
+    def __init__(self, cfg: interfaces.LDAPConfigLike) -> None:
         self.config = cfg
 
     async def requestAvatarId_async(

@@ -2,6 +2,8 @@
 Test cases for anyldap.protocols.ldap.distinguishedname module.
 """
 
+from collections.abc import Sequence
+
 import pytest
 
 from anyldap.protocols.ldap import distinguishedname as dn
@@ -43,8 +45,13 @@ def test_distinguished_name_comparison_and_domain_edges() -> None:
     assert value.contains("cn=user,dc=example,dc=com")
 
 
+# A distinguished name, and the attribute type and value pairs each of its
+# relative names is made of.
+KnownValue = tuple[str | bytes, Sequence[Sequence[tuple[str | bytes, str | bytes]]]]
+
+
 class KnownValuesBase:
-    knownValues = ()
+    knownValues: Sequence[KnownValue] = ()
 
     def testKnownValues(self) -> None:
         for s, l in self.knownValues:
@@ -156,8 +163,7 @@ class TestLDAPDistinguishedName_Escaping(KnownValuesBase):
                 dn.RelativeDistinguishedName("dc=com"),
             ]
         )
-        got = got.getText()
-        assert got == (r"cn=test+owner=uid\=foo\,ou\=depar"
+        assert got.getText() == (r"cn=test+owner=uid\=foo\,ou\=depar"
             + r"tment\,dc\=example\,dc\=com,dc=ex"
             + "ample,dc=com")
 
