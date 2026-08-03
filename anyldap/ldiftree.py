@@ -40,7 +40,8 @@ class StoreParsedLDIF(ldifprotocol.LDIF):
         self.done = False
         self.seen: list[entry.BaseLDAPEntry] = []
 
-    def gotEntry(self, obj: entry.BaseLDAPEntry) -> None:
+    def gotEntry(self, obj: object) -> None:
+        assert isinstance(obj, entry.BaseLDAPEntry)
         self.seen.append(obj)
 
     def connectionLost(

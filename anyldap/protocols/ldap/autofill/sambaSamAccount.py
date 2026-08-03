@@ -1,14 +1,15 @@
-from typing import Any
-
+from anyldap import interfaces
 from anyldap.protocols.ldap.autofill import ObjectMissingObjectClassException
 
 
 class Autofill_samba:  # TODO baseclass
-    def __init__(self, domainSID, fixedPrimaryGroupSID=None) -> None:
+    def __init__(
+        self, domainSID: str, fixedPrimaryGroupSID: int | None = None
+    ) -> None:
         self.domainSID = domainSID
         self.fixedPrimaryGroupSID = fixedPrimaryGroupSID
 
-    def start(self, ldapObject: Any) -> None:
+    def start(self, ldapObject: interfaces.IEditableLDAPEntry) -> None:
         assert "objectClass" in ldapObject
         if "sambaSamAccount" not in ldapObject["objectClass"]:
             raise ObjectMissingObjectClassException(ldapObject)
@@ -38,14 +39,15 @@ class Autofill_samba:  # TODO baseclass
         for attributeType in ldapObject.keys():
             self.notify(ldapObject, attributeType)
 
-    def notify(self, ldapObject: Any, attributeType: Any) -> None:
+    def notify(
+        self, ldapObject: interfaces.IEditableLDAPEntry, attributeType: str | bytes
+    ) -> None:
         # sambaSID=2*uidNumber+1000
         if attributeType == "uidNumber":
             assert "uidNumber" in ldapObject
             assert len(ldapObject["uidNumber"]) == 1
             (uidNumber,) = ldapObject["uidNumber"]
-            uidNumber = int(uidNumber)
-            sid = "%s-%d" % (self.domainSID, uidNumber * 2 + 1000)
+            sid = "%s-%d" % (self.domainSID, int(uidNumber) * 2 + 1000)
             ldapObject["sambaSID"] = [str(sid)]
             return
 
@@ -54,7 +56,6 @@ class Autofill_samba:  # TODO baseclass
             assert "gidNumber" in ldapObject
             assert len(ldapObject["gidNumber"]) == 1
             (gidNumber,) = ldapObject["gidNumber"]
-            gidNumber = int(gidNumber)
-            sid = "%s-%d" % (self.domainSID, gidNumber * 2 + 1001)
+            sid = "%s-%d" % (self.domainSID, int(gidNumber) * 2 + 1001)
             ldapObject["sambaPrimaryGroupSID"] = [str(sid)]
             return

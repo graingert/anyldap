@@ -165,8 +165,12 @@ class LDIF(_LineReceiver):
 
         self.data[key].append(val)
 
-    def gotEntry(self, obj: entry.BaseLDAPEntry) -> None:
-        pass
+    def gotEntry(self, obj: object) -> None:
+        """Called with whatever this parser produces.
+
+        The base parser produces entries; the delta parser produces
+        operations.
+        """
 
     def connectionLost(self, reason: BaseException = Protocol.connectionDone) -> None:
         if self.mode != WAIT_FOR_DN:

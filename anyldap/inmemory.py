@@ -203,12 +203,14 @@ class InMemoryLDIFProtocol(ldifprotocol.LDIF):
         """Call `hook`; report whether it swallowed the error."""
         return hook(Failure(exc), entry) is None
 
-    def gotEntry(self, entry: "entry.BaseLDAPEntry") -> None:
+    def gotEntry(self, obj: object) -> None:
+        assert isinstance(obj, entry.BaseLDAPEntry)
+        entry_ = obj
         if self.db is None:
             # first entry, create the db, prepare to process the rest
-            self.db = ReadOnlyInMemoryLDAPEntry(dn=entry.dn, attributes=entry)
+            self.db = ReadOnlyInMemoryLDAPEntry(dn=entry_.dn, attributes=entry_)
         else:
-            self._pending.append(entry)
+            self._pending.append(entry_)
 
     def lookupFailed(
         self, reason: Failure, entry: "entry.BaseLDAPEntry"

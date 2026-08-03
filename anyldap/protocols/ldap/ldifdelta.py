@@ -1,6 +1,14 @@
+from typing import ClassVar, Protocol
+
 from anyldap import delta, entry
 from anyldap.protocols.ldap import ldifprotocol
 from anyldap.runtime import ConnectionDone, Failure
+
+
+class ReadableFile(Protocol):
+    """A file read to the end in one go."""
+
+    def read(self) -> bytes: ...
 
 WAIT_FOR_CHANGETYPE = b"WAIT_FOR_CHANGETYPE"
 WAIT_FOR_MOD_SPEC = b"WAIT_FOR_MOD_SPEC"
@@ -38,12 +46,17 @@ class LDIFDeltaDeleteHasJunkAfterChangeTypeError(ldifprotocol.LDIFParseError):
 
 
 class LDIFDelta(ldifprotocol.LDIF):
-    def state_WAIT_FOR_DN(self, line):
+    modifications: list[delta.Modification] | None = None
+    mod_spec: bytes
+    mod_spec_attr: bytes
+    mod_spec_data: list[bytes]
+
+    def state_WAIT_FOR_DN(self, line: bytes) -> None:
         super().state_WAIT_FOR_DN(line)
         if self.mode == ldifprotocol.IN_ENTRY:
             self.mode = WAIT_FOR_CHANGETYPE
 
-    def state_WAIT_FOR_CHANGETYPE(self, line):
+    def state_WAIT_FOR_CHANGETYPE(self, line: bytes) -> None:
         assert self.dn is not None, "self.dn must be set when in entry"
         assert self.data is not None, "self.data must be set when in entry"
 
@@ -67,16 +80,18 @@ class LDIFDelta(ldifprotocol.LDIF):
         else:
             raise LDIFDeltaUnknownChangeTypeError()
 
-    MOD_SPEC_TO_DELTA = {
+    MOD_SPEC_TO_DELTA: ClassVar[dict[bytes, type[delta.Modification]]] = {
         b"add": delta.Add,
         b"delete": delta.Delete,
         b"replace": delta.Replace,
     }
 
-    def state_WAIT_FOR_MOD_SPEC(self, line):
+    def state_WAIT_FOR_MOD_SPEC(self, line: bytes) -> None:
         if line == b"":
             # end of entry
             self.mode = ldifprotocol.WAIT_FOR_DN
+            assert self.dn is not None
+            assert self.modifications is not None
             m = delta.ModifyOp(dn=self.dn, modifications=self.modifications)
             self.dn = None
             self.data = None
@@ -94,13 +109,14 @@ class LDIFDelta(ldifprotocol.LDIF):
         self.mod_spec_data = []
         self.mode = IN_MOD_SPEC
 
-    def state_IN_MOD_SPEC(self, line):
+    def state_IN_MOD_SPEC(self, line: bytes) -> None:
         if line == b"":
             raise LDIFDeltaModificationMissingEndDashError()
 
         if line == b"-":
             mod = self.MOD_SPEC_TO_DELTA[self.mod_spec]
             de = mod(self.mod_spec_attr, self.mod_spec_data)
+            assert self.modifications is not None
             self.modifications.append(de)
             del self.mod_spec
             del self.mod_spec_attr
@@ -117,7 +133,7 @@ class LDIFDelta(ldifprotocol.LDIF):
 
         self.mod_spec_data.append(val)
 
-    def state_IN_ADD_ENTRY(self, line):
+    def state_IN_ADD_ENTRY(self, line: bytes) -> None:
         assert self.dn is not None, "self.dn must be set when in entry"
         assert self.data is not None, "self.data must be set when in entry"
 
@@ -139,7 +155,7 @@ class LDIFDelta(ldifprotocol.LDIF):
 
         self.data[key].append(val)
 
-    def state_IN_DELETE(self, line):
+    def state_IN_DELETE(self, line: bytes) -> None:
         assert self.dn is not None, "self.dn must be set when in entry"
 
         if line == b"":
@@ -154,12 +170,13 @@ class LDIFDelta(ldifprotocol.LDIF):
         raise LDIFDeltaDeleteHasJunkAfterChangeTypeError(self.dn, line)
 
 
-def fromLDIFFile(f):
+def fromLDIFFile(f: ReadableFile) -> list[object]:
     """Read LDIF data from a file."""
 
     p = LDIFDelta()
-    l = []
-    p.gotEntry = l.append
+    l: list[object] = []
+    # Collecting rather than subclassing, which the hook exists to allow.
+    p.gotEntry = l.append  # type: ignore[assignment]
     while 1:
         data = f.read()
         if not data:
