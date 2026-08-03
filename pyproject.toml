@@ -17,7 +17,7 @@ dependencies = [
     "exceptiongroup",
     "outcome",
     "pyparsing",
-    "typing_extensions>=4.0; python_version < '3.11'",
+    "typing_extensions>=4.0",
     "zope.interface",
 ]
 classifiers = [
