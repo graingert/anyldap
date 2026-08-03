@@ -20,6 +20,29 @@ async def test_delete_operation_uses_real_in_memory_entry():
         await root.lookup(child.dn)
 
 
+def test_modify_op_survives_its_own_request():
+    """fromLDAP reads back the request asLDAP built.
+
+    Modification.asLDAP used to hand back encoded bytes while its sibling
+    ModifyOp.asLDAP handed back an object, so the request came out holding
+    pre-encoded members that fromLDAP could not unpack. It only ever worked
+    because the members were on their way to the wire, where bytes pass
+    straight through.
+    """
+    op = delta.ModifyOp(
+        "cn=foo,dc=example,dc=com",
+        [delta.Add("cn", ["bar"]), delta.Delete("sn", ["quux"])],
+    )
+
+    back = delta.ModifyOp.fromLDAP(op.asLDAP())
+
+    # The values come back as the utf-8 they were sent as, so the operations
+    # are equivalent rather than equal.
+    assert back.dn == op.dn
+    assert [type(m) for m in back.modifications] == [delta.Add, delta.Delete]
+    assert back.asLDAP().toWire() == op.asLDAP().toWire()
+
+
 class TestModifications:
     def setup_method(self):
         self.foo = ldapsyntax.LDAPEntry(
@@ -33,6 +56,13 @@ class TestModifications:
             },
         )
 
+    async def testAbstractOperation(self):
+        """
+        Operation.patch is awaited, like every operation that implements it.
+        """
+        with pytest.raises(NotImplementedError):
+            await delta.Operation().patch(self.foo)
+
     def testAbstractAndInvalidOperations(self):
         modification = delta.Modification("cn", ["value"])
         with pytest.raises(NotImplementedError):
@@ -40,19 +70,25 @@ class TestModifications:
         with pytest.raises(NotImplementedError):
             modification.asLDAP()
         with pytest.raises(NotImplementedError):
-            delta.Operation().patch(self.foo)
+            modification.asLDIF()
         assert delta.ModifyOp._getClassFromOp(999) is None
         with pytest.raises(RuntimeError):
             delta.ModifyOp.fromLDAP(object())
         request = pureldap.LDAPModifyRequest(
             object="cn=foo",
             modification=[
-                (
-                    pureber.BEREnumerated(999),
-                    (
-                        pureldap.LDAPAttributeDescription("cn"),
-                        pureber.BERSet([pureldap.LDAPAttributeValue("foo")]),
-                    ),
+                pureber.BERSequence(
+                    [
+                        pureber.BEREnumerated(999),
+                        pureber.BERSequence(
+                            [
+                                pureldap.LDAPAttributeDescription("cn"),
+                                pureber.BERSet(
+                                    [pureldap.LDAPAttributeValue("foo")]
+                                ),
+                            ]
+                        ),
+                    ]
                 )
             ],
         )

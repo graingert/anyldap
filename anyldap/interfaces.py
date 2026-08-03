@@ -3,7 +3,10 @@ from collections.abc import Awaitable, Callable, Iterable
 from zope.interface import Interface
 
 from anyldap.attributeset import LDAPAttributeSet
-from anyldap.protocols.ldap.distinguishedname import DistinguishedName
+from anyldap.protocols.ldap.distinguishedname import (
+    DistinguishedName,
+    RelativeDistinguishedName,
+)
 from anyldap.protocols.pureber import BERBase
 
 # What a method takes where it will build a DistinguishedName out of it.
@@ -139,8 +142,13 @@ class ILDAPEntry(Interface):
         """
 
 
-class IEditableLDAPEntry(Interface):
-    """Interface definition for editable LDAP entries."""
+class IEditableLDAPEntry(ILDAPEntry):
+    """Interface definition for editable LDAP entries.
+
+    Editing an entry means reading it too -- every modification asks what
+    the entry already holds -- so this is an ILDAPEntry as well. Every
+    implementer already provided both.
+    """
 
     def __setitem__(key: str | bytes, value: Iterable[str | bytes]) -> None:
         """
@@ -328,11 +336,24 @@ class IConnectedLDAPEntry(Interface):
 
         """
 
-    def lookup(dn: AnyDN) -> Awaitable["ILDAPEntry"]:
+    def lookup(dn: AnyDN) -> Awaitable["IConnectedLDAPEntry"]:
         """
         Lookup the referred to by dn.
 
-        @return: An ILDAPEntry, or raises e.g. LDAPNoSuchObject.
+        @return: An entry from the same tree, or raises e.g. LDAPNoSuchObject.
+        """
+
+    def addChild(
+        rdn: RelativeDistinguishedName | str | bytes, attributes: object
+    ) -> "IConnectedLDAPEntry | Awaitable[IConnectedLDAPEntry]":
+        """
+        Add a child entry directly below this one.
+
+        Backends that touch the filesystem have to await; the in-memory one
+        does not, so callers pass the result through
+        anyldap._async.await_result.
+
+        @return: The new child entry.
         """
 
     def match(filter: BERBase) -> bool:
