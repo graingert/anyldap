@@ -8,13 +8,6 @@ from typing import Any, ClassVar, Protocol, runtime_checkable
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import distinguishedname
 
-# An option's value is whatever its own handler makes of it: a string from
-# the command line, a flag, a parsed scope, a mapping of service locations.
-# Reading one back is untyped by nature, which is what Any is for -- narrowing
-# it would mean each Options subclass exposing its own options as attributes,
-# rather than every caller asserting its way out of the bag.
-OptionValue = Any
-
 __all__ = [
     "Options",
     "TakesArguments",
@@ -46,7 +39,12 @@ class UsageError(Exception):
 class HasOptions(Protocol):
     """What the option mixins need of the Options they are mixed into."""
 
-    opts: dict[str, OptionValue]
+    # An option's value is whatever its own handler makes of it: a string from
+    # the command line, a flag, a parsed scope, a mapping of service
+    # locations. Reading one back is untyped by nature -- narrowing it would
+    # mean each Options subclass exposing its own options as attributes,
+    # rather than every caller asserting its way out of the bag.
+    opts: dict[str, Any]
 
 
 class Options:
@@ -54,16 +52,16 @@ class Options:
     optFlags: ClassVar[Sequence[tuple[str, str | None, str]]] = ()
 
     def __init__(self) -> None:
-        self.opts: dict[str, OptionValue] = {}
+        self.opts: dict[str, Any] = {}
         for name, _, default, _ in self._iter_opt_parameters():
             self.opts[name] = default
         for name, _, _ in self._iter_opt_flags():
             self.opts[name] = False
 
-    def __getitem__(self, key: str) -> OptionValue:
+    def __getitem__(self, key: str) -> Any:
         return self.opts[key]
 
-    def __setitem__(self, key: str, value: OptionValue) -> None:
+    def __setitem__(self, key: str, value: Any) -> None:
         self.opts[key] = value
 
     @classmethod
@@ -90,7 +88,7 @@ class Options:
 
     def parseOptions(
         self, options: Sequence[str] | None = None
-    ) -> dict[str, OptionValue]:
+    ) -> dict[str, Any]:
         if options is None:
             options = sys.argv[1:]
 
