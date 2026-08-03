@@ -102,7 +102,6 @@ plugins = ["mypy_zope:plugin"]
 [[tool.mypy.overrides]]
 ignore_errors = true
 module = [
-    "anyldap._scripts.ldap2passwd",
     "anyldap.test._anyio_helpers",
     "anyldap.test._testing",
     "anyldap.test.test_anyio_runtime",
