@@ -2,16 +2,15 @@ import sys
 
 import anyio
 
-from anyldap import config, ldapfilter, usage
+from anyldap import config, interfaces, ldapfilter, usage
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapconnector, ldapsyntax
 
 
-def _cbSearch(entry):
-    attributes = {}
+def _cbSearch(entry: interfaces.IConnectedLDAPEntry) -> None:
+    attributes: dict[str, list[str]] = {}
     for attr, vals in entry.items():
-        attr = str(attr)
-        attributes[attr] = [str(val) for val in vals]
+        attributes[str(attr)] = [str(val) for val in vals]
     print(
         ":".join(
             (
@@ -27,7 +26,7 @@ def _cbSearch(entry):
     )
 
 
-async def main(cfg, filter_text):
+async def main(cfg: interfaces.ILDAPConfig, filter_text: str | None) -> None:
     try:
         base_dn = cfg.getBaseDN()
     except config.MissingBaseDNError as exc:
@@ -64,11 +63,11 @@ class MyOptions(
 ):
     """Command line passwd-file export utility."""
 
-    def parseArgs(self, filter=None):
+    def parseArgs(self, filter: str | None = None) -> None:
         self.opts["filter"] = filter
 
 
-def console_script():
+def console_script() -> None:
     try:
         opts = MyOptions()
         opts.parseOptions()

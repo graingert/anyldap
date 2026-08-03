@@ -140,6 +140,9 @@ class Replace(Modification):
 
 
 class Operation:
+    def asLDIF(self) -> bytes:
+        raise NotImplementedError("%s.asLDIF not implemented" % self.__class__.__name__)
+
     async def patch(self, root: interfaces.IConnectedLDAPEntry) -> object:
         """
         Find the correct entry in IConnectedLDAPEntry and patch it.

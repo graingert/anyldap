@@ -445,8 +445,13 @@ async def test_namingcontexts_lookup_and_main(monkeypatch, capsys):
 
     client = Client()
 
+    class Connection:
+        """What the connector really returns: the protocol, plus its lifetime."""
+
+        protocol = client
+
     async def connect(*args, **kwargs):
-        return client
+        return Connection()
 
     class Entry:
         def __init__(self, *args, **kwargs):
@@ -523,5 +528,7 @@ async def test_passwd_main(monkeypatch, generate, capsys):
 
     monkeypatch.setattr(passwd, "_get_password", get_password)
     await passwd.main("cn=admin", None, ["cn=one", "cn=two"], generate, {})
-    assert changed[-2:] == [("cn=one", "new-password"), ("cn=two", "new-password")]
+    # A password is octets by the time it reaches an entry, which is what the
+    # entry that hashes it locally needs.
+    assert changed[-2:] == [("cn=one", b"new-password"), ("cn=two", b"new-password")]
     assert bool(capsys.readouterr().out) is generate

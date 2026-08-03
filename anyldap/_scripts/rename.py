@@ -4,7 +4,7 @@ import sys
 
 import anyio
 
-from anyldap import config, usage
+from anyldap import config, interfaces, usage
 from anyldap.protocols.ldap import (
     distinguishedname,
     ldapclient,
@@ -13,7 +13,13 @@ from anyldap.protocols.ldap import (
 )
 
 
-async def main(cfg, fromDN, toDN, binddn, bindPassword):
+async def main(
+    cfg: interfaces.ILDAPConfig,
+    fromDN: str,
+    toDN: str,
+    binddn: str | None,
+    bindPassword: str | None,
+) -> None:
     from_dn = distinguishedname.DistinguishedName(stringValue=fromDN)
     to_dn = distinguishedname.DistinguishedName(stringValue=toDN)
     creator = ldapconnector.LDAPClientCreator(None, ldapclient.LDAPClient)
@@ -35,12 +41,12 @@ async def main(cfg, fromDN, toDN, binddn, bindPassword):
 class MyOptions(usage.Options, usage.Options_service_location, usage.Options_bind):
     """Object rename utility."""
 
-    def parseArgs(self, fromDN, toDN):
+    def parseArgs(self, fromDN: str, toDN: str) -> None:
         self.opts["from"] = fromDN
         self.opts["to"] = toDN
 
 
-def console_script():
+def console_script() -> None:
     try:
         opts = MyOptions()
         opts.parseOptions()

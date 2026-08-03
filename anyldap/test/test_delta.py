@@ -62,6 +62,8 @@ class TestModifications:
         """
         with pytest.raises(NotImplementedError):
             await delta.Operation().patch(self.foo)
+        with pytest.raises(NotImplementedError):
+            delta.Operation().asLDIF()
 
     def testAbstractAndInvalidOperations(self):
         modification = delta.Modification("cn", ["value"])
