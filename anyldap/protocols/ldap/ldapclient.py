@@ -158,8 +158,6 @@ class LDAPClient(Protocol):
     ) -> pureldap.LDAPMessage:
         if not self.connected:
             raise LDAPClientConnectionLostException()
-        # Every request that goes on the wire is also a BER object.
-        assert isinstance(op, pureber.BERBase)
         msg = pureldap.LDAPMessage(op, controls=controls)
         if self.debug:
             logger.debug("C->S %s", repr(msg))

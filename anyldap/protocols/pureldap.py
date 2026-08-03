@@ -182,7 +182,13 @@ class LDAPMessage(BERSequence):
         return self.__class__.__name__ + "(" + ", ".join(l) + ")"
 
 
-class LDAPProtocolOp:
+class LDAPProtocolOp(BERBase):
+    """An operation that goes on the wire.
+
+    Which makes it a BER object; every concrete one already inherits the BER
+    class matching its encoding alongside this.
+    """
+
     def __init__(self) -> None:
         pass
 

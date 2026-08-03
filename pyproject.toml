@@ -116,7 +116,6 @@ module = [
     "anyldap.protocols.ldap.autofill.posixAccount",
     "anyldap.protocols.ldap.fetchschema",
     "anyldap.protocols.ldap.ldapconnector",
-    "anyldap.protocols.ldap.ldapserver",
     "anyldap.protocols.ldap.merger",
     "anyldap.protocols.ldap.proxy",
     "anyldap.protocols.ldap.proxybase",

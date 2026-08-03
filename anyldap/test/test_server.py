@@ -202,6 +202,33 @@ class TestLDAPServerTest:
                 id=4,
             ).toWire())
 
+    async def test_bind_sasl_notSupported(self):
+        """
+        A SASL bind is refused as an unsupported authentication method.
+
+        The credentials of a SASL bind are a (mechanism, credentials) pair
+        rather than a password, and nothing here knows how to check one. The
+        pair used to be handed to the entry as if it were a password, which
+        failed to encode and came back as a protocol error.
+        """
+        await self._send(
+            pureldap.LDAPMessage(
+                pureldap.LDAPBindRequest(
+                    dn="cn=thingie,ou=stuff,dc=example,dc=com",
+                    auth=("DIGEST-MD5", b"creds"),
+                    sasl=True,
+                ),
+                id=4,
+            ).toWire()
+        )
+        assert self.output == (pureldap.LDAPMessage(
+                pureldap.LDAPBindResponse(
+                    resultCode=ldaperrors.LDAPAuthMethodNotSupported.resultCode,
+                    errorMessage="SASL authentication is not supported",
+                ),
+                id=4,
+            ).toWire())
+
     async def test_bind_invalidCredentials_badPassword(self):
         await self._send(
             pureldap.LDAPMessage(
@@ -938,7 +965,7 @@ class TestLDAPServerTest:
         )
         assert messages[0] == ("User cn=thingie,ou=stuff,dc=example,dc=com "
             "tried to change password of "
-            "b'cn=another,ou=stuff,dc=example,dc=com'")
+            "cn=another,ou=stuff,dc=example,dc=com")
         assert commits == [], "Server committed data."
         assert self.output == (pureldap.LDAPMessage(
                 pureldap.LDAPExtendedResponse(
