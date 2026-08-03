@@ -27,6 +27,7 @@ prune anyldap/test/ldif/webtests.tmp
 # setuptools-scm adds every tracked file to the sdist, so the repository-only
 # ones have to be pruned back out here.
 prune .github
+prune interop
 exclude .git-blame-ignore-revs
 exclude .gitignore
 exclude .pre-commit-config.yaml

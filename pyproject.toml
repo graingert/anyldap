@@ -85,6 +85,7 @@ include = ["anyldap*"]
 ignore = [
     ".git-blame-ignore-revs",
     ".github/**",
+    "interop/**",
     ".gitignore",
     ".pre-commit-config.yaml",
     ".readthedocs.yml",
@@ -201,6 +202,23 @@ commands =
     linters: pre-commit {posargs:run --all-files --show-diff-on-failure}
 
     mypy: mypy {posargs:anyldap}
+
+; Checks this client against python-ldap itself, on a real OpenLDAP server.
+; Not in envlist: it needs slapd installed, and headers to build python-ldap
+; against. The tests skip themselves when slapd is not there.
+[testenv:interop]
+deps =
+    anyio
+    dnspython
+    exceptiongroup
+    outcome
+    pyparsing
+    pytest
+    pytest-cov
+    python-ldap
+    zope.interface
+commands =
+    {envpython} -m pytest {posargs:interop} --no-cov
 
 [testenv:documentation]
 deps = sphinx
