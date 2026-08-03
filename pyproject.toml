@@ -131,7 +131,6 @@ module = [
     "anyldap.protocols.ldap.proxy",
     "anyldap.protocols.ldap.proxybase",
     "anyldap.protocols.ldap.svcbindproxy",
-    "anyldap.protocols.pureber",
     "anyldap.protocols.pureldap",
     "anyldap.samba.smbpassword",
     "anyldap.schema",
