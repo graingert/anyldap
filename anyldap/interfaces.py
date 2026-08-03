@@ -214,14 +214,17 @@ class IEditableLDAPEntry(ILDAPEntry):
 
         """
 
-    def setPassword(newPasswd: bytes) -> Awaitable[object]:
+    def setPassword(newPasswd: bytes) -> object | Awaitable[object]:
         """
 
         Set all applicable passwords for this object.
 
         @param newPasswd: A string containing the new password.
 
-        @return: Completes when the operation is done.
+        @return: Completes when the operation is done. An entry that stores
+        its own attributes does this synchronously; one backed by a server
+        has to await, so callers pass the result through
+        anyldap._async.await_result.
 
         """
 

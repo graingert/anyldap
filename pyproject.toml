@@ -107,7 +107,6 @@ module = [
     "anyldap.checkers",
     "anyldap.config",
     "anyldap.dns",
-    "anyldap.entry",
     "anyldap.entryhelpers",
     "anyldap.generate_password",
     "anyldap.inmemory",

@@ -27,14 +27,21 @@ class TestBaseLDAPEntry:
 
     def testEditableAbstractOperations(self):
         value = entry.EditableLDAPEntry(dn="dc=foo")
+        with pytest.raises(NotImplementedError):
+            value.undo()
+
+    async def testEditableAbstractAsyncOperations(self):
+        """
+        The operations a backend has to reach out to do are awaited.
+        """
+        value = entry.EditableLDAPEntry(dn="dc=foo")
         for operation, args in [
-            (value.undo, ()),
             (value.commit, ()),
             (value.move, ("dc=bar",)),
             (value.delete, ()),
         ]:
             with pytest.raises(NotImplementedError):
-                operation(*args)
+                await operation(*args)
 
     def testEqualitySameType(self):
         """

@@ -1,6 +1,8 @@
 import base64
 import random
+from collections.abc import Iterable, Iterator, Mapping
 from hashlib import sha1
+from typing import ClassVar
 
 from zope.interface import implementer
 
@@ -9,16 +11,20 @@ from anyldap._collections import InsensitiveDict
 from anyldap._encoder import WireStrAlias, get_strings, to_bytes
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldif
 
+# An attribute name, or one of its values: text on the way in, bytes off the
+# wire.
+AttributeText = str | bytes
 
-def sshaDigest(passphrase, salt=None):
+
+def sshaDigest(passphrase: bytes, salt: bytes | None = None) -> bytes:
     """
     Return the salted SHA for `passphrase` which is passed as bytes.
     """
     if salt is None:
-        salt = ""
+        text = ""
         for i in range(8):
-            salt += chr(random.randint(0, 127))
-        salt = salt.encode("ascii")
+            text += chr(random.randint(0, 127))
+        salt = text.encode("ascii")
 
     s = sha1()
     s.update(passphrase)
@@ -30,12 +36,20 @@ def sshaDigest(passphrase, salt=None):
 
 @implementer(interfaces.ILDAPEntry)
 class BaseLDAPEntry(WireStrAlias):
-    dn = None
-    _object_class_keys = set(get_strings("objectClass"))
-    _object_class_lower_keys = set(get_strings("objectclass"))
-    _user_password_keys = set(get_strings("userPassword"))
+    dn: distinguishedname.DistinguishedName
+    _object_class_keys: ClassVar[set[AttributeText]] = set(get_strings("objectClass"))
+    _object_class_lower_keys: ClassVar[set[AttributeText]] = set(
+        get_strings("objectclass")
+    )
+    _user_password_keys: ClassVar[set[AttributeText]] = set(
+        get_strings("userPassword")
+    )
 
-    def __init__(self, dn, attributes={}):
+    def __init__(
+        self,
+        dn: interfaces.AnyDN,
+        attributes: Mapping[AttributeText, Iterable[AttributeText]] = {},
+    ) -> None:
         """
 
         Initialize the object.
@@ -46,45 +60,60 @@ class BaseLDAPEntry(WireStrAlias):
         attribute types to list of attribute values.
 
         """
-        self._attributes = InsensitiveDict()
+        self._attributes: InsensitiveDict[
+            AttributeText, attributeset.LDAPAttributeSet[AttributeText]
+        ] = InsensitiveDict()
         self.dn = distinguishedname.DistinguishedName(dn)
 
+        # Collected case-insensitively first, so that an entry given both
+        # "cn" and "CN" ends up with one attribute holding all the values.
+        collected: InsensitiveDict[AttributeText, list[AttributeText]] = (
+            InsensitiveDict()
+        )
         for k, vs in attributes.items():
-            if k not in self._attributes:
-                self._attributes[k] = []
-            self._attributes[k].extend(vs)
+            if k not in collected:
+                collected[k] = []
+            collected[k].extend(vs)
 
-        for k, vs in self._attributes.items():
+        for k, vs in collected.items():
             self._attributes[k] = self.buildAttributeSet(k, vs)
 
-    def buildAttributeSet(self, key, values):
+    def buildAttributeSet(
+        self, key: AttributeText, values: Iterable[AttributeText]
+    ) -> attributeset.LDAPAttributeSet[AttributeText]:
         return attributeset.LDAPAttributeSet(key, values)
 
-    def __getitem__(self, key):
+    def __getitem__(
+        self, key: AttributeText
+    ) -> attributeset.LDAPAttributeSet[AttributeText]:
         for k in get_strings(key):
             if k in self._attributes:
                 return self._attributes[k]
         raise KeyError(key)
 
-    def get(self, key, default=None):
+    def get(
+        self,
+        key: AttributeText,
+        default: Iterable[AttributeText] | None = None,
+    ) -> Iterable[AttributeText] | None:
         for k in get_strings(key):
             if k in self._attributes:
                 return self._attributes[k]
         return default
 
-    def has_key(self, key):
+    def has_key(self, key: AttributeText) -> bool:
         for k in get_strings(key):
             if k in self._attributes:
                 return True
         return False
 
-    def __contains__(self, key):
+    def __contains__(self, key: AttributeText) -> bool:
         return self.has_key(key)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[AttributeText]:
         yield from self._attributes.iterkeys()
 
-    def keys(self):
+    def keys(self) -> list[AttributeText]:
         a = []
         for key in self._object_class_keys:
             if key in self._attributes:
@@ -96,7 +125,7 @@ class BaseLDAPEntry(WireStrAlias):
                 a.append(key)
         return a
 
-    def items(self):
+    def items(self) -> list[tuple[AttributeText, list[AttributeText]]]:
         a = []
 
         for key in self._object_class_keys:
@@ -115,7 +144,7 @@ class BaseLDAPEntry(WireStrAlias):
 
         return a
 
-    def toWire(self):
+    def toWire(self) -> bytes:
         a = []
 
         for key in self._object_class_keys:
@@ -132,39 +161,39 @@ class BaseLDAPEntry(WireStrAlias):
                 a.append((key, vs))
         return ldif.asLDIF(self.dn.getText(), a)
 
-    def getLDIF(self):
+    def getLDIF(self) -> str:
         return self.toWire().decode("utf-8")
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, BaseLDAPEntry):
             return NotImplemented
         if self.dn != other.dn:
-            return 0
+            return False
 
         my = sorted((key for key in self), key=to_bytes)
         its = sorted((key for key in other), key=to_bytes)
         if my != its:
-            return 0
+            return False
         for key in my:
             myAttr = self[key]
             itsAttr = other[key]
             if myAttr != itsAttr:
-                return 0
-        return 1
-
-    def __ne__(self, other):
-        return not self == other
-
-    def __len__(self):
-        return len(self.keys())
-
-    def __bool__(self):
+                return False
         return True
 
-    def __nonzero__(self):
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    def __len__(self) -> int:
+        return len(self.keys())
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __nonzero__(self) -> bool:
         return self.__bool__()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         keys = sorted((key for key in self), key=to_bytes)
         a = []
         for key in keys:
@@ -173,7 +202,7 @@ class BaseLDAPEntry(WireStrAlias):
         dn = self.dn.getText()
         return f"{self.__class__.__name__}({dn!r}, {{{attributes}}})"
 
-    def diff(self, other):
+    def diff(self, other: "BaseLDAPEntry") -> delta.ModifyOp | None:
         """
         Compute differences between this and another LDAP entry.
 
@@ -186,7 +215,7 @@ class BaseLDAPEntry(WireStrAlias):
         if self == other:
             return None
 
-        r = []
+        r: list[delta.Modification] = []
 
         myKeys = {key for key in self}
         otherKeys = {key for key in other}
@@ -217,35 +246,39 @@ class BaseLDAPEntry(WireStrAlias):
 
         return delta.ModifyOp(dn=self.dn, modifications=r)
 
-    async def bind(self, password):
+    async def bind(self, password: AttributeText) -> "BaseLDAPEntry":
         return self._bind(password)
 
     bind_async = bind
 
-    def _bind(self, password):
-        password = to_bytes(password)
+    def _bind(self, password: AttributeText) -> "BaseLDAPEntry":
+        secret = to_bytes(password)
         for key in self._user_password_keys:
-            for digest in self.get(key, ()):
-                digest = to_bytes(digest)
+            digests = self.get(key, ())
+            assert digests is not None
+            for value in digests:
+                digest = to_bytes(value)
                 if digest.startswith(b"{SSHA}"):
                     raw = base64.decodebytes(digest[len(b"{SSHA}") :])
                     salt = raw[20:]
-                    got = sshaDigest(password, salt)
+                    got = sshaDigest(secret, salt)
                     if got == digest:
                         return self
                 else:
                     # Plaintext
-                    if digest == password:
+                    if digest == secret:
                         return self
         raise ldaperrors.LDAPInvalidCredentials()
 
-    def hasMember(self, dn):
-        for memberDN in self.get("member", []):
+    def hasMember(self, dn: object) -> bool:
+        members = self.get("member", [])
+        assert members is not None
+        for memberDN in members:
             if memberDN == dn:
                 return True
         return False
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         # FIXME:https://github.com/graingert/anyldap/issues/101
         # The hash should take into consideration any attribute used to
         # decide the equality.
@@ -254,26 +287,26 @@ class BaseLDAPEntry(WireStrAlias):
 
 @implementer(interfaces.IEditableLDAPEntry)
 class EditableLDAPEntry(BaseLDAPEntry):
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: AttributeText, value: Iterable[AttributeText]) -> None:
         new = self.buildAttributeSet(key, value)
         self._attributes[key] = new
 
-    def __delitem__(self, key):
+    def __delitem__(self, key: AttributeText) -> None:
         del self._attributes[key]
 
-    def undo(self):
+    def undo(self) -> None:
         raise NotImplementedError()
 
-    def commit(self):
+    async def commit(self) -> bool:
         raise NotImplementedError()
 
-    def move(self, newDN):
+    async def move(self, newDN: interfaces.AnyDN) -> object:
         raise NotImplementedError()
 
-    def delete(self):
+    async def delete(self) -> object:
         raise NotImplementedError()
 
-    def setPassword(self, newPasswd, salt=None):
+    def setPassword(self, newPasswd: bytes, salt: bytes | None = None) -> None:
         """
         Update the password for the entry with a new password and salt passed
         as bytes.
