@@ -238,11 +238,9 @@ def test_bind_password_is_read_from_real_inherited_fd(
 
 def test_fetchschema_print_results(capsys: pytest.CaptureFixture[str]) -> None:
     # Printed, not parsed: the descriptions stand in for their own repr.
-    fetchschema._printResults(
-        (["one", "two"], ["three"])  # type: ignore[list-item]
-    )
+    fetchschema._printResults((["one", "two"], ["three"]))
     assert capsys.readouterr().out == "attributetype one\nattributetype two\n\nobjectclass three\n"
-    fetchschema._printResults(([], ["three"]))  # type: ignore[list-item]
+    fetchschema._printResults(([], ["three"]))
     assert capsys.readouterr().out == "objectclass three\n"
 
 

@@ -1242,16 +1242,16 @@ class TestMessageRepresentation:
                 pureber.BEROctetString(cookie),
             ]
         )
-        # A paged results control carries a BER sequence; this one is never
-        # encoded, only shown, so it is left as the object it renders as.
+        # A control's value goes on the wire encoded, which is how it comes
+        # back off it and so how a message shows it.
         controls: list[pureldap.Control] = [
-            ("1.2.840.113556.1.4.319", None, control_value)  # type: ignore[list-item]
+            ("1.2.840.113556.1.4.319", None, control_value.toWire())
         ]
         search_request = pureldap.LDAPSearchRequest("cn=foo,ou=baz,dc=example,dc=org")
         ldap_msg = pureldap.LDAPMessage(
             id=1, value=search_request, controls=controls, tag=1
         )
-        expected_value = "LDAPMessage(id=1, value=LDAPSearchRequest(baseObject='cn=foo,ou=baz,dc=example,dc=org', scope=2, derefAliases=0, sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_present(value='objectClass'), attributes=[]), controls=[('1.2.840.113556.1.4.319', None, BERSequence(value=[BERInteger(value=10), BEROctetString(value='xyzzy')]))], tag=1)"
+        expected_value = "LDAPMessage(id=1, value=LDAPSearchRequest(baseObject='cn=foo,ou=baz,dc=example,dc=org', scope=2, derefAliases=0, sizeLimit=0, timeLimit=0, typesOnly=0, filter=LDAPFilter_present(value='objectClass'), attributes=[]), controls=[('1.2.840.113556.1.4.319', None, b'0\\n\\x02\\x01\\n\\x04\\x05xyzzy')], tag=1)"
         assert expected_value == repr(ldap_msg)
 
 
@@ -1415,46 +1415,47 @@ class TestRepresentations:
         """LDAPSearchResultReference.__repr__"""
         assert (repr(
                 pureldap.LDAPSearchResultReference(
-                    # Referrals arrive as LDAPString; these are only repr'd.
+                    # Referrals arrive as LDAPString, whichever spelling the
+                    # wire or the caller used.
                     uris=[
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
+                        pureldap.LDAPString(b"ldap://example.com/dc=foo,dc=example,dc=com"),
+                        pureldap.LDAPString(b"ldap://example.com/dc=foo,dc=example,dc=com"),
                     ]
                 )
-            )) == ("LDAPSearchResultReference(uris=[b'ldap://example.com/dc=foo,dc=example,dc=com', "
-            "b'ldap://example.com/dc=foo,dc=example,dc=com'])")
+            )) == ("LDAPSearchResultReference(uris=[LDAPString(value=b'ldap://example.com/dc=foo,dc=example,dc=com'), "
+            "LDAPString(value=b'ldap://example.com/dc=foo,dc=example,dc=com')])")
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        "ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
-                        "ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
+                        pureldap.LDAPString("ldap://example.com/dc=foo,dc=example,dc=com"),
+                        pureldap.LDAPString("ldap://example.com/dc=foo,dc=example,dc=com"),
                     ]
                 )
-            )) == ("LDAPSearchResultReference(uris=['ldap://example.com/dc=foo,dc=example,dc=com', "
-            "'ldap://example.com/dc=foo,dc=example,dc=com'])")
+            )) == ("LDAPSearchResultReference(uris=[LDAPString(value='ldap://example.com/dc=foo,dc=example,dc=com'), "
+            "LDAPString(value='ldap://example.com/dc=foo,dc=example,dc=com')])")
 
     def test_search_result_reference_with_tag_repr(self) -> None:
         """LDAPSearchResultReference.__repr__ with custom tag attribute"""
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
-                        b"ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
+                        pureldap.LDAPString(b"ldap://example.com/dc=foo,dc=example,dc=com"),
+                        pureldap.LDAPString(b"ldap://example.com/dc=foo,dc=example,dc=com"),
                     ],
                     tag=42,
                 )
-            )) == ("LDAPSearchResultReference(uris=[b'ldap://example.com/dc=foo,dc=example,dc=com', "
-            "b'ldap://example.com/dc=foo,dc=example,dc=com'], tag=42)")
+            )) == ("LDAPSearchResultReference(uris=[LDAPString(value=b'ldap://example.com/dc=foo,dc=example,dc=com'), "
+            "LDAPString(value=b'ldap://example.com/dc=foo,dc=example,dc=com')], tag=42)")
         assert (repr(
                 pureldap.LDAPSearchResultReference(
                     uris=[
-                        "ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
-                        "ldap://example.com/dc=foo,dc=example,dc=com",  # type: ignore[list-item]
+                        pureldap.LDAPString("ldap://example.com/dc=foo,dc=example,dc=com"),
+                        pureldap.LDAPString("ldap://example.com/dc=foo,dc=example,dc=com"),
                     ],
                     tag=42,
                 )
-            )) == ("LDAPSearchResultReference(uris=['ldap://example.com/dc=foo,dc=example,dc=com', "
-            "'ldap://example.com/dc=foo,dc=example,dc=com'], tag=42)")
+            )) == ("LDAPSearchResultReference(uris=[LDAPString(value='ldap://example.com/dc=foo,dc=example,dc=com'), "
+            "LDAPString(value='ldap://example.com/dc=foo,dc=example,dc=com')], tag=42)")
 
     def test_modify_request_repr(self) -> None:
         """LDAPModifyRequest.__repr__"""

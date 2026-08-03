@@ -1,5 +1,5 @@
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from zope.interface import Interface
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 # What a method takes where it will build a DistinguishedName out of it.
 AnyDN = DistinguishedName | str | bytes
+
 
 class ServiceConnector(Protocol):
     """Takes over connecting, given a way to build the protocol object."""
@@ -467,9 +468,7 @@ class LDAPBaseConfigLike(Protocol):
 
     def getBaseDN(self) -> DistinguishedName | str: ...
 
-    def getServiceLocationOverrides(
-        self,
-    ) -> Mapping[Any, ServiceLocation]: ...
+    def getServiceLocationOverrides(self) -> ServiceLocationOverrides: ...
 
 
 class LDAPConfigLike(Protocol):
@@ -483,9 +482,7 @@ class LDAPConfigLike(Protocol):
 
     def getIdentitySearch(self, name: str) -> str: ...
 
-    def getServiceLocationOverrides(
-        self,
-    ) -> Mapping[Any, ServiceLocation]: ...
+    def getServiceLocationOverrides(self) -> ServiceLocationOverrides: ...
 
 
 class ILDAPConfig(Interface):

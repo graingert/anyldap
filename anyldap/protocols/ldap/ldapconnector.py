@@ -184,17 +184,31 @@ async def _connect(
 ) -> ByteStream:
     """anyio.connect_tcp, whose overloads take tls as a literal.
 
+    A context is a request for TLS on its own, which is the condition anyio
+    applies; saying it here is what lets the literal be a literal.
+
     A protocol reads its stream from its own task, so closing cannot also
     read: an LDAPS stream is closed the same way STARTTLS closes the one it
     upgraded.
     """
-    return await anyio.connect_tcp(  # type: ignore[call-overload,no-any-return]
+    local_host = bindAddress[0] if bindAddress else None
+    local_port = bindAddress[1] if bindAddress else None
+    if tls or ssl_context is not None:
+        return await anyio.connect_tcp(
+            host,
+            port,
+            local_host=local_host,
+            local_port=local_port,
+            tls=True,
+            ssl_context=ssl_context,
+            tls_standard_compatible=False,
+        )
+    return await anyio.connect_tcp(
         host,
         port,
-        local_host=bindAddress[0] if bindAddress else None,
-        local_port=bindAddress[1] if bindAddress else None,
-        tls=tls,
-        ssl_context=ssl_context,
+        local_host=local_host,
+        local_port=local_port,
+        tls=False,
         tls_standard_compatible=False,
     )
 

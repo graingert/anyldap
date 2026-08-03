@@ -3,16 +3,12 @@ from collections.abc import Sequence
 
 import anyio
 
-from anyldap import config, interfaces, schema, usage
+from anyldap import config, interfaces, usage
 from anyldap.protocols.ldap import fetchschema, ldapclient, ldapconnector
 
 
-def _printResults(
-    result: tuple[
-        Sequence[schema.AttributeTypeDescription],
-        Sequence[schema.ObjectClassDescription],
-    ],
-) -> None:
+def _printResults(result: tuple[Sequence[object], Sequence[object]]) -> None:
+    """Print a schema, however each description renders itself."""
     attributeTypes, objectClasses = result
     something = False
     for attribute_type in attributeTypes:

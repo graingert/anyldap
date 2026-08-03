@@ -330,9 +330,10 @@ class BERSequence(BERStructured, UserList[BERBase]):
     # TODO __getslice__ calls __init__ with no args.
     tag = 0x10
 
-    # UserList is unhashable and BERBase hashes its wire form. The MRO already
-    # resolves that in BERBase's favour; saying so here settles it in the class
-    # rather than leaving it to base ordering.
+    # UserList sets __hash__ to None and BERBase hashes its wire form. The MRO
+    # already resolves that in BERBase's favour; saying so here settles it in
+    # the class rather than leaving it to base ordering. Restoring a hash a
+    # base removed is what no annotation can express.
     __hash__ = BERBase.__hash__  # type: ignore[assignment]
 
     @classmethod
