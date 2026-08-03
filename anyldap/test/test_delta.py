@@ -46,7 +46,8 @@ def test_modify_op_survives_its_own_request() -> None:
 class TestModifications:
     def setup_method(self) -> None:
         self.foo = ldapsyntax.LDAPEntry(
-            None,
+            # These modifications are journalled, never sent.
+            None,  # type: ignore[arg-type]
             dn="cn=foo,dc=example,dc=com",
             attributes={
                 "objectClass": ["person"],
@@ -235,7 +236,7 @@ class TestOperationTestCase:
     Test case for operations on a LDAP tree.
     """
 
-    def getRoot(self):
+    def getRoot(self) -> inmemory.ReadOnlyInMemoryLDAPEntry:
         """
         Returns a new LDAP root for dc=example,dc=com.
         """

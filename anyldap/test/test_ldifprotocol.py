@@ -4,12 +4,14 @@ Test cases for anyldap.protocols.ldap.ldif module.
 
 import pytest
 
+from anyldap import entry
 from anyldap.protocols.ldap import distinguishedname, ldifprotocol
 
 
 def test_base_parser_accepts_entry_hook() -> None:
+    """The base parser's hook takes whatever it is handed and does nothing."""
     parser = ldifprotocol.LDIF()
-    assert parser.gotEntry(object()) is None
+    parser.gotEntry(object())
 
 
 def test_line_receiver_is_abstract() -> None:
@@ -24,7 +26,7 @@ class FixStringRepresentation:
     A simple object which has a fix string representation.
     """
 
-    def __str__(self):
+    def __str__(self) -> str:
         return "Here I am!"
 
 
@@ -60,9 +62,10 @@ class TestLDIFParseError:
 class LDIFDriver(ldifprotocol.LDIF):
     def __init__(self) -> None:
         super().__init__()
-        self.listOfCompleted = []
+        self.listOfCompleted: list[entry.BaseLDAPEntry] = []
 
-    def gotEntry(self, obj) -> None:
+    def gotEntry(self, obj: object) -> None:
+        assert isinstance(obj, entry.BaseLDAPEntry)
         self.listOfCompleted.append(obj)
 
 

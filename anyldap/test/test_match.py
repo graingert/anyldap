@@ -8,7 +8,7 @@ import pytest
 
 from anyldap import entryhelpers, inmemory
 from anyldap.protocols import pureber, pureldap
-from anyldap.protocols.ldap import ldapsyntax
+from anyldap.protocols.ldap import ldaperrors, ldapsyntax
 
 pytestmark = pytest.mark.anyio
 
@@ -404,12 +404,12 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(
             pureldap.LDAPFilter_greaterOrEqual(
-                pureber.BEROctetString("foo"), pureber.BERInteger(42)
+                pureber.BEROctetString("foo"), pureber.BEROctetString("42")
             )
         )
         assert result is False
@@ -420,12 +420,12 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(
             pureldap.LDAPFilter_greaterOrEqual(
-                pureber.BEROctetString("num"), pureber.BERInteger(3)
+                pureber.BEROctetString("num"), pureber.BEROctetString("3")
             )
         )
         assert result is True
@@ -436,12 +436,12 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(
             pureldap.LDAPFilter_greaterOrEqual(
-                pureber.BEROctetString("num"), pureber.BERInteger(4)
+                pureber.BEROctetString("num"), pureber.BEROctetString("4")
             )
         )
         assert result is True
@@ -452,12 +452,12 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "bValue": [4],
+                "bValue": ["4"],
             },
         )
         result = o.match(
             pureldap.LDAPFilter_greaterOrEqual(
-                pureber.BEROctetString("num"), pureber.BERInteger(5)
+                pureber.BEROctetString("num"), pureber.BEROctetString("5")
             )
         )
         assert result is False
@@ -468,12 +468,12 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(
             pureldap.LDAPFilter_lessOrEqual(
-                pureber.BEROctetString("foo"), pureber.BERInteger(42)
+                pureber.BEROctetString("foo"), pureber.BEROctetString("42")
             )
         )
         assert result is False
@@ -484,12 +484,12 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(
             pureldap.LDAPFilter_lessOrEqual(
-                pureber.BEROctetString("num"), pureber.BERInteger(5)
+                pureber.BEROctetString("num"), pureber.BEROctetString("5")
             )
         )
         assert result is True
@@ -500,12 +500,12 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(
             pureldap.LDAPFilter_lessOrEqual(
-                pureber.BEROctetString("num"), pureber.BERInteger(4)
+                pureber.BEROctetString("num"), pureber.BEROctetString("4")
             )
         )
         assert result is True
@@ -516,12 +516,12 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(
             pureldap.LDAPFilter_lessOrEqual(
-                pureber.BEROctetString("num"), pureber.BERInteger(3)
+                pureber.BEROctetString("num"), pureber.BEROctetString("3")
             )
         )
         assert result is False
@@ -543,7 +543,7 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(m)
@@ -566,7 +566,7 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
         result = o.match(m)
@@ -578,7 +578,7 @@ class TestEntryMatch:
             attributes={
                 "objectClass": ["a", "b"],
                 "aValue": ["b"],
-                "num": [4],
+                "num": ["4"],
             },
         )
 
@@ -588,7 +588,8 @@ class TestEntryMatch:
 
         unknownMatch = UnknownMatch()
         with pytest.raises(ldapsyntax.MatchNotImplemented, match=re.escape("Match type not implemented: UnknownMatch()")):
-            o.match(unknownMatch)
+            # Not a filter at all, which is what the entry refuses to match.
+            o.match(unknownMatch)  # type: ignore[arg-type]
 
     def test_substring_attribute_absent(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
@@ -611,10 +612,10 @@ class TestEntryMatch:
         assert entry.match(filter_object)
 
     def test_greater_or_equal_checks_multiple_values_without_match(self) -> None:
-        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"rank": [1, 2]})
+        entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"rank": ["1", "2"]})
         filter_object = pureldap.LDAPFilter_greaterOrEqual(
             attributeDesc=pureldap.LDAPAttributeDescription("rank"),
-            assertionValue=pureldap.LDAPAssertionValue(3),
+            assertionValue=pureldap.LDAPAssertionValue("3"),
         )
         assert not (entry.match(filter_object))
 
@@ -652,7 +653,7 @@ class TestEntryMatch:
 
     async def test_search_rejects_unknown_scope(self) -> None:
         entry = inmemory.ReadOnlyInMemoryLDAPEntry("cn=foo", {"cn": ["foo"]})
-        with pytest.raises(ldapsyntax.ldaperrors.LDAPProtocolError):
+        with pytest.raises(ldaperrors.LDAPProtocolError):
             await entry.search(scope=999)
 
 
@@ -660,7 +661,7 @@ class TestEntryMatch:
 # TODO LDAPFilter_extensibleMatch
 
 
-def _from_the_wire(filt):
+def _from_the_wire(filt: pureber.BERBase) -> pureber.BERBase:
     """The filter as a server receives it, rather than as it was built."""
     request = pureldap.LDAPSearchRequest(baseObject="dc=example,dc=com", filter=filt)
     decoder = pureldap.LDAPBERDecoderContext_TopLevel(
@@ -677,6 +678,8 @@ def _from_the_wire(filt):
         decoder, pureldap.LDAPMessage(request, id=1).toWire()
     )
     assert used == len(pureldap.LDAPMessage(request, id=1).toWire())
+    assert isinstance(message, pureldap.LDAPMessage)
+    assert isinstance(message.value, pureldap.LDAPSearchRequest)
     return message.value.filter
 
 
@@ -705,7 +708,7 @@ _VALUE = pureldap.LDAPAssertionValue("alice")
     ],
     ids=lambda f: type(f).__name__,
 )
-def test_match_survives_the_wire(filt) -> None:
+def test_match_survives_the_wire(filt: pureber.BERBase) -> None:
     """An entry matches a filter the same whether it was built or decoded.
 
     A filter off the wire holds its values as bytes while an entry loaded

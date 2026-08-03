@@ -2,6 +2,8 @@
 Test cases for anyldap.schema module.
 """
 
+from typing import Any
+
 import pytest
 
 from anyldap import schema
@@ -75,7 +77,7 @@ OBJECTCLASSES = {
 
 
 class TestAttributeType_KnownValues:
-    knownValues = [
+    knownValues: list[tuple[bytes, dict[str, Any]]] = [
         (
             b"""( 2.5.4.4 NAME ( 'sn' 'surname' )
             DESC 'RFC2256: last (family) name(s) for which the entity is known by'
@@ -267,7 +269,7 @@ class TestAttributeType_KnownValues:
     ]
 
     def testParse(self) -> None:
-        defaults = {
+        defaults: dict[str, Any] = {
             "name": None,
             "desc": None,
             "obsolete": 0,
@@ -305,7 +307,7 @@ class TestAttributeType_KnownValues:
 
 
 class TestObjectClass_KnownValues:
-    knownValues = [
+    knownValues: list[tuple[bytes, dict[str, Any]]] = [
         (
             OBJECTCLASSES["top"],
             {
@@ -455,7 +457,7 @@ class TestObjectClass_KnownValues:
     ]
 
     def testParse(self) -> None:
-        defaults = {
+        defaults: dict[str, Any] = {
             "name": None,
             "desc": None,
             "obsolete": 0,
@@ -488,7 +490,7 @@ class TestObjectClass_KnownValues:
 
 
 class TestSyntaxDescription_KnownValues:
-    knownValues = [
+    knownValues: list[tuple[bytes, dict[str, Any]]] = [
         (
             b"( 1.3.6.1.4.1.1466.115.121.1.3 DESC 'Attribute Type Description' )",
             {
@@ -548,7 +550,7 @@ class TestSyntaxDescription_KnownValues:
 
 
 class TestMatchingRuleDescription_KnownValues:
-    knownValues = [
+    knownValues: list[tuple[bytes, dict[str, Any]]] = [
         (
             b"( 2.5.13.16 NAME 'bitStringMatch' SYNTAX 1.3.6.1.4.1.1466.115.121.1.6 )",
             {
