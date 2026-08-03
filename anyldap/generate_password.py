@@ -7,7 +7,7 @@ class PwgenException(Exception):
     pass
 
 
-async def generate_async(n=1):
+async def generate_async(n: int = 1) -> list[str]:
     assert n > 0
     result = await anyio.run_process(
         ["pwgen", "-cn1", "-N", str(n)],
@@ -27,14 +27,14 @@ async def generate_async(n=1):
     return lines
 
 
-async def generate(_unused_runtime=None, n=1):
+async def generate(_unused_runtime: object = None, n: int = 1) -> list[str]:
     return await generate_async(n)
 
 
 if __name__ == "__main__":
     import sys
 
-    async def _main():
+    async def _main() -> None:
         for password in await generate_async(5):
             sys.stdout.write(f"{password}\n")
 

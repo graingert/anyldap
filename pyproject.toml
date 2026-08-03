@@ -105,10 +105,6 @@ module = [
     "anyldap._scripts.rename",
     "anyldap._scripts.search",
     "anyldap.checkers",
-    "anyldap.config",
-    "anyldap.dns",
-    "anyldap.generate_password",
-    "anyldap.numberalloc",
     "anyldap.protocols.ldap.autofill.posixAccount",
     "anyldap.protocols.ldap.autofill.sambaSamAccount",
     "anyldap.protocols.ldap.fetchschema",
@@ -121,7 +117,6 @@ module = [
     "anyldap.protocols.ldap.proxy",
     "anyldap.protocols.ldap.proxybase",
     "anyldap.protocols.ldap.svcbindproxy",
-    "anyldap.samba.smbpassword",
     "anyldap.schema",
     "anyldap.test._anyio_helpers",
     "anyldap.test._testing",
@@ -185,7 +180,6 @@ skip_covered = true
 
 [tool.coverage.paths]
 source = [
-    "anyldap",
     "*/site-packages/anyldap",
     '*\site-packages\anyldap',
 ]

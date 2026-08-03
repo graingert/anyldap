@@ -4,12 +4,14 @@ import struct
 from socket import inet_aton, inet_ntoa
 
 
-def aton_octets(ip):
+def aton_octets(ip: str) -> int:
     s = inet_aton(ip)
-    return struct.unpack("!I", s)[0]
+    value = struct.unpack("!I", s)[0]
+    assert isinstance(value, int)
+    return value
 
 
-def aton_numbits(num):
+def aton_numbits(num: int) -> int:
     n = 0
     while num > 0:
         n >>= 1
@@ -18,22 +20,23 @@ def aton_numbits(num):
     return n
 
 
-def aton(ip):
+def aton(ip: str | int) -> int:
     try:
         i = int(ip)
     except ValueError:
+        assert isinstance(ip, str)
         return aton_octets(ip)
     else:
         return aton_numbits(i)
 
 
-def ntoa(n):
+def ntoa(n: int) -> str:
     s = struct.pack("!I", n)
     ip = inet_ntoa(s)
     return ip
 
 
-def netmaskToNumbits(netmask):
+def netmaskToNumbits(netmask: str | int) -> int:
     bits = aton(netmask)
     i = 2 ** 31
     n = 0
@@ -46,7 +49,7 @@ def netmaskToNumbits(netmask):
     return n
 
 
-def ptrSoaName(ip, netmask):
+def ptrSoaName(ip: str | int, netmask: str | int) -> str:
     """
     Convert an IP address and netmask to a CIDR delegation
     -style zone name.

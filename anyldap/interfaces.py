@@ -1,4 +1,4 @@
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any, Protocol
 
 from zope.interface import Interface
@@ -12,6 +12,17 @@ from anyldap.protocols.pureber import BERBase
 
 # What a method takes where it will build a DistinguishedName out of it.
 AnyDN = DistinguishedName | str | bytes
+
+# Where to reach the server holding a given part of the tree.
+ServiceLocation = tuple[str | None, str | int | None]
+
+# Mapping is invariant in its key, so accepting a DN however it is spelled
+# means naming each spelling rather than the union of them.
+ServiceLocationOverrides = (
+    Mapping[DistinguishedName, ServiceLocation]
+    | Mapping[str, ServiceLocation]
+    | Mapping[bytes, ServiceLocation]
+)
 
 
 class Attributes(Protocol):
@@ -429,8 +440,7 @@ class ILDAPConfig(Interface):
         if configuration does not specify a base DN.
         """
 
-    def getServiceLocationOverrides(
-    ) -> dict[DistinguishedName, tuple[str | None, str | int | None]]:
+    def getServiceLocationOverrides() -> dict[DistinguishedName, ServiceLocation]:
         """
         Get the LDAP service location overrides, as a mapping of
         DistinguishedName to (host, port) tuples.
@@ -438,10 +448,7 @@ class ILDAPConfig(Interface):
 
     def copy(
         baseDN: AnyDN | None = None,
-        serviceLocationOverrides: dict[
-            DistinguishedName, tuple[str | None, str | int | None]
-        ]
-        | None = None,
+        serviceLocationOverrides: ServiceLocationOverrides | None = None,
     ) -> "ILDAPConfig":
         """
         Make a copy of this configuration, overriding certain aspects
