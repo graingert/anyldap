@@ -372,7 +372,7 @@ class TestLDAPServerTest:
             self.server.berdecoder, self.output
         )
         assert message.value.resultCode == ldaperrors.other
-        assert b"has no attribute" in message.value.errorMessage
+        assert b"cannot convert" in message.value.errorMessage
 
     async def test_search_outOfTree(self):
         """Attempt to get nonexistent DN results in noSuchObject error response"""

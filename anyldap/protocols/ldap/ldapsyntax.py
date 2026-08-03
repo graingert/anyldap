@@ -84,11 +84,11 @@ class CannotRemoveRDNError(Exception):
 class MatchNotImplemented(NotImplementedError):
     """Match type not implemented"""
 
-    def __init__(self, op):
+    def __init__(self, op: object) -> None:
         Exception.__init__(self)
         self.op = op
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.__doc__}: {self.op!r}"
 
 

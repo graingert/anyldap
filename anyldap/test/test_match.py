@@ -18,6 +18,10 @@ class TestEntryMatch:
         marker = object()
         assert entryhelpers.safelower(marker) is marker
 
+    def test_safelower_folds_values_with_lower(self):
+        assert entryhelpers.safelower("Foo") == "foo"
+        assert entryhelpers.safelower(b"Foo") == b"foo"
+
     def test_matchAll(self):
         o = inmemory.ReadOnlyInMemoryLDAPEntry(
             dn="cn=foo,dc=example,dc=com",
@@ -654,3 +658,65 @@ class TestEntryMatch:
 
 # TODO LDAPFilter_approxMatch
 # TODO LDAPFilter_extensibleMatch
+
+
+def _from_the_wire(filt):
+    """The filter as a server receives it, rather than as it was built."""
+    request = pureldap.LDAPSearchRequest(baseObject="dc=example,dc=com", filter=filt)
+    decoder = pureldap.LDAPBERDecoderContext_TopLevel(
+        inherit=pureldap.LDAPBERDecoderContext_LDAPMessage(
+            fallback=pureldap.LDAPBERDecoderContext(
+                fallback=pureber.BERDecoderContext()
+            ),
+            inherit=pureldap.LDAPBERDecoderContext(
+                fallback=pureber.BERDecoderContext()
+            ),
+        )
+    )
+    message, used = pureber.berDecodeObject(
+        decoder, pureldap.LDAPMessage(request, id=1).toWire()
+    )
+    assert used == len(pureldap.LDAPMessage(request, id=1).toWire())
+    return message.value.filter
+
+
+_KEY = pureldap.LDAPAttributeDescription("cn")
+_VALUE = pureldap.LDAPAssertionValue("alice")
+
+
+@pytest.mark.parametrize(
+    "filt",
+    [
+        pureldap.LDAPFilter_present("cn"),
+        pureldap.LDAPFilter_equalityMatch(attributeDesc=_KEY, assertionValue=_VALUE),
+        pureldap.LDAPFilter_greaterOrEqual(attributeDesc=_KEY, assertionValue=_VALUE),
+        pureldap.LDAPFilter_lessOrEqual(attributeDesc=_KEY, assertionValue=_VALUE),
+        pureldap.LDAPFilter_substrings(
+            type="cn",
+            substrings=[
+                pureldap.LDAPFilter_substrings_initial("al"),
+                pureldap.LDAPFilter_substrings_any("ic"),
+                pureldap.LDAPFilter_substrings_final("e"),
+            ],
+        ),
+        pureldap.LDAPFilter_extensibleMatch(
+            matchingRule=None, type="cn", matchValue="alice"
+        ),
+    ],
+    ids=lambda f: type(f).__name__,
+)
+def test_match_survives_the_wire(filt):
+    """An entry matches a filter the same whether it was built or decoded.
+
+    A filter off the wire holds its values as bytes while an entry loaded
+    from LDIF holds text, and matching used to compare the two directly:
+    substring and ordering filters raised TypeError, which is what a real
+    client's (cn=al*) reached on the server's search path.
+    """
+    o = inmemory.ReadOnlyInMemoryLDAPEntry(
+        dn="cn=alice,dc=example,dc=com",
+        attributes={"objectClass": ["person"], "cn": ["alice"]},
+    )
+
+    assert o.match(filt) is True
+    assert o.match(_from_the_wire(filt)) is True
