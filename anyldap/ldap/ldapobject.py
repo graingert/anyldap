@@ -15,6 +15,7 @@ be used from whichever task has it.
 import ssl
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
+from copy import copy
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, overload
 from urllib.parse import unquote, urlparse
@@ -24,7 +25,7 @@ from anyio.abc import ByteStream, SocketAttribute
 from anyio.streams.tls import TLSStream
 
 from anyldap._encoder import to_bytes, to_unicode
-from anyldap.ldap import controls, errors, sasl, schema
+from anyldap.ldap import controls, errors, ldapurl, sasl, schema
 from anyldap.ldap.constants import (
     AUTH_SIMPLE,
     DEREF_NEVER,
@@ -72,6 +73,7 @@ from anyldap.ldap.constants import (
     RES_MODIFY,
     RES_MODRDN,
     RES_SEARCH_ENTRY,
+    RES_SEARCH_REFERENCE,
     RES_SEARCH_RESULT,
     SASL_QUIET,
     SCOPE_BASE,
@@ -148,9 +150,19 @@ class _Pending:
     rather than reported as this operation's own.
     """
 
-    def __init__(self, rtype: int, response: type[pureldap.LDAPResult]) -> None:
+    def __init__(
+        self,
+        rtype: int,
+        response: type[pureldap.LDAPResult],
+        request: pureldap.LDAPProtocolRequest,
+        serverctrls: Controls = None,
+    ) -> None:
         self.rtype = rtype
         self.response = response
+        # What was sent, kept so that it can be sent again somewhere else
+        # when the server answers with a referral rather than an answer.
+        self.request = request
+        self.serverctrls = serverctrls
         # What has arrived and not yet been handed out, in the order the
         # server sent it: entries, references, and whatever the server said
         # in between while the operation was still running.
@@ -160,6 +172,12 @@ class _Pending:
         self.value: bytes | None = None
         self.error: errors.LDAPError | None = None
         self.done = False
+        # Where the server said to look instead: the URLs of a result that
+        # is nothing but a referral, and those of each continuation a search
+        # answered with along the way.
+        self.referral: list[str] = []
+        self.references: list[list[str]] = []
+        self.chased = False
 
 
 @asynccontextmanager
@@ -307,6 +325,50 @@ def _attributes(attrlist: Sequence[str] | None) -> list[str]:
     return attributes
 
 
+# How far a referral may be followed before it is called a loop. libldap
+# stops after this many hops too, and does not let the number be set: asking
+# for OPT_REFHOPLIMIT is an error there, so it is one here.
+REFERRAL_HOP_LIMIT = 5
+
+# Where the DN a request is about lives on the request. A referral says to
+# make the same request somewhere else, which means putting the DN the
+# referral names in the place the request keeps its own.
+_DN_ATTRIBUTE: Mapping[type[pureldap.LDAPProtocolRequest], str] = {
+    pureldap.LDAPSearchRequest: "baseObject",
+    pureldap.LDAPModifyRequest: "object",
+    pureldap.LDAPAddRequest: "entry",
+    # A delete request *is* the DN, so its value is where the DN is kept.
+    pureldap.LDAPDelRequest: "value",
+    pureldap.LDAPModifyDNRequest: "entry",
+    pureldap.LDAPCompareRequest: "entry",
+}
+
+
+def _elsewhere(
+    request: pureldap.LDAPProtocolRequest, url: "ldapurl.LDAPUrl", continuation: bool
+) -> pureldap.LDAPProtocolRequest:
+    """The same request, addressed to where a referral points.
+
+    A referral that names no DN is about the same entry as the request that
+    got it, so the DN is left as it was (RFC 4511 section 4.1.10). A search
+    continuation is different: it says where the rest of *this* search is,
+    so a URL without a DN searches from the root, which is what libldap
+    makes of one too.
+    """
+    rewritten = copy(request)
+    dn = url.dn or ""
+    if isinstance(rewritten, pureldap.LDAPSearchRequest):
+        if dn or continuation:
+            rewritten.baseObject = to_bytes(dn)
+        if url.scope is not None:
+            rewritten.scope = url.scope
+        return rewritten
+    attribute = _DN_ATTRIBUTE.get(type(rewritten))
+    if attribute is not None and dn:
+        setattr(rewritten, attribute, to_bytes(dn))
+    return rewritten
+
+
 def _parse_uri(uri: str) -> tuple[str, int, bool]:
     """The host, port and whether to raise TLS, out of an LDAP URL.
 
@@ -452,7 +514,12 @@ class SimpleLDAPObject:
         self.deref = DEREF_NEVER
         self.sizelimit = 0
         self.timelimit = 0
-        self.referrals = 0
+        # Referrals are chased unless they are turned off, which is what
+        # libldap does and so what python-ldap inherits.
+        self.referrals = 1
+        # How many referrals have been followed to arrive at this
+        # connection: a connection a caller made itself is at the start.
+        self._hops = 0
         self._given_context = ssl_context
         self._built_context: ssl.SSLContext | None = None
         self._tls_options: dict[int, object] = {}
@@ -605,7 +672,7 @@ class SimpleLDAPObject:
     ) -> int:
         """Send a request and answer with the message id of the operation."""
         message = await self._send(op, controls)
-        self._pending[message.id] = _Pending(rtype, response)
+        self._pending[message.id] = _Pending(rtype, response, op, controls)
         return message.id
 
     # Reading answers, and handing each to the operation it belongs to.
@@ -651,11 +718,14 @@ class SimpleLDAPObject:
             found: Entry | Reference
             if isinstance(response, pureldap.LDAPSearchResultEntry):
                 found = _entry(response)
+                rtype = RES_SEARCH_ENTRY
             else:
                 found = _reference(response)
-            operation.queue.append(
-                (RES_SEARCH_ENTRY, found, _controls(message.controls))
-            )
+                # Where the rest of this search is, kept so that it can be
+                # followed once the search itself has finished.
+                operation.references.append(found[1])
+                rtype = RES_SEARCH_REFERENCE
+            operation.queue.append((rtype, found, _controls(message.controls)))
             return
         if isinstance(response, pureldap.LDAPIntermediateResponse):
             # Something the server says while the operation is still
@@ -689,6 +759,15 @@ class SimpleLDAPObject:
                 "msgtype": operation.rtype,
                 "ctrls": controls.decode_controls(response_controls),
             }
+            if response.matchedDN:
+                # How far down the tree the server did recognise the name,
+                # which is what python-ldap calls "matched".
+                fields["matched"] = to_unicode(response.matchedDN)
+            if response.referral:
+                operation.referral = [to_unicode(uri) for uri in response.referral]
+                # python-ldap reports the referral as the error's own text,
+                # which is what libldap makes of the referral field.
+                fields["info"] = "Referral:\n" + "\n".join(operation.referral)
             if isinstance(response, pureldap.LDAPBindResponse):
                 # A bind that is not finished carries the server's next
                 # challenge, which the mechanism answers.
@@ -732,6 +811,122 @@ class SimpleLDAPObject:
                     if enough():
                         return
                     await self._read_once()
+
+    # Following referrals.
+
+    async def _chase(self, operation: _Pending, timeout: float | None) -> bool:
+        """Follow whatever the server said to look elsewhere for.
+
+        A referral is followed once the operation that got it has finished,
+        and the answer it produces is that operation's own: what the caller
+        is handed is what the other server said. A bind is never followed,
+        because a referral says where to look and nothing about whose
+        credentials may be sent there.
+        """
+        if (
+            operation.chased
+            or not self.referrals
+            or isinstance(operation.request, pureldap.LDAPBindRequest)
+        ):
+            return False
+        if not operation.referral and not operation.references:
+            return False
+        operation.chased = True
+        if operation.referral:
+            await self._chase_referral(operation, timeout)
+        for uris in operation.references:
+            await self._chase_reference(operation, uris, timeout)
+        return True
+
+    async def _chase_referral(
+        self, operation: _Pending, timeout: float | None
+    ) -> None:
+        """Make the operation again where the referral points.
+
+        Each URL is tried in turn until one of them answers. When none can
+        be reached the referral is handed to the caller as it stands, which
+        is what it would have been had nothing been chased at all.
+        """
+        refused = operation.error
+        for uri in operation.referral:
+            answer = await self._answered(operation, uri, timeout, continuation=False)
+            if answer is None:
+                continue
+            operation.error = answer.error
+            operation.queue.extend(answer.queue)
+            operation.controls = answer.controls
+            operation.name = answer.name
+            operation.value = answer.value
+            return
+        operation.error = refused
+
+    async def _chase_reference(
+        self, operation: _Pending, uris: Sequence[str], timeout: float | None
+    ) -> None:
+        """Read the rest of a search from the server a continuation names.
+
+        What is found there is added to what this search found. The
+        continuation itself stays among the results, which is what
+        python-ldap hands back whether or not it followed one.
+        """
+        for uri in uris:
+            answer = await self._answered(operation, uri, timeout, continuation=True)
+            if answer is None:
+                continue
+            operation.queue.extend(answer.queue)
+            if answer.error is not None:
+                operation.error = answer.error
+            return
+
+    async def _answered(
+        self,
+        operation: _Pending,
+        uri: str,
+        timeout: float | None,
+        continuation: bool,
+    ) -> _Pending | None:
+        """The same operation, made where a referral URL points.
+
+        ``None`` says that server could not be reached, so that the next
+        URL can be tried. The connection is opened for this and closed
+        again: what a referral names is somewhere else, not this server.
+        """
+        if self._hops >= REFERRAL_HOP_LIMIT:
+            raise errors.REFERRAL_LIMIT_EXCEEDED(
+                {
+                    "desc": errors.REFERRAL_LIMIT_EXCEEDED.desc,
+                    "info": f"stopped after {REFERRAL_HOP_LIMIT} referrals at {uri}",
+                }
+            )
+        url = ldapurl.LDAPUrl(uri)
+        connection = SimpleLDAPObject(
+            f"{url.urlscheme}://{url.hostport}", ssl_context=self._given_context
+        )
+        connection._hops = self._hops + 1
+        connection.referrals = self.referrals
+        connection.network_timeout = self.network_timeout
+        connection.timeout = self.timeout
+        connection._tls_options = dict(self._tls_options)
+        async with connection:
+            try:
+                # Anonymously: a referral says where to look, and nothing
+                # about which credentials the server it names would take.
+                await connection.simple_bind_s()
+                msgid = await connection._start(
+                    _elsewhere(operation.request, url, continuation),
+                    operation.serverctrls,
+                    operation.rtype,
+                    operation.response,
+                )
+            except errors.SERVER_DOWN:
+                return None
+            answer = connection._pending[msgid]
+            await connection._wait(answer, timeout)
+            # Forgotten before the connection is closed: an operation still
+            # waiting when that happens is one the server went away under.
+            connection._pending.pop(msgid, None)
+            await connection._chase(answer, timeout)
+            return answer
 
     async def result(
         self, msgid: int = RES_ANY, all: int = 1, timeout: float | None = None
@@ -808,10 +1003,15 @@ class SimpleLDAPObject:
                 if queued is not None:
                     return queued[0], queued[1], msgid, [], None, None
                 if operation.done:
-                    break
-                await self._wait(operation, timeout, all)
+                    # Following a referral can produce more to hand out, so
+                    # the queue is looked at again once it has been followed.
+                    if not await self._chase(operation, timeout):
+                        break
+                else:
+                    await self._wait(operation, timeout, all)
         else:
             await self._wait(operation, timeout, all)
+            await self._chase(operation, timeout)
         # A timed-out wait leaves the operation to be collected later, so it
         # is only forgotten once it has actually answered. A connection that
         # was lost has already forgotten every operation on it.
@@ -926,7 +1126,9 @@ class SimpleLDAPObject:
             object.__setattr__(self, "deref", invalue)
         elif option == OPT_REFERRALS:
             assert isinstance(invalue, int)
-            object.__setattr__(self, "referrals", invalue)
+            # libldap keeps a boolean here and answers with -1 for on,
+            # whatever it was set with.
+            object.__setattr__(self, "referrals", -1 if invalue else 0)
         elif option in _TLS_OPTIONS:
             self._tls_options[option] = invalue
             # The context is described by every option together, so it is
@@ -1053,16 +1255,16 @@ class SimpleLDAPObject:
             auth.service = f"ldap@{self._host}"
         credentials = auth.process()
         while True:
-            message = await self._send(
-                pureldap.LDAPBindRequest(
-                    version=self.protocol_version,
-                    dn=who,
-                    auth=(auth.mech, credentials),
-                    sasl=True,
-                ),
-                serverctrls,
+            request = pureldap.LDAPBindRequest(
+                version=self.protocol_version,
+                dn=who,
+                auth=(auth.mech, credentials),
+                sasl=True,
             )
-            operation = _Pending(RES_BIND, pureldap.LDAPBindResponse)
+            message = await self._send(request, serverctrls)
+            operation = _Pending(
+                RES_BIND, pureldap.LDAPBindResponse, request, serverctrls
+            )
             self._pending[message.id] = operation
             try:
                 await self._wait(operation, self.timeout)
@@ -1155,16 +1357,16 @@ class SimpleLDAPObject:
         Answers with the credentials the server sent back, which is what the
         next step is built from.
         """
-        message = await self._send(
-            pureldap.LDAPBindRequest(
-                version=self.protocol_version,
-                dn=dn,
-                auth=(mechanism, cred),
-                sasl=True,
-            ),
-            serverctrls,
+        request = pureldap.LDAPBindRequest(
+            version=self.protocol_version,
+            dn=dn,
+            auth=(mechanism, cred),
+            sasl=True,
         )
-        operation = _Pending(RES_BIND, pureldap.LDAPBindResponse)
+        message = await self._send(request, serverctrls)
+        operation = _Pending(
+            RES_BIND, pureldap.LDAPBindResponse, request, serverctrls
+        )
         self._pending[message.id] = operation
         try:
             await self._wait(operation, self.timeout)

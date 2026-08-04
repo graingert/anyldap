@@ -2004,16 +2004,28 @@ def test_result_optional_wire_fields_and_unrecognized_fields() -> None:
         decoder,
     )
     assert bind.serverSaslCreds is None
+    assert bind.referral == [b"ldap://example"]
     assert "referral=['ldap://example']" in repr(
         pureldap.LDAPBindResponse(resultCode=0, referral=["ldap://example"])
     )
+    # A bind response can carry both, and each is read as what it is: the
+    # credentials are [7] and the referral [3].
+    both = pureldap.LDAPBindResponse.fromBER(
+        pureldap.LDAPBindResponse.tag,
+        result_content
+        + referral.toWire()
+        + pureldap.LDAPBindResponse_serverSaslCreds(b"creds").toWire(),
+        decoder,
+    )
+    assert both.referral == [b"ldap://example"]
+    assert both.serverSaslCreds == b"creds"
 
     extended = pureldap.LDAPExtendedResponse.fromBER(
         pureldap.LDAPExtendedResponse.tag,
         result_content + referral.toWire(),
         decoder,
     )
-    assert extended.referral is None
+    assert extended.referral == [b"ldap://example"]
 
     with pytest.raises(AssertionError):
         pureldap.LDAPExtendedResponse.fromBER(
@@ -2021,6 +2033,30 @@ def test_result_optional_wire_fields_and_unrecognized_fields() -> None:
             result_content + pureber.BERInteger(1).toWire(),
             decoder,
         )
+
+
+def test_a_referral_survives_being_written_and_read_back() -> None:
+    """Every kind of result carries its referral over the wire."""
+    decoder = pureldap.LDAPBERDecoderContext(fallback=pureber.BERDecoderContext())
+    uris = ["ldap://one.example/dc=one", "ldap://two.example/dc=two"]
+    for original in (
+        pureldap.LDAPSearchResultDone(resultCode=10, matchedDN="dc=x", referral=uris),
+        pureldap.LDAPModifyResponse(resultCode=10, referral=uris),
+        pureldap.LDAPBindResponse(resultCode=10, referral=uris),
+        pureldap.LDAPExtendedResponse(
+            resultCode=10, referral=uris, responseName=b"1.2.3"
+        ),
+    ):
+        decoded, used = pureber.berDecodeObject(decoder, original.toWire())
+        assert used == len(original.toWire())
+        assert isinstance(decoded, pureldap.LDAPResult)
+        assert decoded.referral == [uri.encode() for uri in uris]
+        assert decoded.resultCode == 10
+    # A result that names no referral writes none, which is how every other
+    # result on the wire stays the length it was.
+    assert pureldap.LDAPModifyResponse(resultCode=0, referral=[]).toWire() == (
+        pureldap.LDAPModifyResponse(resultCode=0).toWire()
+    )
 
 
 def test_control_with_unknown_second_field_uses_defaults() -> None:

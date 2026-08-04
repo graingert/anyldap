@@ -4,6 +4,9 @@ Every connection here is made over a real socket to a real server, so what
 is exercised is the wire behaviour rather than a stand-in for it.
 """
 
+import io
+import pathlib
+import re
 import ssl
 from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -790,8 +793,15 @@ async def test_a_search_reference_is_handed_back_as_python_ldap_does() -> None:
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
     async with serving(ReferringServer) as server, connected(server) as connection:
+        connection.referrals = 0
         results = await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
         assert results == [(None, ["ldap://elsewhere.example.com/dc=x"])]
+        # A continuation is its own kind of message, not an entry, which is
+        # what walking a search one message at a time shows.
+        msgid = await connection.search("dc=example,dc=com", ldap.SCOPE_SUBTREE)
+        rtype, data, _, _ = await connection.result3(msgid, all=0)
+        assert rtype == ldap.RES_SEARCH_REFERENCE
+        assert data == [(None, ["ldap://elsewhere.example.com/dc=x"])]
 
 
 async def test_a_search_answered_with_the_wrong_message_is_a_protocol_error() -> None:
@@ -858,6 +868,280 @@ async def test_a_lost_connection_fails_the_operation_waiting_on_it() -> None:
         await stream.aclose()
         with pytest.raises(ldap.SERVER_DOWN):
             await connection.result3(msgid)
+
+
+# Following referrals.
+
+
+def referring_to(
+    uri: str, *, matched: str = "dc=example,dc=com", binds: bool = True
+) -> ServerFactory:
+    """A server that answers every operation with a referral somewhere else.
+
+    Nothing is looked up: whatever is asked for, the answer is that it is
+    over there, which is what a server holding only a referral does. Binds
+    are answered rather than referred unless a test asks otherwise, the way
+    a real server answers the bind and refers what comes after it.
+    """
+    referral = [uri]
+
+    class ReferralServer(ldapserver.BaseLDAPServer):
+        async def handle_LDAPSearchRequest(
+            self,
+            request: pureldap.LDAPSearchRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPSearchResultDone:
+            return pureldap.LDAPSearchResultDone(
+                resultCode=10, matchedDN=matched, referral=referral
+            )
+
+        async def handle_LDAPCompareRequest(
+            self,
+            request: pureldap.LDAPCompareRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPCompareResponse:
+            return pureldap.LDAPCompareResponse(
+                resultCode=10, matchedDN=matched, referral=referral
+            )
+
+        async def handle_LDAPBindRequest(
+            self,
+            request: pureldap.LDAPBindRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPBindResponse:
+            if binds:
+                return pureldap.LDAPBindResponse(resultCode=0)
+            return pureldap.LDAPBindResponse(resultCode=10, referral=referral)
+
+    return ReferralServer
+
+
+def continuing_to(*uris: str) -> ServerFactory:
+    """A server holding one entry, and a continuation for the rest.
+
+    One continuation can name several servers holding the same thing, which
+    is why they are all in the one message: whoever follows it takes the
+    first that answers.
+    """
+
+    class ContinuingServer(ldapserver.BaseLDAPServer):
+        async def handle_LDAPSearchRequest(
+            self,
+            request: pureldap.LDAPSearchRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPSearchResultDone:
+            reply(
+                pureldap.LDAPSearchResultEntry(
+                    objectName=b"cn=here,dc=example,dc=com",
+                    attributes=[(b"cn", [b"here"])],
+                )
+            )
+            reply(
+                pureldap.LDAPSearchResultReference(
+                    uris=[pureber.BEROctetString(uri.encode()) for uri in uris]
+                )
+            )
+            return pureldap.LDAPSearchResultDone(resultCode=0)
+
+    return ContinuingServer
+
+
+async def test_a_search_continuation_is_followed_when_referrals_are_on() -> None:
+    """What the other server holds is added to what this search found."""
+    async with serving_tree() as away:
+        uri = f"{away.uri}/ou=People,dc=example,dc=com??sub"
+        async with (
+            serving(continuing_to(uri)) as server,
+            connected(server) as connection,
+        ):
+            found = await connection.search_s(
+                "dc=example,dc=com", ldap.SCOPE_SUBTREE, attrlist=["cn"]
+            )
+    names = [dn for dn, _ in found]
+    # The entry this server holds, then the continuation itself -- which
+    # python-ldap hands back whether or not it followed one -- then what
+    # following it found.
+    assert names[0] == "cn=here,dc=example,dc=com"
+    assert names[1] is None
+    assert JACK in names
+
+
+async def test_a_search_continuation_is_left_alone_when_referrals_are_off() -> None:
+    async with serving_tree() as away:
+        uri = f"{away.uri}/ou=People,dc=example,dc=com??sub"
+        async with (
+            serving(continuing_to(uri)) as server,
+            connected(server) as connection,
+        ):
+            connection.referrals = 0
+            found = await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
+    assert [dn for dn, _ in found] == ["cn=here,dc=example,dc=com", None]
+
+
+async def test_a_result_that_is_only_a_referral_is_made_again_where_it_points() -> None:
+    """A search answered with a referral is run at the server it names."""
+    async with serving_tree() as away:
+        async with (
+            serving(referring_to(f"{away.uri}/{JACK}")) as server,
+            connected(server) as connection,
+        ):
+            found = await connection.search_s(
+                "dc=nowhere,dc=com", ldap.SCOPE_BASE, attrlist=["uid"]
+            )
+    assert found == [(JACK, {"uid": [b"jack"]})]
+
+
+async def test_a_referral_that_names_a_dn_asks_about_that_one() -> None:
+    """A referral to another entry moves the operation to it, not just the server."""
+    async with serving_tree() as away:
+        async with (
+            serving(referring_to(f"{away.uri}/{JACK}")) as server,
+            connected(server) as connection,
+        ):
+            assert await connection.compare_s("dc=nowhere,dc=com", "uid", b"jack")
+
+
+async def test_a_continuation_takes_the_first_server_that_answers() -> None:
+    """One continuation can name several, and a dead one is passed over."""
+    async with serving_tree() as away:
+        dead = "ldap://127.0.0.1:1/dc=example,dc=com??sub"
+        alive = f"{away.uri}/ou=People,dc=example,dc=com??sub"
+        async with (
+            serving(continuing_to(dead, alive)) as server,
+            connected(server) as connection,
+        ):
+            found = await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
+    assert JACK in [dn for dn, _ in found]
+
+
+async def test_a_continuation_nobody_answers_leaves_the_search_as_it_was() -> None:
+    async with (
+        serving(continuing_to("ldap://127.0.0.1:1/dc=example,dc=com??sub")) as server,
+        connected(server) as connection,
+    ):
+        found = await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
+    assert [dn for dn, _ in found] == ["cn=here,dc=example,dc=com", None]
+
+
+async def test_a_continuation_that_fails_where_it_points_fails_the_search() -> None:
+    """What the other server says about the rest of the search is the answer."""
+    async with serving_tree() as away:
+        uri = f"{away.uri}/dc=nowhere,dc=com??sub"
+        async with (
+            serving(continuing_to(uri)) as server,
+            connected(server) as connection,
+        ):
+            with pytest.raises(ldap.NO_SUCH_OBJECT):
+                await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
+
+
+async def test_a_followed_search_can_be_walked_one_message_at_a_time() -> None:
+    """What following a continuation found is handed out like the rest."""
+    async with serving_tree() as away:
+        uri = f"{away.uri}/ou=People,dc=example,dc=com??sub"
+        async with (
+            serving(continuing_to(uri)) as server,
+            connected(server) as connection,
+        ):
+            msgid = await connection.search("dc=example,dc=com", ldap.SCOPE_SUBTREE)
+            seen = []
+            while True:
+                rtype, data, _, _ = await connection.result3(msgid, all=0)
+                if rtype == ldap.RES_SEARCH_RESULT:
+                    break
+                seen.append((rtype, data[0][0]))
+    assert seen[0] == (ldap.RES_SEARCH_ENTRY, "cn=here,dc=example,dc=com")
+    assert seen[1] == (ldap.RES_SEARCH_REFERENCE, None)
+    # The entries from the other server arrive after the continuation that
+    # said where they were, which is the order they were asked for in.
+    assert JACK in [dn for _, dn in seen[2:]]
+
+
+async def test_a_referral_that_names_no_dn_asks_about_the_same_entry() -> None:
+    """RFC 4511 section 4.1.10: an absent DN means the one already asked for."""
+    async with serving_tree() as away:
+        async with (
+            serving(referring_to(away.uri)) as server,
+            connected(server) as connection,
+        ):
+            assert await connection.compare_s(JACK, "uid", b"jack")
+            assert not await connection.compare_s(JACK, "uid", b"jill")
+
+
+async def test_a_referral_is_handed_to_the_caller_when_it_cannot_be_reached() -> None:
+    """Nobody is listening there, so the referral is the answer after all."""
+    async with serving_tree() as away:
+        uri = away.uri
+    async with (
+        serving(referring_to(uri, matched="dc=com")) as server,
+        connected(server) as connection,
+    ):
+        with pytest.raises(ldap.REFERRAL) as caught:
+            await connection.search_s("dc=example,dc=com", ldap.SCOPE_BASE)
+    assert caught.value.args[0]["info"] == f"Referral:\n{uri}"
+    assert caught.value.args[0]["matched"] == "dc=com"
+    assert caught.value.args[0]["result"] == 10
+
+
+async def test_a_referral_is_left_alone_when_referrals_are_off() -> None:
+    async with (
+        serving(referring_to("ldap://elsewhere.example.com")) as server,
+        connected(server) as connection,
+    ):
+        connection.referrals = 0
+        with pytest.raises(ldap.REFERRAL):
+            await connection.search_s("dc=example,dc=com", ldap.SCOPE_BASE)
+
+
+async def test_a_referral_that_points_back_at_itself_stops() -> None:
+    """A server that refers to itself is followed only so far.
+
+    The listener is made first so that the server can be told where it is,
+    which is what lets the referral it answers with point at itself.
+    """
+    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
+    host, port = local_address(listener)
+    factory = referring_to(f"ldap://{host}:{port}")
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(ldapserver.serve, listener, factory)
+        try:
+            async with connected(Serving(host, port)) as connection:
+                with pytest.raises(ldap.REFERRAL_LIMIT_EXCEEDED, match="stopped after"):
+                    await connection.search_s("dc=example,dc=com", ldap.SCOPE_BASE)
+        finally:
+            task_group.cancel_scope.cancel()
+
+
+async def test_a_bind_is_never_followed_to_where_a_referral_points() -> None:
+    """A referral says where to look, not whose password may be sent there."""
+    async with serving_tree() as away:
+        async with (
+            serving(referring_to(away.uri, binds=False)) as server,
+            connected(server) as connection,
+        ):
+            with pytest.raises(ldap.REFERRAL):
+                await connection.simple_bind_s(JACK, b"secret")
+
+
+async def test_the_referrals_option_is_the_boolean_libldap_keeps() -> None:
+    connection = ldap.initialize("ldap://x")
+    # Chasing is on to begin with, and on reads back as -1 however it was
+    # asked for, which is what libldap answers.
+    assert connection.referrals == -1
+    assert connection.get_option(ldap.OPT_REFERRALS) == -1
+    connection.referrals = 0
+    assert connection.get_option(ldap.OPT_REFERRALS) == 0
+    connection.set_option(ldap.OPT_REFERRALS, 1)
+    assert connection.referrals == -1
+    # The hop limit is libldap's own and cannot be read or set, here either.
+    with pytest.raises(ValueError, match="unknown option"):
+        connection.get_option(ldap.OPT_REFHOPLIMIT)
+    with pytest.raises(ValueError, match="unknown option"):
+        connection.set_option(ldap.OPT_REFHOPLIMIT, 3)
 
 
 # Binding with SASL.
@@ -2128,6 +2412,273 @@ def test_the_extensions_of_a_url_are_a_mapping_of_their_own() -> None:
     # An empty extension between two commas is passed over.
     extensions.parse("bindname=cn=root,,X-BINDPW=secret")
     assert sorted(extensions) == ["X-BINDPW", "bindname"]
+
+
+# LDIF, as RFC 2849 writes it.
+
+
+def written(dn: str, record: object, **kwargs: object) -> str:
+    """One record, as ldap.ldif writes it."""
+    out = io.StringIO()
+    writer = ldap.ldif.LDIFWriter(out, **kwargs)  # type: ignore[arg-type]
+    writer.unparse(dn, record)  # type: ignore[arg-type]
+    assert writer.records_written == 1
+    return out.getvalue()
+
+
+def parsed(
+    text: str, **kwargs: object
+) -> list[tuple[str, "ldap.ldif.ParsedEntry"]]:
+    """The entry records some LDIF holds."""
+    records = ldap.ldif.LDIFRecordList(io.StringIO(text), **kwargs)  # type: ignore[arg-type]
+    records.parse()
+    return records.all_records
+
+
+def test_an_entry_is_written_and_read_back_the_way_python_ldap_writes_it() -> None:
+    text = written("cn=x,cn=y,cn=z", {"b": [b"two"], "a": [b"one", b"three"]})
+    # The attributes come out sorted, and the record ends with a blank line.
+    assert text == "dn: cn=x,cn=y,cn=z\na: one\na: three\nb: two\n\n"
+    assert parsed(text) == [
+        ("cn=x,cn=y,cn=z", {"a": [b"one", b"three"], "b": [b"two"]})
+    ]
+
+
+def test_a_value_that_cannot_be_written_as_it_stands_is_base64() -> None:
+    # A leading space, a NUL, a newline and anything above ASCII all have to
+    # be encoded; so does any attribute the caller names.
+    assert written("dc=x", {"a": [b" lead"]}) == "dn: dc=x\na:: IGxlYWQ=\n\n"
+    assert written("dc=x", {"a": [b"tail "]}) == "dn: dc=x\na:: dGFpbCA=\n\n"
+    assert written("dc=x", {"a": [b"a\nb"]}) == "dn: dc=x\na:: YQpi\n\n"
+    assert written("dc=x", {"a": [b"caf\xc3\xa9"]}) == "dn: dc=x\na:: Y2Fmw6k=\n\n"
+    assert written("dc=x", {"a": [b"plain"]}, base64_attrs=["A"]) == (
+        "dn: dc=x\na:: cGxhaW4=\n\n"
+    )
+    # A DN that is not ASCII is written as UTF-8, base64-encoded.
+    assert written("cn=Ströder", {}) == "dn:: Y249U3Ryw7ZkZXI=\n\n"
+    assert parsed("dn:: Y249U3Ryw7ZkZXI=\n\n") == [("cn=Ströder", {})]
+
+
+def test_a_long_line_is_folded_and_unfolded_again() -> None:
+    text = written("dc=x", {"a": [b"z" * 200]}, cols=20)
+    assert all(len(line) <= 20 for line in text.splitlines())
+    assert all(line.startswith(" ") for line in text.splitlines()[2:-1])
+    assert parsed(text) == [("dc=x", {"a": [b"z" * 200]})]
+
+
+def test_the_line_separator_is_the_one_that_was_asked_for() -> None:
+    text = written("dc=x", {"a": [b"one"]}, line_sep="\r\n")
+    assert text == "dn: dc=x\r\na: one\r\n\r\n"
+    # Either ending is read back, whichever it was written with.
+    assert parsed(text) == [("dc=x", {"a": [b"one"]})]
+
+
+def test_a_change_record_is_written_the_way_modify_would_be_called() -> None:
+    modify = [
+        (ldap.MOD_REPLACE, "a", [b"one"]),
+        (ldap.MOD_DELETE, "b", None),
+    ]
+    assert written("dc=x", modify) == (
+        "dn: dc=x\nchangetype: modify\nreplace: a\na: one\n-\ndelete: b\n-\n\n"
+    )
+    add = [("a", [b"one"]), ("b", [b"two"])]
+    assert written("dc=x", add) == (
+        "dn: dc=x\nchangetype: add\na: one\nb: two\n\n"
+    )
+    # Anything else is neither, and says so.
+    with pytest.raises(ValueError, match="wrong length"):
+        written("dc=x", [("a",)])
+    with pytest.raises(ValueError, match="must be dictionary or list"):
+        written("dc=x", "a: one")
+
+
+def test_a_change_record_is_read_back_as_the_modifications_it_describes() -> None:
+    text = (
+        "version: 1\n\n"
+        "dn: dc=x\n"
+        "control: 1.2.3 true value\n"
+        "control: 1.2.4 false\n"
+        "changetype: modify\n"
+        "replace: a\na: one\na: two\n-\n"
+        "increment: n\nn: 1\n-\n"
+        "delete: b\n-\n\n"
+    )
+    changes = ldap.ldif.LDIFRecordList(io.StringIO(text))
+    changes.parse_change_records()
+    assert changes.version == 1
+    assert changes.all_modify_changes == [
+        (
+            "dc=x",
+            [
+                (ldap.MOD_REPLACE, "a", [b"one", b"two"]),
+                (ldap.MOD_INCREMENT, "n", [b"1"]),
+                (ldap.MOD_DELETE, "b", None),
+            ],
+            None,
+        )
+    ]
+    assert changes.changetype_counter["modify"] == 1
+
+
+def test_a_change_record_that_is_not_a_modify_is_passed_over() -> None:
+    text = "dn: dc=x\nchangetype: add\na: one\n\ndn: dc=y\nchangetype: delete\n\n"
+    changes = ldap.ldif.LDIFRecordList(io.StringIO(text))
+    changes.parse_change_records()
+    assert changes.all_modify_changes == []
+    assert changes.changetype_counter["add"] == 1
+    assert changes.changetype_counter["delete"] == 1
+    # A record with no changetype at all is counted under no changetype.
+    changes = ldap.ldif.LDIFRecordList(io.StringIO("dn: dc=x\na: one\n\n"))
+    changes.parse_change_records()
+    assert changes.changetype_counter[None] == 1
+
+
+def test_a_record_that_runs_out_mid_change_is_still_read() -> None:
+    """LDIF found in the wild ends where the file does, without a blank line."""
+    text = (
+        "dn: dc=x\n"
+        "changetype: modify\n"
+        "replace: a\na: one\na: two\n"
+        "-\n"
+        "-\n"
+        "delete: b"
+    )
+    changes = ldap.ldif.LDIFRecordList(io.StringIO(text))
+    changes.parse_change_records()
+    assert changes.all_modify_changes == [
+        (
+            "dc=x",
+            [
+                (ldap.MOD_REPLACE, "a", [b"one", b"two"]),
+                (ldap.MOD_DELETE, "b", None),
+            ],
+            None,
+        )
+    ]
+    # The same when the file ends on a value rather than on a mod-op line.
+    cut = ldap.ldif.LDIFRecordList(
+        io.StringIO("dn: dc=x\nchangetype: modify\nadd: a\na: one")
+    )
+    cut.parse_change_records()
+    assert cut.all_modify_changes == [("dc=x", [(ldap.MOD_ADD, "a", [b"one"])], None)]
+    # A modify that modifies nothing is read and handed to nobody.
+    empty = ldap.ldif.LDIFRecordList(io.StringIO("dn: dc=x\nchangetype: modify\n\n"))
+    empty.parse_change_records()
+    assert empty.all_modify_changes == []
+    assert empty.records_read == 1
+
+
+def test_a_value_written_without_the_space_after_the_colon_is_read() -> None:
+    """RFC 2849 asks for the space; LDIF found in the wild leaves it out."""
+    assert parsed("dn:dc=x\na:one\nb::b25l\n\n") == [
+        ("dc=x", {"a": [b"one"], "b": [b"one"]})
+    ]
+
+
+def test_change_records_that_do_not_say_what_they_change_are_refused() -> None:
+    for text, complaint in (
+        ("changetype: modify\nreplace: a\n\n", 'does not start with "dn:"'),
+        ("dn: [not a dn]\nchangetype: modify\n\n", "Not a valid string-representation"),
+        ("dn: dc=x\nchangetype: rename\n\n", "Invalid changetype"),
+        ("dn: dc=x\nchangetype: modify\nmangle: a\n\n", "Invalid mod-op string"),
+    ):
+        changes = ldap.ldif.LDIFRecordList(io.StringIO(text))
+        with pytest.raises(ValueError, match=complaint):
+            changes.parse_change_records()
+
+
+def test_entry_records_that_are_not_entries_are_refused() -> None:
+    for text, complaint in (
+        ("a: one\n\n", 'does not start with "dn:"'),
+        ("dn: [not a dn]\na: one\n\n", "Not a valid string-representation"),
+        ("no-colon-here\n\n", "no value-spec"),
+    ):
+        with pytest.raises(ValueError, match=complaint):
+            parsed(text)
+
+
+def test_what_the_parser_is_told_to_leave_out_it_leaves_out() -> None:
+    text = "version: 1\n\ndn: dc=x\na: one\nB: two\n\ndn: dc=y\na: three\n\n"
+    assert parsed(text, ignored_attr_types=["b"]) == [
+        ("dc=x", {"a": [b"one"]}),
+        ("dc=y", {"a": [b"three"]}),
+    ]
+    # And it stops once it has read as many records as it was asked for.
+    assert parsed(text, max_entries=1) == [("dc=x", {"a": [b"one"], "B": [b"two"]})]
+
+
+def test_comments_and_empty_lines_are_passed_over() -> None:
+    text = (
+        "\n# a comment\n"
+        " that is folded across lines\n"
+        "\ndn: dc=x\na: one\n\n\n\n"
+        "# another\ndn: dc=y\na: two"
+    )
+    assert parsed(text) == [("dc=x", {"a": [b"one"]}), ("dc=y", {"a": [b"two"]})]
+    # Nothing but a version line is no records at all.
+    assert parsed("version: 1\n") == []
+    assert parsed("") == []
+
+
+def test_a_value_can_be_fetched_from_a_url_when_the_scheme_is_allowed(
+    tmp_path: pathlib.Path,
+) -> None:
+    holding = tmp_path / "value.txt"
+    holding.write_bytes(b"from a file")
+    text = "dn: dc=x\na:< %s\n\n" % holding.as_uri()
+    # Only the schemes the caller names are fetched; anything else is left
+    # out of the entry altogether.
+    assert parsed(text, process_url_schemes=["file"]) == [
+        ("dc=x", {"a": [b"from a file"]})
+    ]
+    assert parsed(text, process_url_schemes=["https"]) == [("dc=x", {"a": [None]})]
+    assert parsed(text) == [("dc=x", {"a": [None]})]
+
+
+def test_ldif_is_read_from_a_file_opened_either_way(tmp_path: pathlib.Path) -> None:
+    holding = tmp_path / "people.ldif"
+    holding.write_text("dn: dc=x\na: one\n\n")
+    with holding.open() as text:
+        assert parsed(text.read()) == [("dc=x", {"a": [b"one"]})]
+    # A file opened in binary mode is read as UTF-8, which is not what RFC
+    # 2849 allows but is what is found in the wild.
+    holding.write_bytes("dn: dc=x\na: Ströder\n\n".encode())
+    with holding.open("rb") as binary:
+        records = ldap.ldif.LDIFRecordList(binary)
+        records.parse()
+    assert records.all_records == [("dc=x", {"a": ["Ströder".encode()]})]
+
+
+def test_copying_ldif_writes_out_what_was_read_in() -> None:
+    out = io.StringIO()
+    copier = ldap.ldif.LDIFCopy(io.StringIO("dn: dc=x\nb: two\na: one\n\n"), out)
+    copier.parse()
+    assert out.getvalue() == "dn: dc=x\na: one\nb: two\n\n"
+
+
+def test_the_parser_can_be_asked_to_do_something_with_each_record() -> None:
+    """LDIFParser itself does nothing with what it reads, as python-ldap's does."""
+    parser = ldap.ldif.LDIFParser(io.StringIO("dn: dc=x\na: one\n\n"))
+    parser.parse()
+    assert parser.records_read == 1
+    changer = ldap.ldif.LDIFParser(
+        io.StringIO("dn: dc=x\nchangetype: modify\nreplace: a\na: one\n-\n\n")
+    )
+    changer.parse_change_records()
+    assert changer.records_read == 1
+
+
+def test_the_pieces_python_ldap_keeps_beside_the_parser() -> None:
+    assert ldap.ldif.is_dn("") == 1
+    assert ldap.ldif.is_dn("cn=x,dc=example,dc=com")
+    assert not ldap.ldif.is_dn("[not a dn]")
+    assert ldap.ldif.MOD_OP_INTEGER["increment"] == ldap.MOD_INCREMENT
+    assert ldap.ldif.MOD_OP_STR[ldap.MOD_ADD] == "add"
+    assert ldap.ldif.CHANGE_TYPES == ["add", "delete", "modify", "modrdn"]
+    assert set(ldap.ldif.valid_changetype_dict) == set(ldap.ldif.CHANGE_TYPES)
+    assert ldap.ldif.list_dict(["A", "b"]) == {"A": None, "b": None}
+    assert re.match(ldap.ldif.ldif_pattern, "dn: cn=x")
+    assert re.search(ldap.ldif.SAFE_STRING_PATTERN, b" leads with a space")
 
 
 # The SASL options, and what they fill in.

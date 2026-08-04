@@ -21,6 +21,7 @@ This directory                  python-ldap
 ``test_modlist.py``             ``Tests/t_ldap_modlist.py``
 ``test_cidict.py``              ``Tests/t_cidict.py``
 ``test_ldapurl.py``             ``Tests/t_ldapurl.py``
+``test_ldif.py``                ``Tests/t_ldif.py``
 ``test_options.py``             ``Tests/t_ldap_options.py``
 ``test_sasl.py``                ``Tests/t_ldap_sasl.py``
 ``test_schema_subentry.py``     ``Tests/t_ldap_schema_subentry.py``
@@ -71,8 +72,9 @@ What was not ported, and why
   library's DN parser options, which this has no equivalent for.
 - **``ldap.cidict.strlist_*`` and ``cidict.data``**, which python-ldap has
   deprecated, and ``t_cidict.test_strlist_deprecated`` with them.
-- **The LDIF module python-ldap ships** (``t_ldif.py``): anyldap has its
-  own, tested in ``anyldap/test``, and it is not a drop-in for python-ldap's.
+- **``CreateLDIF()`` and ``ParseLDIF()``** of ``t_ldif.py``, which python-ldap
+  deprecated and does not test either. ``anyldap.ldap.ldif`` does not have
+  them, so the rest of that file is ported and this is what is left out.
 - **``t_cext.py``**, which tests python-ldap's C extension directly. There
   is no C extension here, and everything it covers through ``_ldap`` is
   covered through the connection instead.

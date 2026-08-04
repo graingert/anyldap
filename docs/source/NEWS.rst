@@ -25,10 +25,10 @@ Features
   be used from whichever task holds it.
 - The parts of python-ldap that live beside the connection are here under the
   same names: ``ldap.dn``, ``ldap.filter``, ``ldap.modlist``, ``ldap.cidict``,
-  ``ldap.functions``, ``ldap.sasl``, ``ldap.controls``, ``ldap.schema`` and
-  ``ldap.ldapurl``, along with the error classes, the constants and the
-  ``*_s``, ``*_ext`` and ``result3()``/``result4()`` spellings of each
-  operation.
+  ``ldap.functions``, ``ldap.sasl``, ``ldap.controls``, ``ldap.schema``,
+  ``ldap.ldapurl`` and ``ldap.ldif``, along with the error classes, the
+  constants and the ``*_s``, ``*_ext`` and ``result3()``/``result4()``
+  spellings of each operation.
 - SASL binds are driven by the client: EXTERNAL, PLAIN, CRAM-MD5 and
   DIGEST-MD5 answer for themselves, and ``ldapi://`` connects to a socket in
   the filesystem, which is what EXTERNAL is usually asked over. GSSAPI is
@@ -101,6 +101,25 @@ Features
   rather than refused. ``ldap.schema.urlfetch()`` takes an LDAP URL and
   opens a connection of its own to ask, and ``SubSchema.ldap_entry()``
   writes a whole schema back out as the entry it was read from.
+- ``ldap.ldif`` is python-ldap's top-level ``ldif`` module: ``LDIFWriter``,
+  ``LDIFParser``, ``LDIFRecordList`` and ``LDIFCopy``, reading and writing
+  entry records and change records as RFC 2849 spells them. anyldap's own
+  LDIF reader is a line-receiving protocol answering with anyldap's objects,
+  which is not what code written against python-ldap asks for. The
+  deprecated ``CreateLDIF()`` and ``ParseLDIF()`` are not here.
+- Referrals are followed, unless ``OPT_REFERRALS`` is turned off -- which is
+  what libldap does, and so what python-ldap inherits. A result that is
+  nothing but a referral is made again where it points, and a search
+  continuation is read from the server it names and added to what the search
+  found. Following one is anonymous, and a bind is never followed: a
+  referral says where to look and nothing about whose credentials may be
+  sent there. A referral nobody answers is raised as ``REFERRAL``, carrying
+  the URLs as its ``info``, and one that points at itself stops after five
+  hops with ``REFERRAL_LIMIT_EXCEEDED``.
+- A result carries its referral over the wire, which ``pureldap`` used to
+  leave undecoded, and an error says how far the server did recognise the
+  name as python-ldap's ``matched``. A search continuation is handed back as
+  ``RES_SEARCH_REFERENCE`` rather than as an entry.
 
 Other changes
 ^^^^^^^^^^^^^
