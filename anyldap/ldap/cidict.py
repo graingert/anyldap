@@ -40,5 +40,15 @@ class cidict(MutableMapping[str, _V]):
     def __len__(self) -> int:
         return len(self._data)
 
+    def has_key(self, key: str) -> bool:
+        """Whether the entry has this attribute, as python-ldap's asks."""
+        return key.lower() in self._data
+
+    def copy(self) -> "cidict[_V]":
+        """Another dictionary of the same attributes, spelled the same way."""
+        other: cidict[_V] = cidict()
+        other._data = dict(self._data)
+        return other
+
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({dict(self.items())!r})"

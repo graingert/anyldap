@@ -15,3 +15,6 @@ dist/
 tags
 .tox/
 .venv/
+
+# slapd instances the interop tests start
+python-ldap-test-*/

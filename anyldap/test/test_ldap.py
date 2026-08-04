@@ -7,6 +7,7 @@ is exercised is the wire behaviour rather than a stand-in for it.
 import ssl
 from collections.abc import AsyncGenerator, Callable, Iterable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from urllib.parse import quote
 
 import anyio
 import anyio.streams.tls
@@ -153,9 +154,23 @@ def test_uri_says_where_to_connect_and_whether_to_raise_tls() -> None:
 
 def test_uri_that_cannot_be_connected_to_is_refused() -> None:
     with pytest.raises(ValueError, match="scheme"):
-        ldap.initialize("ldapi:///var/run/ldapi")
+        ldap.initialize("http://ldap.example.com")
     with pytest.raises(ValueError, match="bad port"):
         ldap.initialize("ldap://ldap.example.com:not-a-port")
+
+
+def test_an_ldapi_url_names_a_socket_in_the_filesystem() -> None:
+    assert ldapobject._parse_uri("ldapi://%2Frun%2Fslapd%2Fldapi") == (
+        "/run/slapd/ldapi",
+        0,
+        False,
+    )
+    assert ldapobject._parse_uri("ldapi:///run/slapd/ldapi") == (
+        "/run/slapd/ldapi",
+        0,
+        False,
+    )
+    assert ldapobject._parse_uri("ldapi://") == ("/var/run/ldapi", 0, False)
 
 
 def test_open_names_the_same_connection_as_a_url() -> None:
@@ -843,6 +858,603 @@ async def test_a_lost_connection_fails_the_operation_waiting_on_it() -> None:
             await connection.result3(msgid)
 
 
+# Binding with SASL.
+
+
+class SaslServer(ldapserver.BaseLDAPServer):
+    """A server that answers a two-step SASL exchange, as a real one does."""
+
+    challenge = b"<12345.67890@example.com>"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[tuple[bytes, bytes | None]] = []
+
+    async def handle_LDAPBindRequest(
+        self,
+        request: pureldap.LDAPBindRequest,
+        controls: Iterable[pureldap.Control] | None,
+        reply: ldapserver.Reply,
+    ) -> pureldap.LDAPBindResponse:
+        assert isinstance(request.auth, tuple)
+        mechanism, credentials = request.auth
+        assert isinstance(mechanism, bytes)
+        assert credentials is None or isinstance(credentials, bytes)
+        self.seen.append((mechanism, credentials))
+        if mechanism == b"EXTERNAL":
+            return pureldap.LDAPBindResponse(resultCode=0)
+        if credentials is None:
+            # Ask for the next step, with the challenge to answer.
+            return pureldap.LDAPBindResponse(
+                resultCode=14, serverSaslCreds=self.challenge
+            )
+        if credentials.startswith(b"jack "):
+            return pureldap.LDAPBindResponse(resultCode=0)
+        return pureldap.LDAPBindResponse(resultCode=49)
+
+
+async def test_a_sasl_bind_answers_the_server_until_it_is_done() -> None:
+    servers: list[SaslServer] = []
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = SaslServer()
+        servers.append(server)
+        return server
+
+    async with serving(factory) as server, connected(server) as connection:
+        await connection.sasl_interactive_bind_s(
+            "", ldap.sasl.cram_md5("jack", "secret")
+        )
+        # The first request asks for the mechanism, the second answers the
+        # challenge the server sent back.
+        assert [mechanism for mechanism, _ in servers[0].seen] == [
+            b"CRAM-MD5",
+            b"CRAM-MD5",
+        ]
+        assert servers[0].seen[0][1] is None
+        answer = servers[0].seen[1][1]
+        assert answer is not None and answer.startswith(b"jack ")
+
+
+async def test_a_sasl_bind_the_server_refuses_is_reported() -> None:
+    async with serving(SaslServer) as server, connected(server) as connection:
+        with pytest.raises(ldap.INVALID_CREDENTIALS):
+            await connection.sasl_interactive_bind_s(
+                "", ldap.sasl.cram_md5("jill", "wrong")
+            )
+
+
+async def test_sasl_external_says_the_connection_is_the_identity() -> None:
+    servers: list[SaslServer] = []
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = SaslServer()
+        servers.append(server)
+        return server
+
+    async with serving(factory) as server, connected(server) as connection:
+        await connection.sasl_external_bind_s(authz_id="dn:cn=jack")
+        # An empty response is still a response, which is what EXTERNAL
+        # sends when it has no name of its own to give.
+        assert servers[0].seen == [(b"EXTERNAL", b"dn:cn=jack")]
+
+    async with serving(factory) as server, connected(server) as connection:
+        await connection.sasl_non_interactive_bind_s("EXTERNAL")
+        assert servers[1].seen == [(b"EXTERNAL", b"")]
+
+    async with serving(factory) as server, connected(server) as connection:
+        with pytest.raises(ldap.AUTH_UNKNOWN, match="credentials"):
+            await connection.sasl_non_interactive_bind_s("GSSAPI")
+
+
+async def test_a_sasl_step_by_step_bind_hands_back_the_challenge() -> None:
+    async with serving(SaslServer) as server, connected(server) as connection:
+        challenge = await connection.sasl_bind_s("", "CRAM-MD5", None)
+        assert challenge == SaslServer.challenge
+        answer = ldap.sasl.cram_md5("jack", "secret").process(challenge)
+        assert await connection.sasl_bind_s("", "CRAM-MD5", answer) is None
+
+
+async def test_a_step_by_step_bind_the_server_refuses_is_reported() -> None:
+    async with serving(SaslServer) as server, connected(server) as connection:
+        challenge = await connection.sasl_bind_s("", "CRAM-MD5", None)
+        assert challenge is not None
+        with pytest.raises(ldap.INVALID_CREDENTIALS):
+            await connection.sasl_bind_s("", "CRAM-MD5", b"jill wrong")
+
+
+async def test_a_mechanism_with_no_answer_to_give_stops_the_bind() -> None:
+    async with serving(SaslServer) as server, connected(server) as connection:
+        # The base mechanism answers nothing at all, so the exchange the
+        # server asks to continue cannot be continued.
+        with pytest.raises(ldap.AUTH_UNKNOWN, match="no answer"):
+            await connection.sasl_interactive_bind_s(
+                "", ldap.sasl.sasl({}, "CRAM-MD5")
+            )
+
+
+def test_the_sasl_mechanisms_answer_as_their_rfcs_say() -> None:
+    assert ldap.sasl.plain("jack", "secret", "u:other").process() == (
+        b"u:other\x00jack\x00secret"
+    )
+    # RFC 2195's own worked example.
+    digest = ldap.sasl.cram_md5("tim", "tanstaaftanstaaf").process(
+        b"<1896.697170952@postoffice.reston.mci.net>"
+    )
+    assert digest == b"tim b913a602c7eda7a495b4e6e7334d3890"
+    assert ldap.sasl.cram_md5("tim", "x").process() is None
+    assert ldap.sasl.sasl({}, "MECH").callback(0, "", "", "default") == "default"
+
+    challenge = (
+        b'realm="example.com",nonce="OA6MG9tEQGm2hh",qop="auth",'
+        b"charset=utf-8,algorithm=md5-sess"
+    )
+    answer = ldap.sasl.digest_md5("jack", "secret", "u:jack").process(challenge)
+    assert answer is not None
+    assert b'username="jack"' in answer
+    assert b'realm="example.com"' in answer
+    assert b'authzid="u:jack"' in answer
+    assert b"response=" in answer
+    # A mechanism with no name to give of its own, and a challenge with a
+    # part that says nothing at all.
+    plain_answer = ldap.sasl.digest_md5("jack", "secret").process(
+        b'realm="example.com",nonce="OA6MG9tEQGm2hh",nonsense'
+    )
+    assert plain_answer is not None
+    assert b"authzid" not in plain_answer
+
+    # The server proving itself in turn is answered with nothing.
+    assert ldap.sasl.digest_md5("jack", "secret").process(b"rspauth=abcdef") == b""
+    assert ldap.sasl.digest_md5("jack", "secret").process() is None
+
+
+# Controls.
+
+
+async def test_controls_are_sent_as_the_triples_they_encode_to() -> None:
+    class ControlServer(ldapserver.BaseLDAPServer):
+        """A server that answers with the controls it was sent."""
+
+        seen: list[list[pureldap.Control]] = []
+
+        async def handle_LDAPSearchRequest(
+            self,
+            request: pureldap.LDAPSearchRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPSearchResultDone:
+            ControlServer.seen.append(list(controls or ()))
+            return pureldap.LDAPSearchResultDone(resultCode=0)
+
+    paged = ldap.controls.SimplePagedResultsControl(True, size=2, cookie=b"")
+    async with serving(ControlServer) as server, connected(server) as connection:
+        await connection.search_ext_s(
+            "dc=example,dc=com",
+            ldap.SCOPE_SUBTREE,
+            serverctrls=[paged, ldap.controls.ManageDSAITControl()],
+        )
+        # A control that was given as a triple already goes as it stands.
+        await connection.search_ext_s(
+            "dc=example,dc=com",
+            ldap.SCOPE_SUBTREE,
+            serverctrls=[(b"1.2.3", 0, b"raw")],
+        )
+
+    # BER writes true as every bit set, which is what the server reads back.
+    sent = [
+        (oid, bool(criticality), value)
+        for oid, criticality, value in ControlServer.seen[0]
+    ]
+    assert sent == [
+        (b"1.2.840.113556.1.4.319", True, paged.encodeControlValue()),
+        (b"2.16.840.1.113730.3.4.2", False, None),
+    ]
+    assert ControlServer.seen[1] == [(b"1.2.3", 0, b"raw")]
+
+
+async def test_the_controls_a_response_carries_are_read_back() -> None:
+    cookie = b"page-2"
+
+    class PagingServer(ldapserver.BaseLDAPServer):
+        """A server that answers every request with a control of its own."""
+
+        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
+            # Answer with a paged results control of the server's own.
+            answer = ldap.controls.SimplePagedResultsControl(
+                False, size=0, cookie=cookie
+            )
+            await self._send_anyio_write(
+                pureldap.LDAPMessage(
+                    pureldap.LDAPSearchResultDone(resultCode=0),
+                    id=msg.id,
+                    controls=[
+                        (
+                            ldap.CONTROL_PAGEDRESULTS,
+                            0,
+                            answer.encodeControlValue(),
+                        )
+                    ],
+                ).toWire()
+            )
+
+    async with serving(PagingServer) as server, connected(server) as connection:
+        msgid = await connection.search_ext(
+            "dc=example,dc=com", ldap.SCOPE_SUBTREE, serverctrls=[]
+        )
+        rtype, data, rmsgid, answered = await connection.result3(msgid)
+        assert rtype == ldap.RES_SEARCH_RESULT
+        assert len(answered) == 1
+        control = answered[0]
+        assert isinstance(control, ldap.controls.SimplePagedResultsControl)
+        assert control.cookie == cookie
+
+
+def test_a_control_says_how_its_own_value_is_written() -> None:
+    from anyldap.ldap.controls import readentry, simple
+
+    # A control with no value at all.
+    assert simple.RelaxRulesControl(True).encodeControlValue() is None
+
+    boolean = simple.BooleanControl("1.2.3", True, booleanValue=True)
+    read_back = simple.BooleanControl("1.2.3")
+    read_back.decodeControlValue(boolean.encodeControlValue())
+    assert read_back.booleanValue is True
+
+    number = simple.OctetStringInteger("1.2.3", True, integerValue=42)
+    read_number = simple.OctetStringInteger("1.2.3")
+    read_number.decodeControlValue(number.encodeControlValue())
+    assert read_number.integerValue == 42
+
+    assert simple.ProxyAuthzControl(True, "dn:cn=jack").encodeControlValue() == (
+        b"dn:cn=jack"
+    )
+    identity = simple.AuthorizationIdentityResponseControl()
+    identity.decodeControlValue(b"dn:cn=jack")
+    assert identity.authzId == "dn:cn=jack"
+    assert simple.AuthorizationIdentityRequestControl().controlType == (
+        "2.16.840.1.113730.3.4.16"
+    )
+
+    # A read-entry control carries the entry the server read for it.
+    entry = pureldap.LDAPSearchResultEntry(
+        objectName="cn=jack,dc=example,dc=com", attributes=[("cn", ["Jack"])]
+    )
+    post = readentry.PostReadControl(True, ["cn"])
+    assert post.encodeControlValue()
+    post.decodeControlValue(entry.toWire())
+    assert post.dn == "cn=jack,dc=example,dc=com"
+    assert post.entry == {"cn": [b"Jack"]}
+    assert readentry.PreReadControl(True, ["cn"]).controlType == ldap.CONTROL_PRE_READ
+
+
+def test_a_control_that_cannot_be_read_says_which_one_it_was() -> None:
+    plain = ldap.controls.LDAPControl("1.2.3", True, controlValue=b"value")
+    assert plain.encodeControlValue() == b"value"
+    assert (
+        ldap.controls.LDAPControl(
+            "1.2.3", True, encodedControlValue=b"already"
+        ).encodeControlValue()
+        == b"already"
+    )
+    assert ldap.controls.LDAPControl("1.2.3").encodeControlValue() is None
+    assert ldap.controls.encode_controls(None) is None
+    assert ldap.controls.decode_controls(None) == []
+    assert ldap.controls.RequestControlTuples([plain]) == [(b"1.2.3", 1, b"value")]
+    assert ldap.controls.ResponseControlTuples([plain]) == [plain]
+    assert ldap.controls.RequestControl().encodeControlValue() is None
+
+    # A control nobody registered comes back with the bytes as they were,
+    # and one with no value at all is simply there.
+    unknown = ldap.controls.decode_controls([(b"1.2.3", 0, b"xyz")])[0]
+    assert isinstance(unknown, ldap.controls.LDAPControl)
+    assert unknown.controlValue == b"xyz"
+    assert ldap.controls.decode_controls([(b"1.2.3", 1, None)])[0].criticality is True
+    base = ldap.controls.ResponseControl("1.2.3")
+    base.decodeControlValue(b"raw")
+    assert base.encodedControlValue == b"raw"
+
+    with pytest.raises(ldap.DECODING_ERROR, match="1.2.840.113556.1.4.319"):
+        ldap.controls.decode_controls(
+            [(ldap.CONTROL_PAGEDRESULTS, 0, b"not a control value")]
+        )
+
+
+# TLS, as the options describe it.
+
+
+def test_the_tls_options_describe_the_context_a_connection_is_raised_with(
+    tmp_path: object,
+) -> None:
+    authority = trustme.CA()
+    certificate = authority.issue_cert("localhost")
+    import pathlib
+
+    assert isinstance(tmp_path, pathlib.Path)
+    ca_file = tmp_path / "ca.pem"
+    ca_file.write_bytes(authority.cert_pem.bytes())
+    cert_file = tmp_path / "cert.pem"
+    cert_file.write_bytes(
+        certificate.cert_chain_pems[0].bytes() + certificate.private_key_pem.bytes()
+    )
+
+    connection = ldap.initialize("ldaps://ldap.example.com")
+    assert connection.get_option(ldap.OPT_X_TLS_CTX) is None
+
+    connection.set_option(ldap.OPT_X_TLS_CACERTFILE, str(ca_file))
+    connection.set_option(ldap.OPT_X_TLS_CERTFILE, str(cert_file))
+    connection.set_option(ldap.OPT_X_TLS_KEYFILE, str(cert_file))
+    connection.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_DEMAND)
+    connection.set_option(ldap.OPT_X_TLS_CIPHER_SUITE, "HIGH")
+    connection.set_option(ldap.OPT_X_TLS_PROTOCOL_MIN, ldap.OPT_X_TLS_PROTOCOL_TLS1_2)
+    connection.set_option(ldap.OPT_X_TLS_PROTOCOL_MAX, ldap.OPT_X_TLS_PROTOCOL_TLS1_3)
+    assert connection.get_option(ldap.OPT_X_TLS_CACERTFILE) == str(ca_file)
+
+    context = connection.get_option(ldap.OPT_X_TLS_CTX)
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_2
+    assert context.maximum_version == ssl.TLSVersion.TLSv1_3
+    # The same context is kept until something says to start again.
+    assert connection.get_option(ldap.OPT_X_TLS_CTX) is context
+    connection.set_option(ldap.OPT_X_TLS_NEWCTX, 0)
+    assert connection.get_option(ldap.OPT_X_TLS_CTX) is not context
+
+
+def test_asking_for_no_certificate_check_gets_none() -> None:
+    connection = ldap.initialize("ldaps://ldap.example.com")
+    # Nothing but the check itself is said, so the context is the default
+    # one with its checking turned off.
+    connection.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
+    context = connection.get_option(ldap.OPT_X_TLS_CTX)
+    assert isinstance(context, ssl.SSLContext)
+    assert context.check_hostname is False
+    assert context.verify_mode == ssl.CERT_NONE
+
+
+def test_the_certificates_to_trust_can_be_a_directory() -> None:
+    connection = ldap.initialize("ldaps://ldap.example.com")
+    connection.set_option(ldap.OPT_X_TLS_CACERTDIR, "/etc/ssl/certs")
+    assert isinstance(connection.get_option(ldap.OPT_X_TLS_CTX), ssl.SSLContext)
+
+
+async def test_a_connection_can_be_made_to_a_socket_in_the_filesystem(
+    tmp_path: object,
+) -> None:
+    import pathlib
+
+    assert isinstance(tmp_path, pathlib.Path)
+    path = tmp_path / "ldapi"
+
+    async def handle(stream: anyio.abc.ByteStream) -> None:
+        async with stream:
+            request, _ = pureber.berDecodeObject(
+                ldapobject.BERDECODER, await stream.receive()
+            )
+            assert isinstance(request, pureldap.LDAPMessage)
+            await stream.send(
+                pureldap.LDAPMessage(
+                    pureldap.LDAPBindResponse(resultCode=0), id=request.id
+                ).toWire()
+            )
+
+    listener = await anyio.create_unix_listener(path)
+    try:
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(listener.serve, handle)
+            # The socket is named in the URL the way OpenLDAP writes it.
+            uri = f"ldapi://{quote(str(path), safe='')}"
+            async with ldap.initialize(uri) as connection:
+                assert (await connection.simple_bind_s())[0] == ldap.RES_BIND
+            task_group.cancel_scope.cancel()
+    finally:
+        await anyio.aclose_forcefully(listener)
+
+
+def test_a_context_that_was_given_is_the_one_that_is_used() -> None:
+    given = ssl.create_default_context()
+    connection = ldapobject.SimpleLDAPObject(
+        "ldaps://ldap.example.com", ssl_context=given
+    )
+    assert connection.get_option(ldap.OPT_X_TLS_CTX) is given
+    other = ssl.create_default_context()
+    connection.set_option(ldap.OPT_X_TLS_CTX, other)
+    assert connection.get_option(ldap.OPT_X_TLS_CTX) is other
+
+
+async def test_the_options_raise_tls_on_a_real_connection() -> None:
+    server_context, _ = tls_pair()
+    import pathlib
+    import tempfile
+
+    authority = trustme.CA()
+    certificate = authority.issue_cert("localhost")
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    certificate.configure_cert(server_context)
+
+    with tempfile.TemporaryDirectory() as directory:
+        ca_file = pathlib.Path(directory) / "ca.pem"
+        ca_file.write_bytes(authority.cert_pem.bytes())
+        async with serving(tree_server(make_root()), server_context) as server:
+            connection = ldap.initialize(f"ldaps://localhost:{server.port}")
+            connection.set_option(ldap.OPT_X_TLS_CACERTFILE, str(ca_file))
+            async with connection:
+                await connection.simple_bind_s()
+                assert await connection.search_s(
+                    "dc=example,dc=com", ldap.SCOPE_ONELEVEL
+                )
+
+
+# The schema a server publishes.
+
+
+SUBSCHEMA = {
+    "objectClasses": [
+        b"( 2.5.6.0 NAME 'top' ABSTRACT MUST objectClass )",
+        b"( 2.5.6.6 NAME 'person' SUP top STRUCTURAL MUST ( sn $ cn )"
+        b" MAY ( userPassword $ description ) )",
+        # An object class that names an attribute the schema does not
+        # publish, which a server is entitled to do.
+        b"( 1.3.6.1.4.1.99999.1 NAME 'partial' SUP top STRUCTURAL"
+        b" MAY ( description $ notPublished ) )",
+    ],
+    "attributeTypes": [
+        b"( 2.5.4.0 NAME 'objectClass' EQUALITY objectIdentifierMatch"
+        b" SYNTAX 1.3.6.1.4.1.1466.115.121.1.38 )",
+        b"( 2.5.4.3 NAME ( 'cn' 'commonName' ) SUP name )",
+        b"( 2.5.4.4 NAME ( 'sn' 'surname' ) SUP name )",
+        b"( 2.5.4.13 NAME 'description' SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )",
+        b"( 2.5.4.35 NAME 'userPassword'"
+        b" SYNTAX 1.3.6.1.4.1.1466.115.121.1.40{128} )",
+    ],
+    "matchingRules": [
+        b"( 2.5.13.2 NAME 'caseIgnoreMatch' SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )"
+    ],
+    "ldapSyntaxes": [b"( 1.3.6.1.4.1.1466.115.121.1.15 DESC 'Directory String' )"],
+}
+
+
+def test_the_schema_says_what_an_entry_must_and_may_have() -> None:
+    sub = ldap.schema.SubSchema(SUBSCHEMA)
+
+    person = sub.get_obj(ldap.schema.ObjectClass, "person")
+    assert isinstance(person, ldap.schema.ObjectClass)
+    assert person.oid == "2.5.6.6"
+    assert person.kind == ldap.schema.STRUCTURAL
+    assert sorted(person.must) == ["cn", "sn"]
+    assert str(person) == "person"
+    assert "2.5.6.6" in repr(person)
+
+    top = sub.get_obj(ldap.schema.ObjectClass, "top")
+    assert isinstance(top, ldap.schema.ObjectClass)
+    assert top.kind == ldap.schema.ABSTRACT
+
+    # An object class is looked up by name, however it is written, or by OID.
+    assert sub.get_obj(ldap.schema.ObjectClass, "PERSON") is person
+    assert sub.get_obj(ldap.schema.ObjectClass, "2.5.6.6") is person
+    assert sub.get_obj(ldap.schema.ObjectClass, "nothing") is None
+    with pytest.raises(KeyError):
+        sub.get_obj(ldap.schema.ObjectClass, "nothing", raise_keyerror=1)
+
+    # What an entry of a class needs is what the class and its superiors say.
+    must, may = sub.attribute_types(["person"])
+    assert sorted(a.names[0] for a in must.values()) == ["cn", "objectClass", "sn"]
+    assert sorted(a.names[0] for a in may.values()) == ["description", "userPassword"]
+
+    # An object class the schema does not have is passed over, and one that
+    # is reached twice is only counted once.
+    must, may = sub.attribute_types(["person", "nothing", "top"], raise_keyerror=0)
+    assert sorted(a.names[0] for a in must.values()) == ["cn", "objectClass", "sn"]
+
+    assert sub.get_structural_oc(["top", "person"]) == "2.5.6.6"
+    assert sub.get_structural_oc(["top"]) is None
+    assert len(sub.listall(ldap.schema.ObjectClass)) == 3
+
+    # An attribute the schema does not describe is passed over rather than
+    # guessed at.
+    must, may = sub.attribute_types(["partial"], raise_keyerror=0)
+    assert sorted(a.names[0] for a in may.values()) == ["description"]
+    with pytest.raises(KeyError):
+        sub.attribute_types(["partial"], raise_keyerror=1)
+    assert sub.getoid(ldap.schema.ObjectClass, "unknown") == "unknown"
+
+
+def test_the_schema_reads_attribute_types_matching_rules_and_syntaxes() -> None:
+    sub = ldap.schema.SubSchema(SUBSCHEMA)
+
+    cn = sub.get_obj(ldap.schema.AttributeType, "commonName")
+    assert isinstance(cn, ldap.schema.AttributeType)
+    assert cn.oid == "2.5.4.3"
+    assert cn.names == ("cn", "commonName")
+    assert cn.sup == ("name",)
+    assert cn.usage == 0
+
+    object_class = sub.get_obj(ldap.schema.AttributeType, "objectClass")
+    assert isinstance(object_class, ldap.schema.AttributeType)
+    assert object_class.equality == "objectIdentifierMatch"
+    assert object_class.syntax == "1.3.6.1.4.1.1466.115.121.1.38"
+
+    # How long a value may be is said next to the syntax, and is not part
+    # of the syntax's own name.
+    password = sub.get_obj(ldap.schema.AttributeType, "userPassword")
+    assert isinstance(password, ldap.schema.AttributeType)
+    assert password.syntax == "1.3.6.1.4.1.1466.115.121.1.40"
+    assert password.syntax_len == 128
+    assert cn.syntax_len is None
+
+    rule = sub.get_obj(ldap.schema.MatchingRule, "caseIgnoreMatch")
+    assert isinstance(rule, ldap.schema.MatchingRule)
+    assert rule.oid == "2.5.13.2"
+
+    syntax = sub.get_obj(ldap.schema.LDAPSyntax, "1.3.6.1.4.1.1466.115.121.1.15")
+    assert isinstance(syntax, ldap.schema.LDAPSyntax)
+    assert syntax.desc == "Directory String"
+    assert syntax.not_human_readable == 0
+
+    # An attribute of the subentry that is not schema is not read as schema.
+    assert ldap.schema.SubSchema({"cn": [b"Subschema"]}).listall(
+        ldap.schema.ObjectClass
+    ) == []
+    # Options on the attribute name do not hide what it is.
+    assert (
+        len(
+            ldap.schema.SubSchema(
+                {"objectClasses;binary": SUBSCHEMA["objectClasses"]}
+            ).listall(ldap.schema.ObjectClass)
+        )
+        == 3
+    )
+    assert ldap.schema.SchemaElement().get_id() is None
+    with pytest.raises(NotImplementedError):
+        ldap.schema.SchemaElement("( 1.2.3 )")
+
+
+async def test_the_schema_can_be_read_off_the_connection() -> None:
+    class SchemaServer(ldapserver.LDAPServer):
+        """A server that publishes a subschema subentry, as a real one does."""
+
+        async def handle_LDAPSearchRequest(
+            self,
+            request: pureldap.LDAPSearchRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPSearchResultDone:
+            if request.baseObject == b"cn=Subschema":
+                reply(
+                    pureldap.LDAPSearchResultEntry(
+                        objectName="cn=Subschema",
+                        attributes=[
+                            (key, values) for key, values in SUBSCHEMA.items()
+                        ],
+                    )
+                )
+            elif request.baseObject == b"dc=example,dc=com":
+                reply(
+                    pureldap.LDAPSearchResultEntry(
+                        objectName="dc=example,dc=com",
+                        attributes=[("subschemaSubentry", [b"cn=Subschema"])],
+                    )
+                )
+            return pureldap.LDAPSearchResultDone(resultCode=0)
+
+    async with serving(SchemaServer) as server, bound(server) as connection:
+        assert await connection.search_subschemasubentry_s(
+            "dc=example,dc=com"
+        ) == "cn=Subschema"
+        published = await connection.read_subschemasubentry_s("cn=Subschema")
+        assert published is not None
+        assert len(published["objectClasses"]) == 3
+
+        sub = await connection.read_schema_s("dc=example,dc=com")
+        person = sub.get_obj(ldap.schema.ObjectClass, "person")
+        assert isinstance(person, ldap.schema.ObjectClass)
+        assert sorted(person.must) == ["cn", "sn"]
+
+        # An entry that names no subschema subentry has no schema to read.
+        assert await connection.search_subschemasubentry_s("ou=nothing") is None
+        with pytest.raises(ldap.NO_SUCH_OBJECT, match="subschema"):
+            await connection.read_schema_s("ou=nothing")
+
+
 # The pieces that do not need a connection.
 
 
@@ -924,6 +1536,118 @@ def test_distinguished_names_come_apart_and_go_back_together() -> None:
     assert ldap.AVA_BINARY != ldap.AVA_NONPRINTABLE
 
 
+async def test_the_one_entry_a_search_found_is_handed_back() -> None:
+    async with serving_tree() as server, bound(server) as connection:
+        assert await connection.find_unique_entry(
+            "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(uid=jack)", ["cn"]
+        ) == (JACK, {"cn": [b"Jack"]})
+
+        with pytest.raises(ldap.NO_UNIQUE_ENTRY):
+            await connection.find_unique_entry(
+                "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(uid=nobody)"
+            )
+
+
+async def test_the_root_dse_says_what_the_server_holds() -> None:
+    class RootDSEServer(ldapserver.LDAPServer):
+        """A server that answers for itself, as one holding a tree does."""
+
+        def getRootDSE(
+            self, request: pureldap.LDAPSearchRequest, reply: ldapserver.Reply
+        ) -> pureldap.LDAPSearchResultDone:
+            reply(
+                pureldap.LDAPSearchResultEntry(
+                    objectName="",
+                    attributes=[
+                        ("supportedLDAPVersion", ["3"]),
+                        ("namingContexts", ["dc=example,dc=com"]),
+                    ],
+                )
+            )
+            return pureldap.LDAPSearchResultDone(resultCode=0)
+
+    root = make_root()
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = RootDSEServer()
+        server.factory = root
+        return server
+
+    async with serving(factory) as server, bound(server) as connection:
+        dse = await connection.read_rootdse_s()
+        assert dse["supportedLDAPVersion"] == [b"3"]
+        assert await connection.get_naming_contexts() == [b"dc=example,dc=com"]
+
+
+async def test_a_search_for_attributes_that_are_not_a_list_is_refused() -> None:
+    async with serving_tree() as server, bound(server) as connection:
+        # Any iterable of names will do, which a mapping of them is.
+        names: dict[str, str] = {"ou": "1"}
+        assert await connection.search_s(
+            "dc=example,dc=com",
+            ldap.SCOPE_ONELEVEL,
+            attrlist=names,  # type: ignore[arg-type]
+        )
+        # A bare string is a sequence of characters, and never the list of
+        # attributes the caller meant.
+        with pytest.raises(TypeError, match="not a string"):
+            await connection.search_s(
+                "dc=example,dc=com", ldap.SCOPE_ONELEVEL, attrlist="ou"
+            )
+        with pytest.raises(TypeError, match="expected string in list"):
+            await connection.search_s(
+                "dc=example,dc=com",
+                ldap.SCOPE_ONELEVEL,
+                attrlist=[b"ou"],  # type: ignore[list-item]
+            )
+
+
+async def test_what_a_response_said_about_itself_is_on_the_error() -> None:
+    async with serving_tree() as server, bound(server) as connection:
+        msgid = await connection.search("dc=nowhere,dc=com", ldap.SCOPE_BASE)
+        with pytest.raises(ldap.NO_SUCH_OBJECT) as caught:
+            await connection.result3(msgid)
+        # python-ldap's callers read the message id off the error like this.
+        assert caught.value.args[0]["msgid"] == msgid
+        assert caught.value.args[0]["msgtype"] == ldap.RES_SEARCH_RESULT
+        assert caught.value.args[0]["ctrls"] == []
+
+
+def test_the_time_and_template_helpers_are_python_ldaps() -> None:
+    assert ldap.strf_secs(0) == "19700101000000Z"
+    assert ldap.strf_secs(1466947067) == "20160626131747Z"
+    assert ldap.strp_secs("19700101000000Z") == 0
+    assert ldap.strp_secs("20160626131747Z") == 1466947067
+    assert (
+        ldap.escape_str(ldap.escape_filter_chars, "(uid=%s)", "foo)bar")
+        == "(uid=foo\\29bar)"
+    )
+
+
+def test_names_that_are_not_distinguished_names_are_refused() -> None:
+    for value in ["foobar,ou=x", "-cn=foobar", ",cn=foobar", "cn=foobar,", "cn=a,,cn=b"]:
+        assert ldap.is_dn(value) is False
+        with pytest.raises(ldap.DECODING_ERROR):
+            ldap.str2dn(value)
+    with pytest.raises(ldap.DECODING_ERROR, match="backslash"):
+        ldap.str2dn("cn=foo\\")
+    with pytest.raises(ldap.DECODING_ERROR):
+        # \ff is not a character, whatever else it is.
+        ldap.str2dn(r"cn=\ff")
+
+    # An escape stands for the octets of the value, so the pair that spells
+    # a character in UTF-8 is that character, and the value says it is one
+    # that had to be written escaped.
+    assert ldap.str2dn(r"cn=\c3\a4") == [[("cn", "ä", ldap.AVA_NONPRINTABLE)]]
+    assert ldap.str2dn(r"cn=a\, b") == [[("cn", "a, b", ldap.AVA_STRING)]]
+    assert ldap.AVA_NULL == 0
+
+
+def test_a_filter_value_that_is_not_text_is_refused() -> None:
+    with pytest.raises(TypeError, match="must be of type str"):
+        ldap.escape_filter_chars(["nope"])  # type: ignore[arg-type]
+
+
 def test_modlists_say_how_an_entry_is_created_and_changed() -> None:
     assert ldap.addModlist({"cn": ["Jack"], "sn": b"Smith", "empty": []}) == [
         ("cn", [b"Jack"]),
@@ -984,9 +1708,11 @@ def test_modlists_say_how_an_entry_is_created_and_changed() -> None:
 
 
 def test_a_case_insensitive_dict_answers_to_any_spelling() -> None:
-    assert len(ldap.cidict()) == 0
+    assert len(ldap.cidict.cidict()) == 0
 
-    entry: ldap.cidict[list[bytes]] = ldap.cidict({"givenName": [b"Jack"]})
+    entry: ldap.cidict.cidict[list[bytes]] = ldap.cidict.cidict(
+        {"givenName": [b"Jack"]}
+    )
     assert entry["givenname"] == [b"Jack"]
     assert "GIVENNAME" in entry
     assert list(entry) == ["givenName"]
@@ -996,6 +1722,8 @@ def test_a_case_insensitive_dict_answers_to_any_spelling() -> None:
     # The spelling it was first written in is the one that is kept.
     assert list(entry.items()) == [("givenName", [b"Jill"])]
     assert repr(entry) == "cidict({'givenName': [b'Jill']})"
+    assert entry.has_key("GIVENNAME")
+    assert entry.copy() == entry
 
     entry["sn"] = [b"Smith"]
     del entry["SN"]

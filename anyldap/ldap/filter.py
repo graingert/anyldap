@@ -25,6 +25,8 @@ def escape_filter_chars(assertion_value: Value, escape_mode: int = 0) -> str:
     Each mode escapes what python-ldap's own escapes, character by character
     as it does, so a filter built here is the one it would have built.
     """
+    if not isinstance(assertion_value, (str, bytes)):
+        raise TypeError("assertion_value must be of type str.")
     if escape_mode not in (0, 1, 2):
         raise ValueError("escape_mode must be 0, 1 or 2.")
     text = to_unicode(assertion_value)

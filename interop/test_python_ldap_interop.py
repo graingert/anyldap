@@ -527,3 +527,191 @@ async def test_an_async_run_alone_leaves_the_directory_as_python_ldap_finds_it(
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(pytest.main([__file__, "--no-cov", "-v"]))
+
+
+# The pieces that needed the C library in python-ldap: TLS options, SASL,
+# controls and schema. Each is checked against what python-ldap does with
+# the same server.
+
+
+def test_the_tls_and_sasl_option_numbers_are_python_ldaps() -> None:
+    for name in dir(ldap):
+        if name.startswith(("OPT_X_TLS", "OPT_X_SASL", "SASL_")) and hasattr(
+            aldap, name
+        ):
+            theirs, ours = getattr(ldap, name), getattr(aldap, name)
+            if isinstance(theirs, int) and isinstance(ours, int):
+                assert ours == theirs, name
+
+
+def test_the_sasl_mechanisms_are_named_as_python_ldap_names_them() -> None:
+    import ldap.sasl
+
+    assert aldap.sasl.external().mech == ldap.sasl.external().mech
+    assert aldap.sasl.cram_md5("u", "p").mech == ldap.sasl.cram_md5("u", "p").mech
+    assert aldap.sasl.digest_md5("u", "p").mech == ldap.sasl.digest_md5("u", "p").mech
+    # The callback keys a mechanism is built from are the same numbers.
+    assert aldap.sasl.CB_AUTHNAME == ldap.sasl.CB_AUTHNAME
+    assert aldap.sasl.CB_PASS == ldap.sasl.CB_PASS
+
+
+async def test_sasl_external_binds_over_a_socket_in_the_filesystem(
+    slapd: Any,
+) -> None:
+    """What ``ldapwhoami -Y EXTERNAL -H ldapi://`` does, both ways."""
+    expected = ldap.initialize(slapd.ldapi_uri)
+    expected.sasl_non_interactive_bind_s("EXTERNAL")
+    expected_whoami = expected.whoami_s()
+    expected.unbind_s()
+
+    async with aldap.initialize(slapd.ldapi_uri) as connection:
+        await connection.sasl_external_bind_s()
+        assert await connection.whoami_s() == expected_whoami
+
+
+def test_the_controls_encode_to_what_python_ldaps_encode_to() -> None:
+    import ldap.controls
+    import ldap.controls.pagedresults
+    import ldap.controls.simple
+
+    ours = aldap.controls.SimplePagedResultsControl(True, size=3, cookie=b"")
+    theirs = ldap.controls.pagedresults.SimplePagedResultsControl(
+        True, size=3, cookie=b""
+    )
+    assert ours.encodeControlValue() == theirs.encodeControlValue()
+    assert ours.controlType == theirs.controlType
+
+    # And what one encodes, the other reads back the same way.
+    ours_read = aldap.controls.SimplePagedResultsControl()
+    ours_read.decodeControlValue(theirs.encodeControlValue())
+    theirs_read = ldap.controls.pagedresults.SimplePagedResultsControl()
+    theirs_read.decodeControlValue(ours.encodeControlValue())
+    assert ours_read.size == theirs_read.size == 3
+
+    assert (
+        aldap.controls.ManageDSAITControl().controlType
+        == ldap.controls.simple.ManageDSAITControl().controlType
+    )
+    assert (
+        aldap.controls.RelaxRulesControl().controlType
+        == ldap.controls.simple.RelaxRulesControl().controlType
+    )
+    # python-ldap hands this one back as text and lets its C layer encode
+    # it; here it is already the octets that go on the wire.
+    mine = aldap.controls.ProxyAuthzControl(True, "dn:cn=jack").encodeControlValue()
+    theirs_value = ldap.controls.simple.ProxyAuthzControl(
+        True, "dn:cn=jack"
+    ).encodeControlValue()
+    assert mine == theirs_value.encode("utf-8")
+
+
+async def test_paged_results_walk_the_same_pages(slapd: Any) -> None:
+    """A search read a page at a time, through both clients."""
+    import ldap.controls.pagedresults as their_paged
+
+    where = f"ou=paged,{slapd.suffix}"
+    setup = ldap.initialize(slapd.ldap_uri)
+    setup.simple_bind_s(slapd.root_dn, slapd.root_pw)
+    setup.add_s(
+        where, [("objectClass", [b"organizationalUnit"]), ("ou", [b"paged"])]
+    )
+    for index in range(5):
+        setup.add_s(
+            f"cn=page{index},{where}",
+            [("objectClass", [b"organizationalRole"]), ("cn", [f"page{index}".encode()])],
+        )
+
+    def sync_pages() -> list[list[str]]:
+        control = their_paged.SimplePagedResultsControl(True, size=2, cookie="")
+        pages = []
+        while True:
+            msgid = setup.search_ext(
+                where, ldap.SCOPE_ONELEVEL, "(cn=page*)", serverctrls=[control]
+            )
+            _, data, _, ctrls = setup.result3(msgid)
+            pages.append(sorted(dn for dn, _ in data))
+            cookies = [
+                c.cookie
+                for c in ctrls
+                if c.controlType == their_paged.SimplePagedResultsControl.controlType
+            ]
+            if not cookies or not cookies[0]:
+                return pages
+            control.cookie = cookies[0]
+
+    async def async_pages() -> list[list[str]]:
+        control = aldap.controls.SimplePagedResultsControl(True, size=2, cookie=b"")
+        pages = []
+        async with aldap.initialize(slapd.ldap_uri) as connection:
+            await connection.simple_bind_s(slapd.root_dn, slapd.root_pw)
+            while True:
+                msgid = await connection.search_ext(
+                    where, aldap.SCOPE_ONELEVEL, "(cn=page*)", serverctrls=[control]
+                )
+                _, data, _, ctrls = await connection.result3(msgid)
+                pages.append(sorted(dn for dn, _ in data))
+                cookies = [
+                    c.cookie
+                    for c in ctrls
+                    if c.controlType == aldap.CONTROL_PAGEDRESULTS
+                ]
+                if not cookies or not cookies[0]:
+                    return pages
+                control.cookie = cookies[0]
+
+    expected = sync_pages()
+    setup.unbind_s()
+    assert await async_pages() == expected
+    assert [len(page) for page in expected] == [2, 2, 1]
+
+
+async def test_the_schema_is_read_the_same_way(slapd: Any) -> None:
+    """The server's own schema, through python-ldap's reader and this one."""
+    import ldap.schema
+
+    their_uri = slapd.ldap_uri
+    their_dn, their_subschema = ldap.schema.urlfetch(their_uri)
+
+    async with aldap.initialize(their_uri) as connection:
+        await connection.simple_bind_s(slapd.root_dn, slapd.root_pw)
+        assert await connection.search_subschemasubentry_s() == their_dn
+        ours = await connection.read_schema_s()
+
+    # The same object classes and attribute types, said the same way.
+    assert sorted(ours.listall(aldap.schema.ObjectClass)) == sorted(
+        their_subschema.listall(ldap.schema.ObjectClass)
+    )
+    assert sorted(ours.listall(aldap.schema.AttributeType)) == sorted(
+        their_subschema.listall(ldap.schema.AttributeType)
+    )
+
+    for name in ("person", "organizationalUnit", "top"):
+        mine = ours.get_obj(aldap.schema.ObjectClass, name)
+        theirs = their_subschema.get_obj(ldap.schema.ObjectClass, name)
+        assert mine is not None and theirs is not None
+        assert (mine.oid, mine.names, mine.kind) == (
+            theirs.oid,
+            theirs.names,
+            theirs.kind,
+        )
+        assert sorted(mine.must) == sorted(theirs.must)
+        assert sorted(mine.may) == sorted(theirs.may)
+
+    for name in ("cn", "objectClass", "userPassword"):
+        mine_at = ours.get_obj(aldap.schema.AttributeType, name)
+        theirs_at = their_subschema.get_obj(ldap.schema.AttributeType, name)
+        assert mine_at is not None and theirs_at is not None
+        assert (mine_at.oid, mine_at.names, mine_at.syntax, mine_at.equality) == (
+            theirs_at.oid,
+            theirs_at.names,
+            theirs_at.syntax,
+            theirs_at.equality,
+        )
+        assert mine_at.single_value == theirs_at.single_value
+
+    # And the same answer to what an entry of a class needs.
+    for classes in (["person"], ["organizationalUnit"], ["person", "top"]):
+        my_must, my_may = ours.attribute_types(classes)
+        their_must, their_may = their_subschema.attribute_types(classes)
+        assert sorted(my_must) == sorted(their_must)
+        assert sorted(my_may) == sorted(their_may)

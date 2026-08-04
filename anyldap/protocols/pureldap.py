@@ -283,9 +283,10 @@ class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
             auth_ber = BEROctetString(self.auth, tag=CLASS_CONTEXT | 0)
         else:
             assert isinstance(self.auth, tuple)
-            # since the credentails for SASL is optional must check first
-            # if credentials are None don't send them.
-            if self.auth[1]:
+            # The credentials are optional, and an empty one is not the
+            # same as none at all: SASL EXTERNAL sends an empty response to
+            # say it has nothing more to prove.
+            if self.auth[1] is not None:
                 auth_ber = BERSequence(
                     [BEROctetString(self.auth[0]), BEROctetString(self.auth[1])],
                     tag=CLASS_CONTEXT | 3,

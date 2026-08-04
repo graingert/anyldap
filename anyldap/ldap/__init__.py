@@ -12,17 +12,26 @@ The names, arguments and return values are the ones python-ldap documents::
             ):
                 print(dn, attributes)
 
-What python-ldap does not have here is anything that needs the C library
-underneath: SASL binds, the ``ldap.controls`` and ``ldap.schema`` packages,
-and the TLS options. TLS is asked for with an ``ssl.SSLContext`` instead,
-and response controls are handed back as ``anyldap.protocols.pureldap``
-objects.
+``ldap.controls``, ``ldap.schema``, ``ldap.sasl``, ``ldap.dn``,
+``ldap.filter``, ``ldap.modlist`` and ``ldap.cidict`` are here too, and so
+are the TLS options: setting ``OPT_X_TLS_CACERTFILE`` and its neighbours
+builds the ``ssl.SSLContext`` the connection is raised with, and one can be
+passed to ``initialize()`` instead.
+
+SASL binds are made with the mechanisms in ``anyldap.ldap.sasl``, which
+answer for themselves rather than through Cyrus SASL: EXTERNAL, PLAIN,
+CRAM-MD5 and DIGEST-MD5. GSSAPI needs Kerberos and is not among them; a
+mechanism of your own works if it answers ``process()`` the same way.
 """
 
+from anyldap.ldap import cidict as cidict
+from anyldap.ldap import controls as controls
 from anyldap.ldap import dn as dn
 from anyldap.ldap import filter as filter
+from anyldap.ldap import functions as functions
 from anyldap.ldap import modlist as modlist
-from anyldap.ldap.cidict import cidict as cidict
+from anyldap.ldap import sasl as sasl
+from anyldap.ldap import schema as schema
 from anyldap.ldap.constants import (
     AUTH_NONE,
     AUTH_SIMPLE,
@@ -66,6 +75,36 @@ from anyldap.ldap.constants import (
     OPT_TIMELIMIT,
     OPT_TIMEOUT,
     OPT_URI,
+    OPT_X_SASL_AUTHCID,
+    OPT_X_SASL_AUTHZID,
+    OPT_X_SASL_MECH,
+    OPT_X_SASL_REALM,
+    OPT_X_SASL_SSF,
+    OPT_X_SASL_USERNAME,
+    OPT_X_TLS,
+    OPT_X_TLS_ALLOW,
+    OPT_X_TLS_CACERTDIR,
+    OPT_X_TLS_CACERTFILE,
+    OPT_X_TLS_CERTFILE,
+    OPT_X_TLS_CIPHER,
+    OPT_X_TLS_CIPHER_SUITE,
+    OPT_X_TLS_CTX,
+    OPT_X_TLS_DEMAND,
+    OPT_X_TLS_HARD,
+    OPT_X_TLS_KEYFILE,
+    OPT_X_TLS_NEVER,
+    OPT_X_TLS_NEWCTX,
+    OPT_X_TLS_PEERCERT,
+    OPT_X_TLS_PROTOCOL_MAX,
+    OPT_X_TLS_PROTOCOL_MIN,
+    OPT_X_TLS_PROTOCOL_SSL3,
+    OPT_X_TLS_PROTOCOL_TLS1_0,
+    OPT_X_TLS_PROTOCOL_TLS1_1,
+    OPT_X_TLS_PROTOCOL_TLS1_2,
+    OPT_X_TLS_PROTOCOL_TLS1_3,
+    OPT_X_TLS_REQUIRE_CERT,
+    OPT_X_TLS_TRY,
+    OPT_X_TLS_VERSION,
     PASSMOD_OID,
     PORT,
     RES_ADD,
@@ -80,6 +119,10 @@ from anyldap.ldap.constants import (
     RES_SEARCH_REFERENCE,
     RES_SEARCH_RESULT,
     RES_UNSOLICITED,
+    SASL_AUTOMATIC,
+    SASL_AVAIL,
+    SASL_INTERACTIVE,
+    SASL_QUIET,
     SCOPE_BASE,
     SCOPE_BASELEVEL,
     SCOPE_ONELEVEL,
@@ -96,6 +139,7 @@ from anyldap.ldap.constants import (
 from anyldap.ldap.dn import (
     AVA_BINARY,
     AVA_NONPRINTABLE,
+    AVA_NULL,
     AVA_STRING,
     dn2str,
     explode_dn,
@@ -178,6 +222,7 @@ from anyldap.ldap.errors import (
     error_for_result,
 )
 from anyldap.ldap.filter import escape_filter_chars, filter_format
+from anyldap.ldap.functions import escape_str, strf_secs, strp_secs
 from anyldap.ldap.ldapobject import (
     LDAPObject,
     ReconnectLDAPObject,
@@ -201,6 +246,7 @@ __all__ = [
     "AUTH_UNKNOWN",
     "AVA_BINARY",
     "AVA_NONPRINTABLE",
+    "AVA_NULL",
     "AVA_STRING",
     "BUSY",
     "CANCELLED",
@@ -280,6 +326,36 @@ __all__ = [
     "OPT_TIMELIMIT",
     "OPT_TIMEOUT",
     "OPT_URI",
+    "OPT_X_SASL_AUTHCID",
+    "OPT_X_SASL_AUTHZID",
+    "OPT_X_SASL_MECH",
+    "OPT_X_SASL_REALM",
+    "OPT_X_SASL_SSF",
+    "OPT_X_SASL_USERNAME",
+    "OPT_X_TLS",
+    "OPT_X_TLS_ALLOW",
+    "OPT_X_TLS_CACERTDIR",
+    "OPT_X_TLS_CACERTFILE",
+    "OPT_X_TLS_CERTFILE",
+    "OPT_X_TLS_CIPHER",
+    "OPT_X_TLS_CIPHER_SUITE",
+    "OPT_X_TLS_CTX",
+    "OPT_X_TLS_DEMAND",
+    "OPT_X_TLS_HARD",
+    "OPT_X_TLS_KEYFILE",
+    "OPT_X_TLS_NEVER",
+    "OPT_X_TLS_NEWCTX",
+    "OPT_X_TLS_PEERCERT",
+    "OPT_X_TLS_PROTOCOL_MAX",
+    "OPT_X_TLS_PROTOCOL_MIN",
+    "OPT_X_TLS_PROTOCOL_SSL3",
+    "OPT_X_TLS_PROTOCOL_TLS1_0",
+    "OPT_X_TLS_PROTOCOL_TLS1_1",
+    "OPT_X_TLS_PROTOCOL_TLS1_2",
+    "OPT_X_TLS_PROTOCOL_TLS1_3",
+    "OPT_X_TLS_REQUIRE_CERT",
+    "OPT_X_TLS_TRY",
+    "OPT_X_TLS_VERSION",
     "OTHER",
     "PARAM_ERROR",
     "PARTIAL_RESULTS",
@@ -303,7 +379,11 @@ __all__ = [
     "RES_SEARCH_RESULT",
     "RES_UNSOLICITED",
     "ReconnectLDAPObject",
+    "SASL_AUTOMATIC",
+    "SASL_AVAIL",
     "SASL_BIND_IN_PROGRESS",
+    "SASL_INTERACTIVE",
+    "SASL_QUIET",
     "SCOPE_BASE",
     "SCOPE_BASELEVEL",
     "SCOPE_ONELEVEL",
@@ -335,18 +415,25 @@ __all__ = [
     "X_PROXY_AUTHZ_FAILURE",
     "addModlist",
     "cidict",
+    "controls",
     "dn",
     "dn2str",
     "error_for_result",
     "escape_filter_chars",
+    "escape_str",
     "explode_dn",
     "explode_rdn",
     "filter",
     "filter_format",
+    "functions",
     "initialize",
     "is_dn",
     "modifyModlist",
     "modlist",
     "open",
+    "sasl",
+    "schema",
     "str2dn",
+    "strf_secs",
+    "strp_secs",
 ]

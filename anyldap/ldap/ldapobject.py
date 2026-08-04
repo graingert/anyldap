@@ -13,17 +13,17 @@ be used from whichever task has it.
 """
 
 import ssl
-from collections.abc import AsyncGenerator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import TracebackType
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import anyio
 from anyio.abc import ByteStream
 from anyio.streams.tls import TLSStream
 
 from anyldap._encoder import to_bytes, to_unicode
-from anyldap.ldap import errors
+from anyldap.ldap import controls, errors, sasl, schema
 from anyldap.ldap.constants import (
     AUTH_SIMPLE,
     DEREF_NEVER,
@@ -37,6 +37,18 @@ from anyldap.ldap.constants import (
     OPT_TIMELIMIT,
     OPT_TIMEOUT,
     OPT_URI,
+    OPT_X_TLS_ALLOW,
+    OPT_X_TLS_CACERTDIR,
+    OPT_X_TLS_CACERTFILE,
+    OPT_X_TLS_CERTFILE,
+    OPT_X_TLS_CIPHER_SUITE,
+    OPT_X_TLS_CTX,
+    OPT_X_TLS_KEYFILE,
+    OPT_X_TLS_NEVER,
+    OPT_X_TLS_NEWCTX,
+    OPT_X_TLS_PROTOCOL_MAX,
+    OPT_X_TLS_PROTOCOL_MIN,
+    OPT_X_TLS_REQUIRE_CERT,
     RES_ADD,
     RES_ANY,
     RES_BIND,
@@ -47,11 +59,13 @@ from anyldap.ldap.constants import (
     RES_MODRDN,
     RES_SEARCH_ENTRY,
     RES_SEARCH_RESULT,
+    SASL_QUIET,
     SCOPE_BASE,
     SCOPE_SUBTREE,
     VERSION3,
     WHOAMI_OID,
 )
+from anyldap.ldap.schema import SCHEMA_ATTRS
 from anyldap.ldapfilter import InvalidLDAPFilter, parseFilter
 from anyldap.protocols import pureber, pureldap
 from anyldap.runtime import logger
@@ -70,8 +84,9 @@ Entry = tuple[str, dict[str, list[bytes]]]
 Reference = tuple[None, list[str]]
 ResultData = list[Entry | Reference]
 
-# Controls are (type, criticality, value) triples, as anyldap spells them.
-Controls = Iterable[pureldap.Control] | None
+# Controls are given either as the objects ``anyldap.ldap.controls`` builds
+# or as the (type, criticality, value) triples that go on the wire.
+Controls = Iterable["controls.RequestControl | pureldap.Control"] | None
 
 BERDECODER = pureldap.LDAPBERDecoderContext_TopLevel(
     inherit=pureldap.LDAPBERDecoderContext_LDAPMessage(
@@ -139,11 +154,35 @@ def _reference(message: pureldap.LDAPSearchResultReference) -> Reference:
     return None, uris
 
 
-def _controls(controls: object) -> Sequence[pureldap.Control]:
-    if controls is None:
+def _controls(value: object) -> Sequence[pureldap.Control]:
+    """The response controls a message carried, as triples."""
+    if value is None:
         return []
-    assert isinstance(controls, Sequence)
-    return controls
+    assert isinstance(value, Sequence)
+    return value
+
+
+def _requested(value: Controls) -> list[pureldap.Control] | None:
+    """The controls to send, however the caller spelled them.
+
+    A control object knows how to encode itself; a triple is already what
+    goes on the wire.
+    """
+    if value is None:
+        return None
+    sending: list[pureldap.Control] = []
+    for control in value:
+        if isinstance(control, controls.RequestControl):
+            sending.append(
+                (
+                    to_bytes(control.controlType or ""),
+                    1 if control.criticality else 0,
+                    control.encodeControlValue(),
+                )
+            )
+        else:
+            sending.append(control)
+    return sending
 
 
 def _modification(
@@ -165,17 +204,100 @@ def _modification(
     )
 
 
+def _attributes(attrlist: Sequence[str] | None) -> list[str]:
+    """The attributes a search asks for, refusing what is not a list of them.
+
+    A bare string is a sequence of characters, and a search for those is
+    never what the caller meant, so it is refused as python-ldap refuses it.
+    """
+    if attrlist is None:
+        return []
+    if isinstance(attrlist, (str, bytes)):
+        raise TypeError("attrlist must be a list of strings, not a string")
+    attributes = list(attrlist)
+    for attribute in attributes:
+        if not isinstance(attribute, str):
+            raise TypeError(
+                "attrs_from_List(): expected string in list", attribute
+            )
+    return attributes
+
+
 def _parse_uri(uri: str) -> tuple[str, int, bool]:
-    """The host, port and whether to raise TLS, out of an LDAP URL."""
+    """The host, port and whether to raise TLS, out of an LDAP URL.
+
+    An ``ldapi://`` URL names a socket in the filesystem rather than a host
+    and port, and its path is percent-encoded, as OpenLDAP writes it.
+    """
     parsed = urlparse(uri)
+    if parsed.scheme == "ldapi":
+        path = unquote(parsed.netloc or parsed.path) or "/var/run/ldapi"
+        return path, 0, False
     if parsed.scheme not in ("ldap", "ldaps"):
-        raise ValueError("unsupported LDAP URL scheme {!r}".format(parsed.scheme))
+        raise ValueError(f"unsupported LDAP URL scheme {parsed.scheme!r}")
     tls = parsed.scheme == "ldaps"
     try:
         port = parsed.port
     except ValueError as exc:
-        raise ValueError("bad port in LDAP URL {!r}".format(uri)) from exc
+        raise ValueError(f"bad port in LDAP URL {uri!r}") from exc
     return parsed.hostname or "localhost", port or (636 if tls else 389), tls
+
+
+# The TLS options that describe a context, and what each does to it.
+_TLS_OPTIONS = frozenset(
+    {
+        OPT_X_TLS_CACERTFILE,
+        OPT_X_TLS_CACERTDIR,
+        OPT_X_TLS_CERTFILE,
+        OPT_X_TLS_KEYFILE,
+        OPT_X_TLS_REQUIRE_CERT,
+        OPT_X_TLS_CIPHER_SUITE,
+        OPT_X_TLS_PROTOCOL_MIN,
+        OPT_X_TLS_PROTOCOL_MAX,
+    }
+)
+
+# What OPT_X_TLS_PROTOCOL_MIN and _MAX name, in ssl's own spelling.
+_TLS_VERSIONS = {
+    0x300: ssl.TLSVersion.SSLv3,
+    0x301: ssl.TLSVersion.TLSv1,
+    0x302: ssl.TLSVersion.TLSv1_1,
+    0x303: ssl.TLSVersion.TLSv1_2,
+    0x304: ssl.TLSVersion.TLSv1_3,
+}
+
+
+def _tls_context(options: Mapping[int, object]) -> ssl.SSLContext:
+    """The ssl.SSLContext the TLS options that were set describe."""
+    context = ssl.create_default_context()
+    require = options.get(OPT_X_TLS_REQUIRE_CERT)
+    if require in (OPT_X_TLS_NEVER, OPT_X_TLS_ALLOW):
+        # Nothing is checked, which is what those two ask for.
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    cacertfile = options.get(OPT_X_TLS_CACERTFILE)
+    cacertdir = options.get(OPT_X_TLS_CACERTDIR)
+    if cacertfile is not None or cacertdir is not None:
+        assert cacertfile is None or isinstance(cacertfile, str)
+        assert cacertdir is None or isinstance(cacertdir, str)
+        context.load_verify_locations(cafile=cacertfile, capath=cacertdir)
+    certfile = options.get(OPT_X_TLS_CERTFILE)
+    if certfile is not None:
+        assert isinstance(certfile, str)
+        keyfile = options.get(OPT_X_TLS_KEYFILE)
+        assert keyfile is None or isinstance(keyfile, str)
+        context.load_cert_chain(certfile, keyfile)
+    ciphers = options.get(OPT_X_TLS_CIPHER_SUITE)
+    if ciphers is not None:
+        assert isinstance(ciphers, str)
+        context.set_ciphers(ciphers)
+    minimum = options.get(OPT_X_TLS_PROTOCOL_MIN)
+    if minimum is not None:
+        context.minimum_version = _TLS_VERSIONS[int(minimum)]  # type: ignore[call-overload]
+    maximum = options.get(OPT_X_TLS_PROTOCOL_MAX)
+    if maximum is not None:
+        context.maximum_version = _TLS_VERSIONS[int(maximum)]  # type: ignore[call-overload]
+    return context
 
 
 class SimpleLDAPObject:
@@ -202,14 +324,18 @@ class SimpleLDAPObject:
         self.sizelimit = 0
         self.timelimit = 0
         self.referrals = 0
-        self._ssl_context = ssl_context
+        self._given_context = ssl_context
+        self._built_context: ssl.SSLContext | None = None
+        self._tls_options: dict[int, object] = {}
         self._host, self._port, self._tls = _parse_uri(uri)
+        self._unix = urlparse(uri).scheme == "ldapi"
         self._stream: ByteStream | None = None
         self._buffer = b""
         self._pending: dict[int, _Pending] = {}
         self._reading = anyio.Lock()
         self._writing = anyio.Lock()
         self._unbound = False
+        self._sasl_mechanism: bytes | None = None
 
     async def __aenter__(self) -> "SimpleLDAPObject":
         return self
@@ -224,7 +350,23 @@ class SimpleLDAPObject:
 
     # Opening and closing the connection.
 
+    @property
+    def _ssl_context(self) -> ssl.SSLContext | None:
+        """The context to raise TLS with, built from the options if need be.
+
+        A context passed to ``initialize()`` is used as it stands; otherwise
+        one is built the first time it is wanted, and again whenever
+        ``OPT_X_TLS_NEWCTX`` says to start over.
+        """
+        if self._given_context is not None:
+            return self._given_context
+        if self._built_context is None and self._tls_options:
+            self._built_context = _tls_context(self._tls_options)
+        return self._built_context
+
     async def _connect_stream(self) -> ByteStream:
+        if self._unix:
+            return await anyio.connect_unix(self._host)
         # anyio.connect_tcp takes tls as a literal, and a context is a
         # request for TLS on its own.
         if self._tls:
@@ -274,12 +416,10 @@ class SimpleLDAPObject:
     # Writing requests.
 
     async def _send(
-        self, op: pureldap.LDAPProtocolRequest, controls: Controls
+        self, op: pureldap.LDAPProtocolRequest, serverctrls: Controls
     ) -> pureldap.LDAPMessage:
         stream = await self._connected()
-        message = pureldap.LDAPMessage(
-            op, controls=None if controls is None else list(controls)
-        )
+        message = pureldap.LDAPMessage(op, controls=_requested(serverctrls))
         if self.trace_level:
             logger.debug("*** %s C->S %r", self.uri, message)
         async with self._writing:
@@ -349,19 +489,34 @@ class SimpleLDAPObject:
             else:
                 operation.data.append(_reference(response))
             return
+        response_controls = _controls(message.controls)
         if not isinstance(response, operation.response):
             operation.error = errors.PROTOCOL_ERROR(
                 {
                     "desc": errors.PROTOCOL_ERROR.desc,
-                    "info": "unexpected response: {!r}".format(response),
+                    "info": f"unexpected response: {response!r}",
+                    "msgid": message.id,
+                    "ctrls": controls.decode_controls(response_controls),
                 }
             )
         elif response.resultCode != 0:
+            fields: dict[str, object] = {
+                "msgid": message.id,
+                "msgtype": operation.rtype,
+                "ctrls": controls.decode_controls(response_controls),
+            }
+            if isinstance(response, pureldap.LDAPBindResponse):
+                # A bind that is not finished carries the server's next
+                # challenge, which the mechanism answers.
+                creds = response.serverSaslCreds
+                fields["serverSaslCreds"] = (
+                    None if creds is None else to_bytes(creds)
+                )
             operation.error = errors.error_for_result(
-                response.resultCode, response.errorMessage
+                response.resultCode, response.errorMessage, **fields
             )
         else:
-            operation.controls = _controls(message.controls)
+            operation.controls = response_controls
             if isinstance(response, pureldap.LDAPExtendedResponse):
                 operation.name = (
                     None
@@ -408,7 +563,7 @@ class SimpleLDAPObject:
 
     async def result3(
         self, msgid: int = RES_ANY, all: int = 1, timeout: float | None = None
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         """Wait for an operation started earlier, and answer with its result.
 
         ``RES_ANY`` takes the operation that was started first, which is the
@@ -426,7 +581,12 @@ class SimpleLDAPObject:
         add_intermediates: int = 0,
         add_extop: int = 0,
     ) -> tuple[
-        int, ResultData, int, Sequence[pureldap.Control], str | None, bytes | None
+        int,
+        ResultData,
+        int,
+        Sequence["controls.ResponseControl"],
+        str | None,
+        bytes | None,
     ]:
         if msgid == RES_ANY:
             if not self._pending:
@@ -457,7 +617,7 @@ class SimpleLDAPObject:
             operation.rtype,
             operation.data,
             msgid,
-            operation.controls,
+            controls.decode_controls(operation.controls),
             operation.name,
             operation.value,
         )
@@ -492,8 +652,18 @@ class SimpleLDAPObject:
         elif option == OPT_REFERRALS:
             assert isinstance(invalue, int)
             self.referrals = invalue
+        elif option in _TLS_OPTIONS:
+            self._tls_options[option] = invalue
+            # The context is described by every option together, so it is
+            # built again once they have all been set.
+            self._built_context = None
+        elif option == OPT_X_TLS_NEWCTX:
+            self._built_context = None
+        elif option == OPT_X_TLS_CTX:
+            assert invalue is None or isinstance(invalue, ssl.SSLContext)
+            self._given_context = invalue
         else:
-            raise ValueError("unknown option {!r}".format(option))
+            raise ValueError(f"unknown option {option!r}")
 
     def get_option(self, option: int) -> object:
         if option == OPT_PROTOCOL_VERSION:
@@ -512,7 +682,11 @@ class SimpleLDAPObject:
             return self.referrals
         if option == OPT_URI:
             return self.uri
-        raise ValueError("unknown option {!r}".format(option))
+        if option == OPT_X_TLS_CTX:
+            return self._ssl_context
+        if option in _TLS_OPTIONS:
+            return self._tls_options.get(option)
+        raise ValueError(f"unknown option {option!r}")
 
     # Binding.
 
@@ -538,7 +712,7 @@ class SimpleLDAPObject:
         cred: Value = "",
         serverctrls: Controls = None,
         clientctrls: Controls = None,
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         msgid = await self.simple_bind(who, cred, serverctrls, clientctrls)
         return await self.result3(msgid, all=1, timeout=self.timeout)
 
@@ -554,9 +728,127 @@ class SimpleLDAPObject:
 
     async def bind_s(
         self, who: str, cred: Value, method: int = AUTH_SIMPLE
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         msgid = await self.bind(who, cred, method)
         return await self.result3(msgid, all=1, timeout=self.timeout)
+
+    async def sasl_interactive_bind_s(
+        self,
+        who: str,
+        auth: sasl.sasl,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+        sasl_flags: int = SASL_QUIET,
+    ) -> None:
+        """Bind with a SASL mechanism, answering the server until it is done.
+
+        The mechanism is asked what to send, and asked again with whatever
+        the server sent back, for as long as the server says the bind is
+        still in progress.
+        """
+        credentials = auth.process()
+        while True:
+            message = await self._send(
+                pureldap.LDAPBindRequest(
+                    version=self.protocol_version,
+                    dn=who,
+                    auth=(auth.mech, credentials),
+                    sasl=True,
+                ),
+                serverctrls,
+            )
+            operation = _Pending(RES_BIND, pureldap.LDAPBindResponse)
+            self._pending[message.id] = operation
+            try:
+                await self._wait(operation, self.timeout)
+            finally:
+                self._pending.pop(message.id, None)
+            if operation.error is None:
+                self._sasl_mechanism = auth.mech
+                return
+            if not isinstance(operation.error, errors.SASL_BIND_IN_PROGRESS):
+                raise operation.error
+            # The server has asked for the next step of the exchange.
+            challenge = operation.error.args[0].get("serverSaslCreds")
+            assert challenge is None or isinstance(challenge, bytes)
+            credentials = auth.process(challenge)
+            if credentials is None:
+                # A step the mechanism has no answer for is the end of what
+                # it can do, and the bind cannot finish.
+                raise errors.AUTH_UNKNOWN(
+                    {
+                        "desc": errors.AUTH_UNKNOWN.desc,
+                        "info": (
+                            f"{to_unicode(auth.mech)} has no answer"
+                            " for the challenge"
+                        ),
+                    }
+                )
+
+    async def sasl_non_interactive_bind_s(
+        self,
+        sasl_mech: str,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+        authz_id: str = "",
+    ) -> None:
+        """A SASL bind with a mechanism that asks the caller nothing."""
+        mechanisms = {"EXTERNAL": sasl.external}
+        if sasl_mech not in mechanisms:
+            raise errors.AUTH_UNKNOWN(
+                {
+                    "desc": errors.AUTH_UNKNOWN.desc,
+                    "info": f"{sasl_mech} needs credentials to bind with",
+                }
+            )
+        await self.sasl_interactive_bind_s(
+            "", mechanisms[sasl_mech](authz_id), serverctrls, clientctrls
+        )
+
+    async def sasl_external_bind_s(
+        self,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+        authz_id: str = "",
+    ) -> None:
+        """Bind as whoever the connection underneath already proved to be."""
+        await self.sasl_non_interactive_bind_s(
+            "EXTERNAL", serverctrls, clientctrls, authz_id
+        )
+
+    async def sasl_bind_s(
+        self,
+        dn: str,
+        mech: str | bytes,
+        cred: Value | None,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+    ) -> bytes | None:
+        """One step of a SASL bind, for callers driving the exchange itself.
+
+        Answers with the credentials the server sent back, which is what the
+        next step is built from.
+        """
+        message = await self._send(
+            pureldap.LDAPBindRequest(
+                version=self.protocol_version, dn=dn, auth=(mech, cred), sasl=True
+            ),
+            serverctrls,
+        )
+        operation = _Pending(RES_BIND, pureldap.LDAPBindResponse)
+        self._pending[message.id] = operation
+        try:
+            await self._wait(operation, self.timeout)
+        finally:
+            self._pending.pop(message.id, None)
+        if operation.error is not None:
+            if not isinstance(operation.error, errors.SASL_BIND_IN_PROGRESS):
+                raise operation.error
+            creds = operation.error.args[0].get("serverSaslCreds")
+            assert creds is None or isinstance(creds, bytes)
+            return creds
+        self._sasl_mechanism = to_bytes(mech)
+        return operation.value
 
     async def unbind_ext(
         self, serverctrls: Controls = None, clientctrls: Controls = None
@@ -689,6 +981,100 @@ class SimpleLDAPObject:
         assert not isinstance(attributes, list)
         return attributes
 
+    async def search_subschemasubentry_s(self, dn: str = "") -> str | None:
+        """Where the server keeps the schema an entry is written against."""
+        entry = await self.read_s(
+            dn, "(objectClass=*)", ["subschemaSubentry"]
+        )
+        found = (entry or {}).get("subschemaSubentry")
+        if not found:
+            return None
+        return to_unicode(found[0])
+
+    async def read_subschemasubentry_s(
+        self,
+        subschemasubentry_dn: str,
+        attrs: Sequence[str] | None = None,
+    ) -> dict[str, list[bytes]] | None:
+        """The schema itself, as the server publishes it."""
+        return await self.read_s(
+            subschemasubentry_dn,
+            "(objectClass=subschema)",
+            list(attrs) if attrs is not None else list(SCHEMA_ATTRS),
+        )
+
+    async def read_schema_s(self, dn: str = "") -> "schema.SubSchema":
+        """The schema an entry is written against, read into objects.
+
+        Not a method python-ldap has: it fetches schema with
+        ``ldap.schema.urlfetch()``, which opens its own connection. This
+        uses the connection that is already here.
+        """
+        subentry = await self.search_subschemasubentry_s(dn)
+        if subentry is None:
+            raise errors.NO_SUCH_OBJECT(
+                {
+                    "desc": errors.NO_SUCH_OBJECT.desc,
+                    "info": f"{dn!r} names no subschema subentry",
+                }
+            )
+        published = await self.read_subschemasubentry_s(subentry)
+        return schema.SubSchema(published or {})
+
+    async def find_unique_entry(
+        self,
+        base: str,
+        scope: int = SCOPE_SUBTREE,
+        filterstr: str = "(objectClass=*)",
+        attrlist: Sequence[str] | None = None,
+        attrsonly: int = 0,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+        timeout: float = -1,
+    ) -> Entry:
+        """The one entry a search found, or an error saying it was not one.
+
+        The search asks for two entries, so a server that has more says so
+        rather than sending them all.
+        """
+        data = await self.search_ext_s(
+            base,
+            scope,
+            filterstr,
+            attrlist,
+            attrsonly,
+            serverctrls,
+            clientctrls,
+            timeout,
+            sizelimit=2,
+        )
+        if len(data) != 1:
+            raise errors.NO_UNIQUE_ENTRY(
+                {
+                    "desc": errors.NO_UNIQUE_ENTRY.desc,
+                    "info": "no or non-unique search result for %r" % (filterstr,),
+                }
+            )
+        dn, attributes = data[0]
+        assert dn is not None and not isinstance(attributes, list)
+        return dn, attributes
+
+    async def read_rootdse_s(
+        self, filterstr: str = "(objectClass=*)", attrlist: Sequence[str] | None = None
+    ) -> dict[str, list[bytes]]:
+        """What the server says about itself, from its root DSE."""
+        return (
+            await self.read_s(
+                "", filterstr, ["*", "+"] if attrlist is None else attrlist
+            )
+            or {}
+        )
+
+    async def get_naming_contexts(self) -> list[bytes]:
+        """The naming contexts the server holds."""
+        rootdse = await self.read_rootdse_s(attrlist=["namingContexts"])
+        return rootdse.get("namingContexts", [])
+
     def _search_request(
         self,
         base: str,
@@ -714,7 +1100,7 @@ class SimpleLDAPObject:
             typesOnly=attrsonly,
             filter=parsed,
             # An empty list is how LDAP asks for every attribute.
-            attributes=list(attrlist) if attrlist is not None else [],
+            attributes=_attributes(attrlist),
         )
 
     # Adding, modifying and removing entries.
@@ -748,7 +1134,7 @@ class SimpleLDAPObject:
         modlist: AddModlist,
         serverctrls: Controls = None,
         clientctrls: Controls = None,
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         msgid = await self.add_ext(dn, modlist, serverctrls, clientctrls)
         return await self.result3(msgid, all=1, timeout=self.timeout)
 
@@ -757,7 +1143,7 @@ class SimpleLDAPObject:
 
     async def add_s(
         self, dn: str, modlist: AddModlist
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         return await self.add_ext_s(dn, modlist)
 
     async def modify_ext(
@@ -786,7 +1172,7 @@ class SimpleLDAPObject:
         modlist: ModifyModlist,
         serverctrls: Controls = None,
         clientctrls: Controls = None,
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         msgid = await self.modify_ext(dn, modlist, serverctrls, clientctrls)
         return await self.result3(msgid, all=1, timeout=self.timeout)
 
@@ -795,7 +1181,7 @@ class SimpleLDAPObject:
 
     async def modify_s(
         self, dn: str, modlist: ModifyModlist
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         return await self.modify_ext_s(dn, modlist)
 
     async def delete_ext(
@@ -816,7 +1202,7 @@ class SimpleLDAPObject:
         dn: str,
         serverctrls: Controls = None,
         clientctrls: Controls = None,
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         msgid = await self.delete_ext(dn, serverctrls, clientctrls)
         return await self.result3(msgid, all=1, timeout=self.timeout)
 
@@ -825,7 +1211,7 @@ class SimpleLDAPObject:
 
     async def delete_s(
         self, dn: str
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         return await self.delete_ext_s(dn)
 
     async def rename(
@@ -857,7 +1243,7 @@ class SimpleLDAPObject:
         delold: int = 1,
         serverctrls: Controls = None,
         clientctrls: Controls = None,
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         msgid = await self.rename(
             dn, newrdn, newsuperior, delold, serverctrls, clientctrls
         )
@@ -868,7 +1254,7 @@ class SimpleLDAPObject:
 
     async def modrdn_s(
         self, dn: str, newrdn: str, delold: int = 1
-    ) -> tuple[int, ResultData, int, Sequence[pureldap.Control]]:
+    ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         return await self.rename_s(dn, newrdn, None, delold)
 
     async def compare_ext(

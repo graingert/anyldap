@@ -401,10 +401,20 @@ STRONG_AUTH_NOT_SUPPORTED = AUTH_METHOD_NOT_SUPPORTED
 ADMIN_LIMIT_EXCEEDED = ADMINLIMIT_EXCEEDED
 
 
-def error_for_result(code: int, message: str | bytes | None = None) -> LDAPError:
-    """The exception a result code stands for, carrying the server's message."""
+def error_for_result(
+    code: int,
+    message: str | bytes | None = None,
+    **fields: object,
+) -> LDAPError:
+    """The exception a result code stands for, carrying the server's message.
+
+    Anything else the response said about itself -- which message it was,
+    what kind, the controls it carried -- goes in the same dictionary, where
+    python-ldap puts it.
+    """
     cls = LDAPError._by_result.get(code, OTHER)
-    fields: dict[str, object] = {"desc": cls.desc, "result": code}
+    args: dict[str, object] = {"desc": cls.desc, "result": code}
     if message:
-        fields["info"] = to_unicode(message)
-    return cls(fields)
+        args["info"] = to_unicode(message)
+    args.update(fields)
+    return cls(args)

@@ -77,6 +77,50 @@ OPT_TIMEOUT: Final = 0x5002
 OPT_NETWORK_TIMEOUT: Final = 0x5005
 OPT_URI: Final = 0x5006
 
+# How TLS is asked for. Setting any of these builds the ssl.SSLContext the
+# connection is raised with, so they mean here what they mean to OpenLDAP.
+OPT_X_TLS: Final = 0x6000
+OPT_X_TLS_CTX: Final = 0x6001
+OPT_X_TLS_CACERTFILE: Final = 0x6002
+OPT_X_TLS_CACERTDIR: Final = 0x6003
+OPT_X_TLS_CERTFILE: Final = 0x6004
+OPT_X_TLS_KEYFILE: Final = 0x6005
+OPT_X_TLS_REQUIRE_CERT: Final = 0x6006
+OPT_X_TLS_CIPHER_SUITE: Final = 0x6008
+OPT_X_TLS_PROTOCOL_MIN: Final = 0x6007
+OPT_X_TLS_PROTOCOL_MAX: Final = 0x601B
+OPT_X_TLS_NEWCTX: Final = 0x600F
+OPT_X_TLS_PEERCERT: Final = 0x6015
+OPT_X_TLS_VERSION: Final = 0x6013
+OPT_X_TLS_CIPHER: Final = 0x6014
+
+# What to make of the certificate the server sends.
+OPT_X_TLS_NEVER: Final = 0
+OPT_X_TLS_HARD: Final = 1
+OPT_X_TLS_DEMAND: Final = 2
+OPT_X_TLS_ALLOW: Final = 3
+OPT_X_TLS_TRY: Final = 4
+
+# The protocol versions OPT_X_TLS_PROTOCOL_MIN and _MAX are given in.
+OPT_X_TLS_PROTOCOL_SSL3: Final = 0x300
+OPT_X_TLS_PROTOCOL_TLS1_0: Final = 0x301
+OPT_X_TLS_PROTOCOL_TLS1_1: Final = 0x302
+OPT_X_TLS_PROTOCOL_TLS1_2: Final = 0x303
+OPT_X_TLS_PROTOCOL_TLS1_3: Final = 0x304
+
+# What a SASL bind is told about talking to the user, and what it says
+# about the connection it ended up with.
+SASL_AUTOMATIC: Final = 0
+SASL_INTERACTIVE: Final = 1
+SASL_QUIET: Final = 2
+SASL_AVAIL: Final = 1
+OPT_X_SASL_MECH: Final = 0x6100
+OPT_X_SASL_REALM: Final = 0x6101
+OPT_X_SASL_AUTHCID: Final = 0x6102
+OPT_X_SASL_AUTHZID: Final = 0x6103
+OPT_X_SASL_USERNAME: Final = 0x610C
+OPT_X_SASL_SSF: Final = 0x6104
+
 # The port LDAP is served on, and the limit that is no limit.
 PORT: Final = 389
 NO_LIMIT: Final = 0

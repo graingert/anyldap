@@ -32,19 +32,94 @@ Operations can be started with ``search_ext()``, ``add()`` and the rest, and
 collected later by message id with ``result3()``; ``result(msgid,
 all=ldap.MSG_ONE)`` walks a large search one entry at a time.
 
+Binding with SASL
+-----------------
+
+``sasl_interactive_bind_s()`` drives the exchange, asking the mechanism what
+to send for as long as the server says the bind is still in progress:
+
+.. code-block:: python
+
+    from anyldap import ldap
+
+    async with ldap.initialize("ldapi:///run/slapd/ldapi") as connection:
+        await connection.sasl_external_bind_s()
+        print(await connection.whoami_s())
+
+The mechanisms in :mod:`anyldap.ldap.sasl` answer for themselves rather than
+through Cyrus SASL: ``external``, ``plain``, ``cram_md5`` and
+``digest_md5``. GSSAPI needs Kerberos and is not among them. A mechanism of
+your own works anywhere these do, as long as it has a ``mech`` and a
+``process()`` that answers a challenge.
+
+Controls
+--------
+
+Controls are the objects :mod:`anyldap.ldap.controls` builds, encoded with
+the BER library anyldap already has rather than with pyasn1, and a response
+hands back the ones it carried, read into the classes that know them:
+
+.. code-block:: python
+
+    from anyldap.ldap.controls import SimplePagedResultsControl
+
+    paged = SimplePagedResultsControl(True, size=100, cookie=b"")
+    while True:
+        msgid = await connection.search_ext(base, scope, serverctrls=[paged])
+        rtype, data, rmsgid, answered = await connection.result3(msgid)
+        ...
+        cookies = [
+            control.cookie
+            for control in answered
+            if control.controlType == ldap.CONTROL_PAGEDRESULTS
+        ]
+        if not cookies or not cookies[0]:
+            break
+        paged.cookie = cookies[0]
+
+The controls with a class of their own are paged results, pre-read and
+post-read, ManageDSAIT, relax rules, proxied authorization and the
+authorization identity pair; anything else is an ``LDAPControl`` carrying
+the bytes as they came, and a control of your own only has to encode and
+decode its own value. A ``(type, criticality, value)`` triple is still
+accepted wherever controls are.
+
+Schema
+------
+
+:mod:`anyldap.ldap.schema` reads what a server publishes about itself into
+the model classes python-ldap names, on top of the schema parsing in
+:mod:`anyldap.schema`::
+
+    subschema = await connection.read_schema_s()
+    person = subschema.get_obj(ldap.schema.ObjectClass, "person")
+    must, may = subschema.attribute_types(["inetOrgPerson"])
+
+``read_schema_s()`` is not a method python-ldap has: it fetches schema with
+``ldap.schema.urlfetch()``, which opens a connection of its own, and this
+uses the one already open.
+
+TLS
+---
+
+The ``OPT_X_TLS_*`` options build the :class:`ssl.SSLContext` a connection
+is raised with -- the certificates to trust, the certificate to send, what
+to check, which protocol versions and ciphers -- and ``OPT_X_TLS_NEWCTX``
+starts a new one. A context can be passed to ``initialize()`` instead, and
+then it is used as it stands. ``ldaps://`` raises TLS before anything is
+sent; ``start_tls_s()`` raises it on a connection that is already open.
+
 What is not here
 ----------------
 
-Everything python-ldap needs the C library for:
-
-- SASL binds. Simple binds and StartTLS are supported.
-- The ``ldap.controls`` and ``ldap.schema`` packages. Controls are sent and
-  received as the ``(type, criticality, value)`` triples
-  :mod:`anyldap.protocols.pureldap` uses.
-- The ``OPT_X_TLS_*`` options. TLS is asked for with an
-  :class:`ssl.SSLContext` passed to ``initialize()``, and ``ldaps://`` URLs
-  raise TLS before anything is sent.
-- Referrals are never chased: a search hands back the referral URLs as
+- **GSSAPI**, which needs Kerberos, and the ``OPT_X_SASL_*`` options that
+  configure Cyrus SASL. The SASL option numbers are defined, since a
+  mechanism may want to name them, but setting them does nothing.
+- **``ldap.async``/``ldap.asyncsearch`` and ``ldap.syncrepl``**, and
+  ``LDAPUrl``.
+- **``ReconnectLDAPObject``'s reconnection**: the name is here and is the
+  plain object, which does not reconnect behind the caller's back.
+- **Referrals are never chased**: a search hands back the referral URLs as
   ``(None, [uri, ...])``, which is what python-ldap does with
   ``OPT_REFERRALS`` off.
 
@@ -111,6 +186,63 @@ anyldap.ldap.cidict module
 --------------------------
 
 .. automodule:: anyldap.ldap.cidict
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+anyldap.ldap.functions module
+-----------------------------
+
+.. automodule:: anyldap.ldap.functions
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+anyldap.ldap.sasl module
+------------------------
+
+.. automodule:: anyldap.ldap.sasl
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+anyldap.ldap.controls package
+-----------------------------
+
+.. automodule:: anyldap.ldap.controls
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.controls.simple
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.controls.pagedresults
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.controls.readentry
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+anyldap.ldap.schema package
+---------------------------
+
+.. automodule:: anyldap.ldap.schema
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.schema.models
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.schema.subentry
     :members:
     :undoc-members:
     :show-inheritance:
