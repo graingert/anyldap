@@ -65,7 +65,8 @@ What was changed
 - Each test runs twice, once on asyncio and once on trio, which is what the
   rest of the test suite does. One slapd is shared by a module and so by
   both runs, so a test that writes to the directory writes under a name of
-  its own.
+  its own. ``test_slapadd`` changes what the server *is* rather than what it
+  holds, so it starts one of its own and stops it again.
 
 What was not ported, and why
 ----------------------------
@@ -78,6 +79,8 @@ What was not ported, and why
   library's DN parser options, which this has no equivalent for.
 - **``ldap.cidict.strlist_*`` and ``cidict.data``**, which python-ldap has
   deprecated, and ``t_cidict.test_strlist_deprecated`` with them.
+- **``t_ldap_options.test_readonly``**, which checks that ``OPT_API_INFO``
+  cannot be set. It describes libldap, so it is not an option here at all.
 - **``CreateLDIF()`` and ``ParseLDIF()``** of ``t_ldif.py``, which python-ldap
   deprecated and does not test either. ``anyldap.ldap.ldif`` does not have
   them, so the rest of that file is ported and this is what is left out.
