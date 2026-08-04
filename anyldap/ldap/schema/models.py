@@ -89,7 +89,7 @@ class SchemaElement:
             written = list(values)
         if len(values) == 1:
             return f" {key} {written[0]}"
-        return " {} ( {} )".format(key, sep.join(written))
+        return f" {key} ( {sep.join(written)} )"
 
     def __str__(self) -> str:
         return "( %s )" % "".join(
