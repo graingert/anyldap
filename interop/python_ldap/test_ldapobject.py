@@ -70,11 +70,6 @@ cn: Foo4
 """
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
 @pytest.fixture(scope="module")
 def slapd() -> Iterator[Any]:
     """One OpenLDAP server holding python-ldap's own test entries."""

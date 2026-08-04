@@ -222,6 +222,8 @@ deps =
     pytest
     pytest-cov
     python-ldap
+    ; The interop tests run on both backends, the same as the rest.
+    trio
     zope.interface
 commands =
     {envpython} -m pytest {posargs:interop} --no-cov

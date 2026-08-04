@@ -56,11 +56,6 @@ CERTUSER = "client"
 CERTSUBJECT = "cn=client,ou=slapd-test,o=python-ldap,c=de"
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
 @pytest.fixture(scope="module")
 def slapd() -> Iterator[Any]:
     server = python_ldap_slapdtest.SlapdObject()

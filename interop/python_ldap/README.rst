@@ -55,6 +55,10 @@ What was changed
   python-ldap's own, unchanged.
 - Where python-ldap reaches into an object's internals (``cidict._keys``),
   the port asks the same question through the public API.
+- Each test runs twice, once on asyncio and once on trio, which is what the
+  rest of the test suite does. One slapd is shared by a module and so by
+  both runs, so a test that writes to the directory writes under a name of
+  its own.
 
 What was not ported, and why
 ----------------------------

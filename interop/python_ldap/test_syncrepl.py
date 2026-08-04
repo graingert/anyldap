@@ -138,11 +138,6 @@ LDAP_ENTRIES = {
 }
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
 class SyncreplClient(SyncreplConsumer, ldap.SimpleLDAPObject):
     """
     This is a very simple class to start up the syncrepl search

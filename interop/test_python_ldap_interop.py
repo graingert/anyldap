@@ -77,11 +77,6 @@ def slapd() -> Iterator[Any]:
         server.stop()
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return "asyncio"
-
-
 def normalise(steps: list[Step], label: str, suffix: str) -> str:
     """The script's answers, with the sub-tree it ran in taken out.
 
@@ -97,6 +92,15 @@ def normalise(steps: list[Step], label: str, suffix: str) -> str:
 
 def person(where: str, uid: str) -> str:
     return f"uid={uid},{where}"
+
+
+def subtree(slapd: Any, name: str, backend: str) -> str:
+    """A part of the directory only this run writes to.
+
+    One server is shared by the whole module, and the module is run once per
+    backend, so a test that writes needs somewhere of its own to write.
+    """
+    return f"ou={name}-{backend},{slapd.suffix}"
 
 
 def sync_script(uri: str, root_dn: str, root_pw: str, suffix: str, where: str) -> list[Step]:
@@ -350,14 +354,19 @@ async def test_the_same_script_gives_the_same_answers(slapd: Any) -> None:
     assert normalise(actual, "async", suffix) == normalise(expected, "sync", suffix)
 
 
-async def test_binding_as_a_user_matches(slapd: Any) -> None:
+async def test_binding_as_a_user_matches(
+    slapd: Any, anyio_backend_name: str
+) -> None:
     uri = slapd.ldap_uri
-    where = f"ou=people,{slapd.suffix}"
+    where = subtree(slapd, "people", anyio_backend_name)
     dn = person(where, "babs")
 
     setup = ldap.initialize(uri)
     setup.simple_bind_s(slapd.root_dn, slapd.root_pw)
-    setup.add_s(where, [("objectClass", [b"organizationalUnit"]), ("ou", [b"people"])])
+    setup.add_s(
+        where,
+        [("objectClass", [b"organizationalUnit"]), ("ou", [where[3:].split(",")[0].encode()])],
+    )
     setup.add_s(
         dn,
         [
@@ -496,15 +505,18 @@ def test_the_errors_stand_for_the_same_result_codes() -> None:
 
 
 async def test_an_async_run_alone_leaves_the_directory_as_python_ldap_finds_it(
-    slapd: Any,
+    slapd: Any, anyio_backend_name: str
 ) -> None:
     """What one client writes, the other reads back the same way."""
-    where = f"ou=shared,{slapd.suffix}"
+    where = subtree(slapd, "shared", anyio_backend_name)
     async with aldap.initialize(slapd.ldap_uri) as connection:
         await connection.simple_bind_s(slapd.root_dn, slapd.root_pw)
         await connection.add_s(
             where,
-            [("objectClass", [b"organizationalUnit"]), ("ou", [b"shared"])],
+            [
+                ("objectClass", [b"organizationalUnit"]),
+                ("ou", [where[3:].split(",")[0].encode()]),
+            ],
         )
         await connection.add_s(
             person(where, "written"),
@@ -605,15 +617,21 @@ def test_the_controls_encode_to_what_python_ldaps_encode_to() -> None:
     assert mine == theirs_value.encode("utf-8")
 
 
-async def test_paged_results_walk_the_same_pages(slapd: Any) -> None:
+async def test_paged_results_walk_the_same_pages(
+    slapd: Any, anyio_backend_name: str
+) -> None:
     """A search read a page at a time, through both clients."""
     import ldap.controls.pagedresults as their_paged
 
-    where = f"ou=paged,{slapd.suffix}"
+    where = subtree(slapd, "paged", anyio_backend_name)
     setup = ldap.initialize(slapd.ldap_uri)
     setup.simple_bind_s(slapd.root_dn, slapd.root_pw)
     setup.add_s(
-        where, [("objectClass", [b"organizationalUnit"]), ("ou", [b"paged"])]
+        where,
+        [
+            ("objectClass", [b"organizationalUnit"]),
+            ("ou", [where[3:].split(",")[0].encode()]),
+        ],
     )
     for index in range(5):
         setup.add_s(
