@@ -57,6 +57,32 @@ RES_COMPARE: Final = 0x6F
 RES_EXTENDED: Final = 0x78
 RES_INTERMEDIATE: Final = 0x79
 
+# What each kind of request is numbered, which is the tag it goes out under.
+REQ_BIND: Final = 0x60
+REQ_UNBIND: Final = 0x42
+REQ_SEARCH: Final = 0x63
+REQ_MODIFY: Final = 0x66
+REQ_ADD: Final = 0x68
+REQ_DELETE: Final = 0x4A
+REQ_MODRDN: Final = 0x6C
+REQ_COMPARE: Final = 0x6E
+REQ_ABANDON: Final = 0x50
+REQ_EXTENDED: Final = 0x77
+
+# The BER tags of the parts of a message, for a caller reading the wire.
+TAG_MESSAGE: Final = 0x30
+TAG_MSGID: Final = 0x02
+TAG_LDAPDN: Final = 0x04
+TAG_LDAPCRED: Final = 0x04
+TAG_CONTROLS: Final = 0xA0
+TAG_REFERRAL: Final = 0xA3
+TAG_NEWSUPERIOR: Final = 0x80
+TAG_EXOP_REQ_OID: Final = 0x80
+TAG_EXOP_REQ_VALUE: Final = 0x81
+TAG_EXOP_RES_OID: Final = 0x8A
+TAG_EXOP_RES_VALUE: Final = 0x8B
+TAG_SASL_RES_CREDS: Final = 0x87
+
 # How much of an answer result3() waits for: one message at a time, or
 # everything the operation produces.
 MSG_ONE: Final = 0
@@ -77,6 +103,30 @@ OPT_PROTOCOL_VERSION: Final = 0x11
 OPT_TIMEOUT: Final = 0x5002
 OPT_NETWORK_TIMEOUT: Final = 0x5005
 OPT_URI: Final = 0x5006
+OPT_REFHOPLIMIT: Final = 0x5003
+OPT_DEFBASE: Final = 0x5009
+OPT_CONNECT_ASYNC: Final = 0x5010
+OPT_TCP_USER_TIMEOUT: Final = 0x5015
+OPT_DEBUG_LEVEL: Final = 0x5001
+OPT_X_KEEPALIVE_IDLE: Final = 0x6300
+OPT_X_KEEPALIVE_PROBES: Final = 0x6301
+OPT_X_KEEPALIVE_INTERVAL: Final = 0x6302
+
+# Options that describe the library or the connection underneath rather
+# than saying how to talk to a server. They are named because python-ldap
+# names them; asking for one of these says it is not an option here.
+OPT_API_INFO: Final = 0x00
+OPT_DESC: Final = 0x01
+OPT_RESTART: Final = 0x09
+OPT_SERVER_CONTROLS: Final = 0x12
+OPT_CLIENT_CONTROLS: Final = 0x13
+OPT_API_FEATURE_INFO: Final = 0x15
+OPT_HOST_NAME: Final = 0x30
+OPT_ERROR_NUMBER: Final = 0x31
+OPT_RESULT_CODE: Final = 0x31
+OPT_ERROR_STRING: Final = 0x32
+OPT_DIAGNOSTIC_MESSAGE: Final = 0x32
+OPT_MATCHED_DN: Final = 0x33
 
 # How TLS is asked for. Setting any of these builds the ssl.SSLContext the
 # connection is raised with, so they mean here what they mean to OpenLDAP.
@@ -94,6 +144,18 @@ OPT_X_TLS_NEWCTX: Final = 0x600F
 OPT_X_TLS_PEERCERT: Final = 0x6015
 OPT_X_TLS_VERSION: Final = 0x6013
 OPT_X_TLS_CIPHER: Final = 0x6014
+OPT_X_TLS_RANDOM_FILE: Final = 0x6009
+OPT_X_TLS_CRLCHECK: Final = 0x600B
+OPT_X_TLS_DHFILE: Final = 0x600E
+OPT_X_TLS_CRLFILE: Final = 0x6010
+OPT_X_TLS_PACKAGE: Final = 0x6011
+OPT_X_TLS_ECNAME: Final = 0x6012
+OPT_X_TLS_REQUIRE_SAN: Final = 0x601A
+
+# Whose certificate revocation list to check, for OPT_X_TLS_CRLCHECK.
+OPT_X_TLS_CRL_NONE: Final = 0
+OPT_X_TLS_CRL_PEER: Final = 1
+OPT_X_TLS_CRL_ALL: Final = 2
 
 # What to make of the certificate the server sends.
 OPT_X_TLS_NEVER: Final = 0
@@ -128,6 +190,14 @@ OPT_X_SASL_SSF_MAX: Final = 0x6108
 OPT_X_SASL_MAXBUFSIZE: Final = 0x6109
 OPT_X_SASL_NOCANON: Final = 0x610B
 
+# The OID of syncrepl's Sync Info message, which python-ldap names here
+# as well as in ldap.syncrepl.
+SYNC_INFO: Final = "1.3.6.1.4.1.4203.1.9.1.4"
+
+# What is wrong with a URL that could not be read.
+URL_ERR_MEM: Final = 1
+URL_ERR_BADSCOPE: Final = 8
+
 # The port LDAP is served on, and the limit that is no limit.
 PORT: Final = 389
 NO_LIMIT: Final = 0
@@ -154,3 +224,29 @@ CONTROL_RELAX: Final = "1.3.6.1.4.1.4203.666.5.12"
 # OIDs of the extended operations with their own method.
 PASSMOD_OID: Final = "1.3.6.1.4.1.4203.1.11.1"
 WHOAMI_OID: Final = "1.3.6.1.4.1.4203.1.11.3"
+
+
+# More than one name stands for some of the numbers below -- an option and
+# a value an option takes can share one, and two spellings of the same
+# option certainly do. This is the name python-ldap answers with for each of
+# those, so that the two agree.
+_SHARED_NUMBERS: Final[dict[int, str]] = {
+    0: "OPT_SUCCESS",
+    1: "OPT_X_TLS_CRL_PEER",
+    2: "OPT_X_TLS_CRL_ALL",
+    0x31: "OPT_ERROR_NUMBER",
+    0x32: "OPT_ERROR_STRING",
+}
+
+# Every option, by the number it is known by. Built from what is above, so
+# that a name and its number cannot drift apart: python-ldap builds its own
+# from whatever its C library was compiled with, so which options are in it
+# there depends on the build.
+OPT_NAMES_DICT: Final[dict[int, str]] = {
+    **{
+        value: name
+        for name, value in list(globals().items())
+        if name.startswith("OPT_") and isinstance(value, int)
+    },
+    **_SHARED_NUMBERS,
+}

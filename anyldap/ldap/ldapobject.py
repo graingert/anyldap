@@ -16,7 +16,7 @@ import ssl
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import TracebackType
-from typing import Any, TypeVar, cast
+from typing import Any, ClassVar, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
 import anyio
@@ -417,6 +417,17 @@ class SimpleLDAPObject:
     ``unbind_s()``, and ``async with`` closes it however the block ends.
     """
 
+    # The attributes that are options underneath: setting one of these
+    # goes through set_option(), which is what python-ldap does with them.
+    CLASSATTR_OPTION_MAPPING: ClassVar[dict[str, int]] = {
+        "protocol_version": OPT_PROTOCOL_VERSION,
+        "deref": OPT_DEREF,
+        "referrals": OPT_REFERRALS,
+        "timelimit": OPT_TIMELIMIT,
+        "sizelimit": OPT_SIZELIMIT,
+        "network_timeout": OPT_NETWORK_TIMEOUT,
+    }
+
     def __init__(
         self,
         uri: str,
@@ -447,6 +458,20 @@ class SimpleLDAPObject:
         self._sasl_mechanism: bytes | None = None
         self._sasl_options: dict[int, object] = {}
         self._sasl_username: str | None = None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """An attribute that is an option underneath is set as one.
+
+        ``connection.network_timeout = -1`` says the same thing as
+        ``set_option(OPT_NETWORK_TIMEOUT, -1)``, which is what python-ldap
+        makes of it too; the value that is kept is what the option made of
+        what was given.
+        """
+        option = self.CLASSATTR_OPTION_MAPPING.get(name)
+        if option is None:
+            object.__setattr__(self, name, value)
+        else:
+            self.set_option(option, value)
 
     async def __aenter__(self: _Connection) -> _Connection:
         # Whatever this was opened as is what the body of the with
@@ -507,6 +532,20 @@ class SimpleLDAPObject:
             ) from exc
         self._stream = stream
         return stream
+
+    def fileno(self) -> int:
+        """The socket this connection is open on.
+
+        For a caller that wants to watch the connection with something of
+        its own. It raises if nothing is open yet, because there is no
+        socket to name until the first operation has been awaited.
+        """
+        stream = self._stream
+        if stream is None:
+            raise errors.LDAPError({"desc": "the connection is not open"})
+        # A TLS stream hands on what the socket underneath it says, so this
+        # is the same number whether or not TLS was raised.
+        return int(stream.extra(anyio.abc.SocketAttribute.raw_socket).fileno())
 
     async def _lost(self, reason: str) -> None:
         """The connection has gone: every operation on it fails with it."""
@@ -783,11 +822,23 @@ class SimpleLDAPObject:
             return rtype, [payload]
         return None
 
-    async def abandon(self, msgid: int, serverctrls: Controls = None) -> None:
-        """Tell the server to stop working on an operation, and forget it."""
+    async def abandon_ext(
+        self,
+        msgid: int,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+    ) -> None:
+        """Tell the server to stop working on an operation, and forget it.
+
+        Nothing is answered: an abandon is not a request the server replies
+        to, which is what ``cancel()`` is for.
+        """
         if self._pending.pop(msgid, None) is None:
             return
         await self._send(pureldap.LDAPAbandonRequest(id=msgid), serverctrls)
+
+    async def abandon(self, msgid: int, serverctrls: Controls = None) -> None:
+        await self.abandon_ext(msgid, serverctrls)
 
     async def cancel(
         self,
@@ -824,17 +875,17 @@ class SimpleLDAPObject:
     def set_option(self, option: int, invalue: object) -> None:
         if option == OPT_PROTOCOL_VERSION:
             assert isinstance(invalue, int)
-            self.protocol_version = invalue
+            object.__setattr__(self, "protocol_version", invalue)
         elif option == OPT_SIZELIMIT:
             assert isinstance(invalue, int)
-            self.sizelimit = invalue
+            object.__setattr__(self, "sizelimit", invalue)
         elif option == OPT_TIMELIMIT:
             assert isinstance(invalue, int)
-            self.timelimit = invalue
+            object.__setattr__(self, "timelimit", invalue)
         elif option == OPT_TIMEOUT:
             self.timeout = _timeout(invalue)
         elif option == OPT_NETWORK_TIMEOUT:
-            self.network_timeout = _timeout(invalue)
+            object.__setattr__(self, "network_timeout", _timeout(invalue))
         elif option == OPT_URI:
             assert isinstance(invalue, str)
             self.uri = invalue
@@ -842,10 +893,10 @@ class SimpleLDAPObject:
             self._unix = urlparse(invalue).scheme == "ldapi"
         elif option == OPT_DEREF:
             assert isinstance(invalue, int)
-            self.deref = invalue
+            object.__setattr__(self, "deref", invalue)
         elif option == OPT_REFERRALS:
             assert isinstance(invalue, int)
-            self.referrals = invalue
+            object.__setattr__(self, "referrals", invalue)
         elif option in _TLS_OPTIONS:
             self._tls_options[option] = invalue
             # The context is described by every option together, so it is
@@ -1021,7 +1072,10 @@ class SimpleLDAPObject:
         authz_id: str = "",
     ) -> None:
         """A SASL bind with a mechanism that asks the caller nothing."""
-        mechanisms = {"EXTERNAL": sasl.external}
+        mechanisms: dict[str, Callable[[str], sasl.sasl]] = {
+            "EXTERNAL": sasl.external,
+            "GSSAPI": sasl.gssapi,
+        }
         if sasl_mech not in mechanisms:
             raise errors.AUTH_UNKNOWN(
                 {
@@ -1031,6 +1085,18 @@ class SimpleLDAPObject:
             )
         await self.sasl_interactive_bind_s(
             "", mechanisms[sasl_mech](authz_id), serverctrls, clientctrls
+        )
+
+    async def sasl_gssapi_bind_s(
+        self,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+        sasl_flags: int = SASL_QUIET,
+        authz_id: str = "",
+    ) -> None:
+        """Bind with Kerberos, which is what the GSSAPI mechanism is."""
+        await self.sasl_non_interactive_bind_s(
+            "GSSAPI", serverctrls, clientctrls, authz_id
         )
 
     async def sasl_external_bind_s(
@@ -1563,6 +1629,19 @@ class SimpleLDAPObject:
         )
         return name, value
 
+    async def extop_result(
+        self,
+        msgid: int = RES_ANY,
+        all: int = 1,
+        timeout: float | None = None,
+    ) -> tuple[str | None, bytes | None]:
+        """Collect an extended operation started with ``extop()``."""
+        _, _, _, _, name, value = await self.result4(
+            msgid, all=1, timeout=self.timeout, add_ctrls=1, add_intermediates=1,
+            add_extop=1,
+        )
+        return name, value
+
     async def passwd(
         self,
         user: Value | None = None,
@@ -1690,9 +1769,15 @@ class ReconnectLDAPObject(SimpleLDAPObject):
         retry_max: int = 1,
         retry_delay: float = 60.0,
     ) -> None:
-        SimpleLDAPObject.__init__(self, uri, trace_level, ssl_context=ssl_context)
-        self._uri = uri
+        # Set before the connection is built, because building it sets
+        # options: what is written down is what a caller sets afterwards,
+        # since the defaults are still there on a connection that is opened
+        # again.
         self._options: list[tuple[int, object]] = []
+        self._recording = False
+        SimpleLDAPObject.__init__(self, uri, trace_level, ssl_context=ssl_context)
+        self._recording = True
+        self._uri = uri
         self._last_bind: tuple[str, tuple[Any, ...], dict[str, Any]] | None = None
         self._retry_max = retry_max
         self._retry_delay = retry_delay
@@ -1745,7 +1830,8 @@ class ReconnectLDAPObject(SimpleLDAPObject):
             SimpleLDAPObject.set_option(self, option, value)
 
     def set_option(self, option: int, invalue: object) -> None:
-        self._options.append((option, invalue))
+        if self._recording:
+            self._options.append((option, invalue))
         SimpleLDAPObject.set_option(self, option, invalue)
 
     async def reconnect(
@@ -1914,9 +2000,15 @@ def initialize(
     """A connection to the server named by an ``ldap://`` or ``ldaps://`` URL.
 
     Nothing is sent until the first operation is awaited, which is what lets
-    this stay the plain call python-ldap makes it.
+    this stay the plain call python-ldap makes it. Whatever was given to
+    ``ldap.set_option()`` is what the connection starts with.
     """
-    return SimpleLDAPObject(uri, trace_level, ssl_context=ssl_context)
+    from anyldap.ldap import functions
+
+    connection = SimpleLDAPObject(uri, trace_level, ssl_context=ssl_context)
+    for option, value in functions._defaults.items():
+        connection.set_option(option, value)
+    return connection
 
 
 # python-ldap's older spelling of the same thing.

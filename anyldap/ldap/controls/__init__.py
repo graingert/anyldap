@@ -149,6 +149,8 @@ def decode_controls(
 # python-ldap's own spellings of the two above.
 encodeControlTuples = encode_controls
 decodeControlTuples = decode_controls
+EncodeControlTuples = encode_controls
+DecodeControlTuples = decode_controls
 
 
 def RequestControlTuples(
@@ -193,6 +195,9 @@ from anyldap.ldap.controls.simple import (  # noqa: E402
 )
 from anyldap.ldap.controls.simple import (  # noqa: E402
     BooleanControl as BooleanControl,
+)
+from anyldap.ldap.controls.simple import (  # noqa: E402
+    GetEffectiveRightsControl as GetEffectiveRightsControl,
 )
 from anyldap.ldap.controls.simple import (  # noqa: E402
     ManageDSAITControl as ManageDSAITControl,

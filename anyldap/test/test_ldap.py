@@ -945,8 +945,10 @@ async def test_sasl_external_says_the_connection_is_the_identity() -> None:
         assert servers[1].seen == [(b"EXTERNAL", b"")]
 
     async with serving(factory) as server, connected(server) as connection:
+        # A mechanism that has to be told a name and a password cannot be
+        # bound with by a caller who says nothing.
         with pytest.raises(ldap.AUTH_UNKNOWN, match="credentials"):
-            await connection.sasl_non_interactive_bind_s("GSSAPI")
+            await connection.sasl_non_interactive_bind_s("CRAM-MD5")
 
 
 async def test_a_sasl_step_by_step_bind_hands_back_the_challenge() -> None:
@@ -3295,3 +3297,321 @@ async def test_a_server_that_says_where_its_schema_is_not_answers_with_none() ->
 
     async with serving(Bare) as server:
         assert await ldap.schema.urlfetch(server.uri) == (None, None)
+
+
+# The names and numbers python-ldap has, and the pieces that go with them.
+
+
+def test_every_option_is_named_by_the_number_it_is_known_by() -> None:
+    assert ldap.OPT_NAMES_DICT[ldap.OPT_URI] == "OPT_URI"
+    assert ldap.OPT_NAMES_DICT[ldap.OPT_X_TLS_CACERTFILE] == "OPT_X_TLS_CACERTFILE"
+    # Where several names share a number, it is the one python-ldap answers
+    # with: an option and a value an option takes can collide.
+    assert ldap.OPT_NAMES_DICT[0] == "OPT_SUCCESS"
+    assert ldap.OPT_NAMES_DICT[ldap.OPT_ERROR_NUMBER] == "OPT_ERROR_NUMBER"
+    assert ldap.OPT_ERROR_NUMBER == ldap.OPT_RESULT_CODE
+
+    # The request tags, which is what each kind of request goes out under.
+    assert ldap.REQ_BIND == 0x60
+    assert ldap.REQ_EXTENDED == 0x77
+    assert ldap.TAG_MESSAGE == 0x30
+    assert ldap.URL_ERR_BADSCOPE == 8
+    assert ldap.SYNC_INFO == ldap.syncrepl.SYNC_INFO
+    # python-ldap's older name for the class every LDAP error is one of.
+    assert ldap.error is ldap.LDAPError
+
+
+def test_an_option_set_before_a_connection_is_opened_is_on_it() -> None:
+    assert ldap.get_option(ldap.OPT_SIZELIMIT) == 0
+    ldap.set_option(ldap.OPT_SIZELIMIT, 25)
+    try:
+        assert ldap.get_option(ldap.OPT_SIZELIMIT) == 25
+        assert ldap.initialize("ldap://x").sizelimit == 25
+        # A connection made before it was set keeps what it had, and one
+        # made without initialize() is not given it either.
+        assert ldap.SimpleLDAPObject("ldap://x").sizelimit == 0
+        with pytest.raises(ValueError, match="unknown option"):
+            ldap.set_option(-1, 1)
+    finally:
+        del ldap.functions._defaults[ldap.OPT_SIZELIMIT]
+    assert ldap.get_option(ldap.OPT_SIZELIMIT) == 0
+
+
+def test_an_attribute_that_is_an_option_is_set_as_one() -> None:
+    connection = ldap.initialize("ldap://x")
+    assert set(connection.CLASSATTR_OPTION_MAPPING) == {
+        "protocol_version",
+        "deref",
+        "referrals",
+        "timelimit",
+        "sizelimit",
+        "network_timeout",
+    }
+    # Assigning goes through set_option, so -1 means what it means there.
+    connection.network_timeout = -1
+    assert connection.network_timeout is None
+    assert connection.get_option(ldap.OPT_NETWORK_TIMEOUT) is None
+    connection.network_timeout = 5
+    assert connection.get_option(ldap.OPT_NETWORK_TIMEOUT) == 5
+    connection.deref = ldap.DEREF_ALWAYS
+    assert connection.get_option(ldap.OPT_DEREF) == ldap.DEREF_ALWAYS
+    # Anything else is an ordinary attribute.
+    connection.timeout = -1
+    assert connection.timeout == -1
+
+
+def test_the_helpers_python_ldap_keeps_beside_the_connection() -> None:
+    assert ldap.timegm((2026, 8, 4, 12, 0, 0, 0, 0, 0)) == 1785844800
+    assert ldap.functions.explode_dn is ldap.explode_dn
+    assert ldap.functions.initialize is ldap.initialize
+    assert ldap.functions.LDAPError is ldap.LDAPError
+
+    # A filter narrowed to what changed inside a span of time.
+    assert ldap.time_span_filter("(objectClass=*)", 0, 1000) == (
+        "(&(objectClass=*)(modifyTimestamp>=19700101000000Z)"
+        "(!(modifyTimestamp>=19700101001640Z)))"
+    )
+    # A negative start is that many seconds before the end of the span.
+    recent = ldap.time_span_filter(from_timestamp=-60)
+    assert recent.startswith("(&(modifyTimestamp>=")
+    assert ldap.time_span_filter(delta_attr="createTimestamp", until_timestamp=1).count(
+        "createTimestamp"
+    ) == 2
+    with pytest.raises(ValueError, match="must not be greater"):
+        ldap.time_span_filter(from_timestamp=100, until_timestamp=1)
+
+
+async def test_an_operation_can_be_stopped_and_collected_by_message_id() -> None:
+    root = make_root()
+    async with serving(tree_server(root)) as server, bound(server) as connection:
+        # Started, then collected: what extop_result() is for.
+        msgid = await connection.extop(
+            pureldap.LDAPExtendedRequest(requestName=b"1.2.3")
+        )
+        with pytest.raises(ldap.PROTOCOL_ERROR):
+            await connection.extop_result(msgid)
+
+        # abandon_ext is abandon, under the name python-ldap gives it.
+        msgid = await connection.search_ext(JACK, ldap.SCOPE_BASE)
+        await connection.abandon_ext(msgid)
+        assert msgid not in connection._pending
+
+        assert isinstance(connection.fileno(), int)
+
+
+async def test_a_gssapi_bind_can_be_asked_for_by_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = []
+
+    def not_installed() -> object:
+        asked.append(True)
+        raise ImportError("no Kerberos here")
+
+    monkeypatch.setattr(ldap.sasl, "_gssapi", not_installed)
+    async with serving(SaslServer) as server, connected(server) as connection:
+        with pytest.raises(ImportError, match="no Kerberos here"):
+            await connection.sasl_gssapi_bind_s()
+    assert asked
+
+
+def test_an_extended_operation_is_a_name_and_a_value() -> None:
+    request = ldap.extop.ExtendedRequest("1.2.3", b"value")
+    assert request.encodedRequestValue() == b"value"
+    assert repr(request) == "ExtendedRequest(1.2.3,b'value')"
+
+    response = ldap.extop.ExtendedResponse("1.2.3", b"answer")
+    assert response.responseValue == b"answer"
+    assert repr(response) == "ExtendedResponse(1.2.3,b'answer')"
+
+
+def test_a_dynamic_entry_is_asked_to_go_on_living() -> None:
+    request = ldap.extop.RefreshRequest(
+        entryName="cn=dyn,dc=example,dc=com", requestTtl=3600
+    )
+    assert request.requestName == "1.3.6.1.4.1.1466.101.119.1"
+    assert request.encodedRequestValue() == (
+        b"0\x1e\x80\x18cn=dyn,dc=example,dc=com\x81\x02\x0e\x10"
+    )
+    # A request that says nothing else asks for the day the class names.
+    assert ldap.extop.RefreshRequest().requestTtl == 86400
+
+    answered = pureber.BERSequence(
+        [pureber.BERInteger(1800, tag=pureber.CLASS_CONTEXT | 0x01)]
+    ).toWire()
+    response = ldap.extop.RefreshResponse("1.3.6.1.4.1.1466.101.119.1", answered)
+    assert response.responseTtl == 1800
+    assert response.responseValue == 1800
+
+
+def test_a_password_the_server_made_up_is_read_out_of_the_response() -> None:
+    answered = pureber.BERSequence(
+        [pureber.BEROctetString(b"s3cret", tag=pureber.CLASS_CONTEXT | 0x00)]
+    ).toWire()
+    response = ldap.extop.PasswordModifyResponse(None, answered)
+    assert response.genPasswd == b"s3cret"
+    assert ldap.extop.PasswordModifyResponse.responseName is None
+
+
+def test_a_control_can_ask_what_an_identity_would_be_allowed_to_do() -> None:
+    control = ldap.controls.GetEffectiveRightsControl(True, "dn:cn=jack")
+    assert control.controlType == "1.3.6.1.4.1.42.2.27.9.5.2"
+    assert control.encodeControlValue() == b"dn:cn=jack"
+    assert ldap.controls.GetEffectiveRightsControl().encodeControlValue() is None
+    # python-ldap's other spellings of the two that read and write triples.
+    assert ldap.controls.DecodeControlTuples is ldap.controls.decode_controls
+    assert ldap.controls.EncodeControlTuples is ldap.controls.encode_controls
+
+
+# The kinds of schema definition that are read word by word.
+
+
+def test_the_other_kinds_of_definition_say_what_they_say() -> None:
+    use = ldap.schema.MatchingRuleUse(
+        "( 2.5.13.16 NAME 'bitStringMatch' DESC 'x' OBSOLETE"
+        " APPLIES ( givenName $ surname ) )"
+    )
+    assert use.schema_attribute == "matchingRuleUse"
+    assert use.applies == ("givenName", "surname")
+    assert use.obsolete == 1
+    assert str(use) == (
+        "( 2.5.13.16 NAME 'bitStringMatch' DESC 'x' OBSOLETE"
+        " APPLIES ( givenName $ surname ) )"
+    )
+    assert str(ldap.schema.MatchingRuleUse("( 2.5.13.16 )")) == "( 2.5.13.16 )"
+
+    rule = ldap.schema.DITContentRule(
+        "( 2.5.6.4 NAME 'org' AUX posixAccount MUST cn MAY ( sn $ l )"
+        " NOT description )"
+    )
+    assert rule.schema_attribute == "dITContentRules"
+    assert (rule.aux, rule.must, rule.may, rule.nots) == (
+        ("posixAccount",),
+        ("cn",),
+        ("sn", "l"),
+        ("description",),
+    )
+    assert str(rule) == (
+        "( 2.5.6.4 NAME 'org' AUX posixAccount MUST cn MAY ( sn $ l )"
+        " NOT description )"
+    )
+
+    # A structure rule is numbered rather than named by an OID.
+    structure = ldap.schema.DITStructureRule(
+        "( 2 NAME 'orgStructure' FORM orgNameForm SUP ( 1 $ 3 ) )"
+    )
+    assert structure.schema_attribute == "dITStructureRules"
+    assert structure.ruleid == "2"
+    assert structure.get_id() == "2"
+    assert (structure.form, structure.sup) == ("orgNameForm", ("1", "3"))
+    assert str(structure) == (
+        "( 2 NAME 'orgStructure' FORM orgNameForm SUP ( 1 $ 3 ) )"
+    )
+
+    form = ldap.schema.NameForm(
+        "( 1.2.3 NAME 'orgNameForm' OC organization MUST o MAY ou )"
+    )
+    assert form.schema_attribute == "nameForms"
+    assert (form.oc, form.must, form.may) == ("organization", ("o",), ("ou",))
+    assert str(form) == "( 1.2.3 NAME 'orgNameForm' OC organization MUST o MAY ou )"
+
+    assert ldap.schema.SCHEMA_ATTR_MAPPING[ldap.schema.NameForm] == "nameForms"
+    assert ldap.schema.AttributeUsage["dSAOperation"] == 3
+    assert "1.3.6.1.4.1.1466.115.121.1.28" in (
+        ldap.schema.NOT_HUMAN_READABLE_LDAP_SYNTAXES
+    )
+    with pytest.raises(NotImplementedError):
+        ldap.schema.models._TokenisedElement()._set_attrs([], {})
+
+
+def test_a_definition_comes_apart_into_the_words_it_is_written_in() -> None:
+    split = ldap.schema.split_tokens
+    assert split("( 2.5.6.9 NAME 'groupOfNames' )") == [
+        "(",
+        "2.5.6.9",
+        "NAME",
+        "groupOfNames",
+        ")",
+    ]
+    # A quote inside a quoted string is escaped, and comes back unescaped.
+    assert split(r"( 1.2 DESC 'it\'s here' )")[3] == "it's here"
+    # The dollar signs that separate a list are dropped inside parentheses.
+    assert split("( 1.2 MUST ( a $ b ) )") == [
+        "(", "1.2", "MUST", "(", "a", "b", ")", ")"
+    ]
+    with pytest.raises(ValueError, match=r"\$' outside parenthesis"):
+        split("( 1.2 ) $")
+    with pytest.raises(ValueError, match="Unbalanced parenthesis"):
+        split("( 1.2 ")
+
+    # What each keyword was given, and what it is worth when unmentioned.
+    read = split("( 1.2 NAME 'x' OBSOLETE MUST ( a $ b ) )")
+    said = ldap.schema.extract_tokens(
+        read, {"NAME": (), "OBSOLETE": None, "MUST": (), "DESC": (None,)}
+    )
+    assert said == {
+        "NAME": ("x",),
+        "OBSOLETE": (),
+        "MUST": ("a", "b"),
+        "DESC": (None,),
+    }
+
+
+def test_an_entry_that_knows_its_schema_is_keyed_by_what_it_holds() -> None:
+    sub = ldap.schema.SubSchema(SUBSCHEMA)
+    entry = ldap.schema.Entry(
+        sub, JACK, {"objectClass": [b"person"], "cn": [b"Jack"]}
+    )
+    assert entry.dn == JACK
+    # However the attribute is spelled, it is the same attribute.
+    assert entry["cn"] == entry["commonName"] == entry["2.5.4.3"] == [b"Jack"]
+    assert "COMMONNAME" in entry
+    assert entry.has_key("cn")
+    assert list(entry.keys()) == ["objectClass", "cn"]
+    assert entry.items() == [("objectClass", [b"person"]), ("cn", [b"Jack"])]
+
+    # And it can say what an entry of its classes must and may have.
+    must, may = entry.attribute_types()
+    assert sorted(a.names[0] for a in must.values()) == ["cn", "objectClass", "sn"]
+    assert sorted(a.names[0] for a in may.values()) == ["description", "userPassword"]
+
+    entry["sn"] = [b"Smith"]
+    assert entry["surname"] == [b"Smith"]
+    del entry["sn"]
+    assert "sn" not in entry
+    # An entry with no object class at all is asked about all the same.
+    assert ldap.schema.Entry(sub, JACK, {}).attribute_types() == ({}, {})
+
+
+def test_a_definition_that_is_not_one_is_refused() -> None:
+    with pytest.raises(ValueError):
+        ldap.schema.split_tokens("( 1.2 DESC 'unterminated )")
+
+
+async def test_an_extended_operation_answers_the_message_id_it_was_started_as() -> (
+    None
+):
+    class AnsweringServer(ldapserver.BaseLDAPServer):
+        async def handle_LDAPExtendedRequest(
+            self,
+            request: pureldap.LDAPExtendedRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPExtendedResponse:
+            return pureldap.LDAPExtendedResponse(
+                resultCode=0, responseName=request.requestName, response=b"answered"
+            )
+
+    async with serving(AnsweringServer) as server, connected(server) as connection:
+        msgid = await connection.extop(
+            pureldap.LDAPExtendedRequest(requestName=b"1.2.3")
+        )
+        assert await connection.extop_result(msgid) == ("1.2.3", b"answered")
+        # Nothing is open until an operation has been awaited, and there is
+        # no socket to name before that.
+    with pytest.raises(ldap.LDAPError, match="not open"):
+        ldap.initialize("ldap://x").fileno()
+
+
+def test_a_time_span_that_says_nothing_is_the_moment_it_is_asked() -> None:
+    assert ldap.time_span_filter().startswith("(&(modifyTimestamp>=")

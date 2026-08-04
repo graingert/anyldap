@@ -272,6 +272,7 @@ async def test_search_subschema(conn: ldap.SimpleLDAPObject) -> None:
     assert sorted(subschema) == [
         "attributeTypes",
         "ldapSyntaxes",
+        "matchingRuleUse",
         "matchingRules",
         "objectClasses",
     ]
@@ -417,6 +418,8 @@ async def test_reconnect_get_state(slapd: Any) -> None:
     # The names and shapes are python-ldap's; what is stored beside them is
     # this client's own, and is left out here.
     assert state["_last_bind"] == ("simple_bind_s", (bind_dn, "user1_pw"), {})
+    # Upstream's is [(OPT_PROTOCOL_VERSION, 3)]: what is written down here
+    # is what a caller sets, and this connection was given nothing.
     assert state["_options"] == []
     assert state["_reconnects_done"] == 0
     assert state["_retry_delay"] == 60.0

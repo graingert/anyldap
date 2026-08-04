@@ -91,6 +91,11 @@ What was not ported, and why
   expectation, so the ones python-ldap does reject stay rejected here.
 - **The GSSAPI parts of ``t_ldap_sasl.py``**, which need a Kerberos realm to
   bind against.
+- **``ldap.cidict.strlist_*``**, ``bytes_mode``/``bytes_strictness``, the
+  ``DN_FORMAT_*`` flags, the threading locks, the C entry points and the
+  constants that describe libldap itself (``API_VERSION``,
+  ``LIBLDAP_API_INFO``, ``OPT_API_INFO``, ``OPT_DESC``, ``OPT_ERROR_*``,
+  ``TLS_AVAIL``): there is no C library here for them to be about.
 - **The two LDIF files ``t_ldap_schema_subentry.py`` reads**, which are
   about half a megabyte each. The definitions each of its tests needs are
   inline in ``test_schema_subentry.py`` instead, taken from those files, and

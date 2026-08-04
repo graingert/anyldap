@@ -63,6 +63,26 @@ Features
   assertion and matched-values, and the valueless ones.
 - The ``OPT_X_TLS_*`` options build the ``ssl.SSLContext`` a connection is
   raised with; a context can still be passed to ``initialize()`` instead.
+- ``ldap.extop`` is what an extended operation of your own is built out of,
+  with ``extop.dds`` for the dynamic entries of RFC 2589 and
+  ``extop.passwd`` for the password a server made up. ``extop_result()``
+  collects an operation started with ``extop()``.
+- Every kind of schema definition is read, not four of the eight: matching
+  rule uses, content rules, structure rules and name forms are there too,
+  which is why a server's own ``matchingRuleUse`` is no longer dropped.
+  ``ldap.schema.Entry`` is an entry that knows its schema, and
+  ``split_tokens()``/``extract_tokens()`` are what read a definition.
+- The names python-ldap has that were missing: ``ldap.error``, the ``REQ_*``
+  and ``TAG_*`` constants, ``OPT_NAMES_DICT`` and every ``OPT_*`` number,
+  ``abandon_ext()``, ``fileno()``, ``sasl_gssapi_bind_s()``,
+  ``ldap.filter.time_span_filter()``,
+  ``ldap.controls.GetEffectiveRightsControl`` and the re-exports
+  ``ldap.functions`` carries. Module-level ``ldap.set_option()`` says what
+  every connection opened after it starts with.
+- Setting an attribute that is an option underneath goes through
+  ``set_option()``, as ``CLASSATTR_OPTION_MAPPING`` says it should:
+  ``connection.network_timeout = -1`` says the same thing as setting
+  ``OPT_NETWORK_TIMEOUT`` to -1, and means no limit either way.
 - A schema definition writes itself back out the way python-ldap writes it,
   and ``x_origin`` and the other ``X-`` fields a definition carries are read
   rather than refused. ``ldap.schema.urlfetch()`` takes an LDAP URL and

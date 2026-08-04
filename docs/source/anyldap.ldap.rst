@@ -99,9 +99,15 @@ the model classes python-ldap names, on top of the schema parsing in
     person = subschema.get_obj(ldap.schema.ObjectClass, "person")
     must, may = subschema.attribute_types(["inetOrgPerson"])
 
-A definition writes itself back out again -- ``str(person)`` is the
+Every kind of definition is read: object classes, attribute types, matching
+rules and their uses, syntaxes, content rules, structure rules and name
+forms. A definition writes itself back out again -- ``str(person)`` is the
 ``objectClasses`` value the server published -- and ``x_origin`` and the
 rest of the ``X-`` fields a definition carries are read into ``extensions``.
+
+:class:`~anyldap.ldap.schema.models.Entry` is an entry that knows the schema
+its attributes are described by, so ``entry["cn"]``, ``entry["commonName"]``
+and ``entry["2.5.4.3"]`` are the same attribute.
 
 ``urlfetch()`` is python-ldap's, taking an LDAP URL and opening a connection
 of its own to ask; ``read_schema_s()`` is not a method python-ldap has, and
@@ -190,6 +196,28 @@ server holds is kept up to date. A connection mixes in
 ``refreshOnly`` stops once the copy has caught up and ``refreshAndPersist``
 stays open and keeps being told. ``cancel_s()`` stops a search that is
 staying open, and unlike ``abandon()`` the server answers to say it has.
+
+Extended operations
+-------------------
+
+:mod:`anyldap.ldap.extop` is what an extended operation of your own is
+built out of: a request that knows its OID and writes its value, and a
+response that reads one::
+
+    from anyldap.ldap.extop.dds import RefreshRequest, RefreshResponse
+
+    request = RefreshRequest(entryName=dn, requestTtl=3600)
+    name, value = await connection.extop_s(
+        pureldap.LDAPExtendedRequest(
+            requestName=request.requestName,
+            requestValue=request.encodedRequestValue(),
+        )
+    )
+    left = RefreshResponse(name, value).responseTtl
+
+``extop.dds`` is RFC 2589, entries that go away by themselves, and
+``extop.passwd`` reads the password a server made up when it was asked to
+change one without being given a new one.
 
 What is not here
 ----------------
@@ -355,6 +383,24 @@ anyldap.ldap.syncrepl module
     :undoc-members:
     :show-inheritance:
 
+anyldap.ldap.extop package
+--------------------------
+
+.. automodule:: anyldap.ldap.extop
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.extop.dds
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.extop.passwd
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 anyldap.ldap.schema package
 ---------------------------
 
@@ -369,6 +415,11 @@ anyldap.ldap.schema package
     :show-inheritance:
 
 .. automodule:: anyldap.ldap.schema.subentry
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.schema.tokenizer
     :members:
     :undoc-members:
     :show-inheritance:

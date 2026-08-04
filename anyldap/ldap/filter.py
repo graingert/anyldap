@@ -1,8 +1,10 @@
 """``ldap.filter``: building search filters out of untrusted values."""
 
+import time
 from collections.abc import Iterable
 
 from anyldap._encoder import to_unicode
+from anyldap.ldap.functions import strf_secs as strf_secs
 from anyldap.ldap.ldapobject import Value
 
 # RFC 4515 says these four have to be escaped, and so does anything that is
@@ -45,4 +47,39 @@ def filter_format(filter_template: str, assertion_values: Iterable[Value]) -> st
     """A filter built from a template, with every value escaped first."""
     return filter_template % tuple(
         escape_filter_chars(value) for value in assertion_values
+    )
+
+
+def time_span_filter(
+    filterstr: str = "",
+    from_timestamp: float = 0,
+    until_timestamp: float | None = None,
+    delta_attr: str = "modifyTimestamp",
+) -> str:
+    """This filter, narrowed to what changed between two times.
+
+    A negative ``from_timestamp`` is that many seconds before the end of the
+    span, which is now unless ``until_timestamp`` says otherwise.
+    """
+    if until_timestamp is None:
+        until_timestamp = time.time()
+        if from_timestamp < 0:
+            from_timestamp = until_timestamp + from_timestamp
+    if from_timestamp > until_timestamp:
+        raise ValueError(
+            "from_timestamp {!r} must not be greater than until_timestamp {!r}".format(
+                from_timestamp, until_timestamp
+            )
+        )
+    return (
+        "(&"
+        "{filterstr}"
+        "({delta_attr}>={from_timestr})"
+        "(!({delta_attr}>={until_timestr}))"
+        ")"
+    ).format(
+        filterstr=filterstr,
+        delta_attr=delta_attr,
+        from_timestr=strf_secs(from_timestamp),
+        until_timestr=strf_secs(until_timestamp),
     )

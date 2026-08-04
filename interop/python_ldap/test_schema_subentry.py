@@ -223,11 +223,10 @@ def assert_slapd_schema(dn: str | None, schema: ldap.schema.SubSchema | None) ->
     )
     entries = schema.ldap_entry()
     assert isinstance(entries, dict)
-    # Upstream's slapd publishes matchingRuleUse as well, which this does
-    # not read: what it does read is here.
     assert sorted(entries) == [
         "attributeTypes",
         "ldapSyntaxes",
+        "matchingRuleUse",
         "matchingRules",
         "objectClasses",
     ]

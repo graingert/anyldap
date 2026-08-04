@@ -128,6 +128,18 @@ class AuthorizationIdentityResponseControl(ResponseControl):
         self.authzId = to_unicode(encodedControlValue)
 
 
+class GetEffectiveRightsControl(RequestControl):
+    """Ask what this identity would be allowed to do with what is found."""
+
+    def __init__(self, criticality: bool = False, authzId: str | None = None) -> None:
+        RequestControl.__init__(
+            self,
+            "1.3.6.1.4.1.42.2.27.9.5.2",
+            criticality,
+            None if authzId is None else to_bytes(authzId),
+        )
+
+
 KNOWN_RESPONSE_CONTROLS[AUTHORIZATION_IDENTITY_RESPONSE_OID] = (
     AuthorizationIdentityResponseControl
 )
