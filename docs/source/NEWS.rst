@@ -31,7 +31,17 @@ Features
   operation.
 - SASL binds are driven by the client: EXTERNAL, PLAIN, CRAM-MD5 and
   DIGEST-MD5 answer for themselves, and ``ldapi://`` connects to a socket in
-  the filesystem, which is what EXTERNAL is usually asked over.
+  the filesystem, which is what EXTERNAL is usually asked over. GSSAPI is
+  there too, exchanged as RFC 4752 says, if the ``gssapi`` package is
+  installed; it is not a dependency, and the mechanism says so if it is
+  asked for without it. The ``OPT_X_SASL_*`` options supply the defaults a
+  mechanism reads and report what the bind ended up with.
+- ``ldap.asyncsearch`` reads a long search result by result rather than
+  asking for all of it at once, with python-ldap's ``List``, ``Dict``,
+  ``IndexedDict``, ``FileWriter`` and ``LDIFWriter`` handlers.
+- ``ReconnectLDAPObject`` opens the connection again when the server goes
+  away and tries the operation once more, putting back the options that were
+  set, StartTLS if it had been raised, and the last bind that was made.
 - The controls python-ldap encodes with pyasn1 are encoded with the BER
   library anyldap already has: paged results, pre-read and post-read,
   server-side sorting, the password policy response, OpenLDAP's no-op search,

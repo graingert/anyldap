@@ -13,10 +13,10 @@ be used from whichever task has it.
 """
 
 import ssl
-from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import TracebackType
-from typing import TypeVar
+from typing import Any, TypeVar
 from urllib.parse import unquote, urlparse
 
 import anyio
@@ -38,6 +38,18 @@ from anyldap.ldap.constants import (
     OPT_TIMELIMIT,
     OPT_TIMEOUT,
     OPT_URI,
+    OPT_X_SASL_AUTHCID,
+    OPT_X_SASL_AUTHZID,
+    OPT_X_SASL_MAXBUFSIZE,
+    OPT_X_SASL_MECH,
+    OPT_X_SASL_NOCANON,
+    OPT_X_SASL_REALM,
+    OPT_X_SASL_SECPROPS,
+    OPT_X_SASL_SSF,
+    OPT_X_SASL_SSF_EXTERNAL,
+    OPT_X_SASL_SSF_MAX,
+    OPT_X_SASL_SSF_MIN,
+    OPT_X_SASL_USERNAME,
     OPT_X_TLS_ALLOW,
     OPT_X_TLS_CACERTDIR,
     OPT_X_TLS_CACERTFILE,
@@ -258,6 +270,32 @@ _TLS_OPTIONS = frozenset(
     }
 )
 
+# The options a SASL bind is tuned with. Cyrus SASL is what libldap hands
+# these to; the mechanisms here answer for themselves, so what these do is
+# supply the defaults a mechanism reads and say what the bind ended up with.
+_SASL_READ_ONLY_OPTIONS = frozenset({OPT_X_SASL_USERNAME, OPT_X_SASL_SSF})
+_SASL_OPTIONS = frozenset(
+    {
+        OPT_X_SASL_MECH,
+        OPT_X_SASL_REALM,
+        OPT_X_SASL_AUTHCID,
+        OPT_X_SASL_AUTHZID,
+        OPT_X_SASL_SSF_EXTERNAL,
+        OPT_X_SASL_SECPROPS,
+        OPT_X_SASL_SSF_MIN,
+        OPT_X_SASL_SSF_MAX,
+        OPT_X_SASL_MAXBUFSIZE,
+        OPT_X_SASL_NOCANON,
+    }
+)
+
+# Which option says what a mechanism would otherwise have to be told.
+_SASL_DEFAULTS = {
+    sasl.CB_GETREALM: OPT_X_SASL_REALM,
+    sasl.CB_AUTHNAME: OPT_X_SASL_AUTHCID,
+    sasl.CB_USER: OPT_X_SASL_AUTHZID,
+}
+
 # What OPT_X_TLS_PROTOCOL_MIN and _MAX name, in ssl's own spelling.
 _TLS_VERSIONS = {
     0x300: ssl.TLSVersion.SSLv3,
@@ -342,6 +380,8 @@ class SimpleLDAPObject:
         self._writing = anyio.Lock()
         self._unbound = False
         self._sasl_mechanism: bytes | None = None
+        self._sasl_options: dict[int, object] = {}
+        self._sasl_username: str | None = None
 
     async def __aenter__(self: _Connection) -> _Connection:
         # Whatever this was opened as is what the body of the with
@@ -670,6 +710,12 @@ class SimpleLDAPObject:
         elif option == OPT_X_TLS_CTX:
             assert invalue is None or isinstance(invalue, ssl.SSLContext)
             self._given_context = invalue
+        elif option in _SASL_READ_ONLY_OPTIONS:
+            # What the bind ended up with is the server's answer to say, not
+            # the caller's, which is what libldap says of these too.
+            raise ValueError(f"option {option!r} cannot be set")
+        elif option in _SASL_OPTIONS:
+            self._sasl_options[option] = invalue
         else:
             raise ValueError(f"unknown option {option!r}")
 
@@ -694,6 +740,20 @@ class SimpleLDAPObject:
             return self._ssl_context
         if option in _TLS_OPTIONS:
             return self._tls_options.get(option)
+        if option == OPT_X_SASL_MECH:
+            # Once a bind has been made this is the mechanism it was made
+            # with, whatever was asked for beforehand.
+            if self._sasl_mechanism is not None:
+                return to_unicode(self._sasl_mechanism)
+            return self._sasl_options.get(OPT_X_SASL_MECH)
+        if option == OPT_X_SASL_USERNAME:
+            return self._sasl_username
+        if option == OPT_X_SASL_SSF:
+            # No SASL security layer is negotiated: what protects the
+            # connection is TLS, so the strength is whatever was said of it.
+            return self._sasl_options.get(OPT_X_SASL_SSF_EXTERNAL, 0)
+        if option in _SASL_OPTIONS:
+            return self._sasl_options.get(option)
         raise ValueError(f"unknown option {option!r}")
 
     # Binding.
@@ -752,8 +812,18 @@ class SimpleLDAPObject:
 
         The mechanism is asked what to send, and asked again with whatever
         the server sent back, for as long as the server says the bind is
-        still in progress.
+        still in progress. What the ``OPT_X_SASL_*`` options say fills in
+        whatever the mechanism was not told directly.
         """
+        for cb_id, option in _SASL_DEFAULTS.items():
+            default = self._sasl_options.get(option)
+            if default is not None and cb_id not in auth.cb_value_dict:
+                assert isinstance(default, str)
+                auth.cb_value_dict[cb_id] = default
+        if isinstance(auth, sasl.gssapi) and auth.service is None:
+            # The ticket is for the server being connected to, which is what
+            # libldap works out for a GSSAPI bind as well.
+            auth.service = f"ldap@{self._host}"
         credentials = auth.process()
         while True:
             message = await self._send(
@@ -773,6 +843,10 @@ class SimpleLDAPObject:
                 self._pending.pop(message.id, None)
             if operation.error is None:
                 self._sasl_mechanism = auth.mech
+                # Who the bind ended up as, which OPT_X_SASL_USERNAME says.
+                self._sasl_username = auth.cb_value_dict.get(
+                    sasl.CB_AUTHNAME
+                ) or auth.cb_value_dict.get(sasl.CB_USER, "")
                 return
             if not isinstance(operation.error, errors.SASL_BIND_IN_PROGRESS):
                 raise operation.error
@@ -1417,10 +1491,247 @@ class SimpleLDAPObject:
         )
 
 
-# python-ldap's own name for the class it hands back, and the one it uses
-# when a connection needs no re-connecting logic of its own.
+class ReconnectLDAPObject(SimpleLDAPObject):
+    """A connection that opens itself again when the server goes away.
+
+    Each operation is tried, and if it fails with one of the errors that
+    mean the connection rather than the request -- ``SERVER_DOWN``,
+    ``UNAVAILABLE``, ``CONNECT_ERROR`` or ``TIMEOUT`` -- the connection is
+    made again and the operation tried once more. Reconnecting replays what
+    was done to the connection before: the options that were set, StartTLS
+    if it was raised, and the last bind that was made.
+
+    ``retry_max`` is how many times to try opening it again before giving
+    up, and ``retry_delay`` how long to wait between tries.
+
+    Unlike python-ldap's, this does not open the connection before the first
+    operation: nothing is sent until something is awaited, so there is
+    nothing to reconnect until an operation has failed.
+    """
+
+    # What is worth trying again, rather than telling the caller about.
+    _reconnect_exceptions: tuple[type[errors.LDAPError], ...] = (
+        errors.SERVER_DOWN,
+        errors.UNAVAILABLE,
+        errors.CONNECT_ERROR,
+        errors.TIMEOUT,
+    )
+
+    # What cannot be pickled, because it is a socket or a lock.
+    __transient_attrs__ = frozenset(
+        {
+            "_stream",
+            "_buffer",
+            "_pending",
+            "_reading",
+            "_writing",
+            "_reconnecting",
+            "_retrying",
+        }
+    )
+
+    def __init__(
+        self,
+        uri: str,
+        trace_level: int = 0,
+        *,
+        ssl_context: ssl.SSLContext | None = None,
+        retry_max: int = 1,
+        retry_delay: float = 60.0,
+    ) -> None:
+        SimpleLDAPObject.__init__(self, uri, trace_level, ssl_context=ssl_context)
+        self._uri = uri
+        self._options: list[tuple[int, object]] = []
+        self._last_bind: tuple[str, tuple[Any, ...], dict[str, Any]] | None = None
+        self._retry_max = retry_max
+        self._retry_delay = retry_delay
+        self._start_tls = 0
+        self._reconnects_done = 0
+        self._retrying = False
+        self._reconnecting = anyio.Lock()
+
+    def __getstate__(self) -> dict[str, Any]:
+        """What of this can be written down, which is not the socket."""
+        return {
+            name: value
+            for name, value in self.__dict__.items()
+            if name not in self.__transient_attrs__
+        }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Read back as a connection that is not open yet.
+
+        It opens itself, with the options and the bind it was pickled with,
+        the first time something is asked of it.
+        """
+        self.__dict__.update(state)
+        self._stream = None
+        self._buffer = b""
+        self._pending = {}
+        self._reading = anyio.Lock()
+        self._writing = anyio.Lock()
+        self._reconnecting = anyio.Lock()
+        self._retrying = False
+
+    def _store_last_bind(self, method: str, *args: Any, **kwargs: Any) -> None:
+        self._last_bind = (method, args, kwargs)
+
+    async def _apply_last_bind(self) -> None:
+        if self._last_bind is not None:
+            method, args, kwargs = self._last_bind
+            await getattr(SimpleLDAPObject, method)(self, *args, **kwargs)
+        else:
+            # An anonymous bind, sent to find out whether the server that
+            # was reconnected to is really answering.
+            await SimpleLDAPObject.simple_bind_s(self)
+
+    def _restore_options(self) -> None:
+        """Set again every option that was set on this connection."""
+        for option, value in self._options:
+            SimpleLDAPObject.set_option(self, option, value)
+
+    def set_option(self, option: int, invalue: object) -> None:
+        self._options.append((option, invalue))
+        SimpleLDAPObject.set_option(self, option, invalue)
+
+    async def reconnect(
+        self,
+        uri: str,
+        retry_max: int = 1,
+        retry_delay: float = 60.0,
+        force: bool = True,
+    ) -> None:
+        """Open the connection again, and put it back as it was."""
+        async with self._reconnecting:
+            if self._stream is not None:
+                if not force:
+                    return
+                await SimpleLDAPObject.unbind_ext(self)
+            # Whatever was there has been given back, and this is a
+            # connection that has not been opened rather than one that was
+            # said goodbye to.
+            self._unbound = False
+            self._buffer = b""
+            counter = retry_max
+            while True:
+                try:
+                    try:
+                        self._restore_options()
+                        if self._start_tls:
+                            await SimpleLDAPObject.start_tls_s(self)
+                        await self._apply_last_bind()
+                    except errors.LDAPError:
+                        await SimpleLDAPObject.unbind_ext(self)
+                        self._unbound = False
+                        raise
+                except (errors.SERVER_DOWN, errors.TIMEOUT):
+                    counter -= 1
+                    if not counter:
+                        raise
+                    if self.trace_level:
+                        logger.debug("*** %s reconnect failed, waiting", uri)
+                    await anyio.sleep(retry_delay)
+                else:
+                    self._reconnects_done += 1
+                    return
+
+    async def _apply_method_s(
+        self, method: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> Any:
+        """One operation, tried again on a connection that went away."""
+        if self._retrying:
+            # An operation written in terms of another one -- whoami_s is an
+            # extended operation -- is retried once, by whichever of the two
+            # the caller asked for.
+            return await method(self, *args, **kwargs)
+        self._retrying = True
+        try:
+            try:
+                return await method(self, *args, **kwargs)
+            except self._reconnect_exceptions:
+                await self.reconnect(
+                    self._uri,
+                    retry_max=self._retry_max,
+                    retry_delay=self._retry_delay,
+                    force=True,
+                )
+                return await method(self, *args, **kwargs)
+        finally:
+            self._retrying = False
+
+    async def simple_bind_s(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._apply_method_s(
+            SimpleLDAPObject.simple_bind_s, *args, **kwargs
+        )
+        self._store_last_bind("simple_bind_s", *args, **kwargs)
+        return result
+
+    async def bind_s(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._apply_method_s(SimpleLDAPObject.bind_s, *args, **kwargs)
+        self._store_last_bind("bind_s", *args, **kwargs)
+        return result
+
+    async def sasl_interactive_bind_s(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._apply_method_s(
+            SimpleLDAPObject.sasl_interactive_bind_s, *args, **kwargs
+        )
+        self._store_last_bind("sasl_interactive_bind_s", *args, **kwargs)
+        return result
+
+    async def sasl_bind_s(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._apply_method_s(
+            SimpleLDAPObject.sasl_bind_s, *args, **kwargs
+        )
+        self._store_last_bind("sasl_bind_s", *args, **kwargs)
+        return result
+
+    async def start_tls_s(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._apply_method_s(
+            SimpleLDAPObject.start_tls_s, *args, **kwargs
+        )
+        self._start_tls = 1
+        return result
+
+    async def search_ext_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(
+            SimpleLDAPObject.search_ext_s, *args, **kwargs
+        )
+
+    async def add_ext_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(SimpleLDAPObject.add_ext_s, *args, **kwargs)
+
+    async def modify_ext_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(
+            SimpleLDAPObject.modify_ext_s, *args, **kwargs
+        )
+
+    async def delete_ext_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(
+            SimpleLDAPObject.delete_ext_s, *args, **kwargs
+        )
+
+    async def rename_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(SimpleLDAPObject.rename_s, *args, **kwargs)
+
+    async def compare_ext_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(
+            SimpleLDAPObject.compare_ext_s, *args, **kwargs
+        )
+
+    async def extop_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(SimpleLDAPObject.extop_s, *args, **kwargs)
+
+    async def passwd_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(SimpleLDAPObject.passwd_s, *args, **kwargs)
+
+    async def whoami_s(self, *args: Any, **kwargs: Any) -> str:
+        result = await self._apply_method_s(SimpleLDAPObject.whoami_s, *args, **kwargs)
+        assert isinstance(result, str)
+        return result
+
+
+# python-ldap's own name for the class it hands back.
 LDAPObject = SimpleLDAPObject
-ReconnectLDAPObject = SimpleLDAPObject
 
 
 def initialize(

@@ -128,15 +128,54 @@ an LDAP URL taken apart into what it says, and written back out again::
 ``who`` and ``cred`` are the bind DN and its password, which a URL carries
 as the ``bindname`` and ``X-BINDPW`` extensions.
 
+Reading a long search
+---------------------
+
+:mod:`anyldap.ldap.asyncsearch` reads a search result by result rather than
+asking for all of it at once, which is what python-ldap's ``asyncsearch``
+does::
+
+    from anyldap.ldap import asyncsearch
+
+    found = asyncsearch.Dict(connection)
+    await found.startSearch("dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=*)")
+    await found.processResults()
+    print(found.allEntries)
+
+``List``, ``Dict``, ``IndexedDict``, ``FileWriter`` and ``LDIFWriter`` are
+python-ldap's, and a handler of your own overrides
+``_processSingleResult()``. Only ``startSearch()`` and ``processResults()``
+touch the connection and are awaited; the hooks are plain methods, because
+they are called while a result is being dispatched.
+
+Reconnecting
+------------
+
+:class:`~anyldap.ldap.ldapobject.ReconnectLDAPObject` tries an operation
+again on a connection that went away, opening it and putting it back as it
+was: the options that were set, StartTLS if it had been raised, and the last
+bind that was made::
+
+    connection = ldap.ReconnectLDAPObject(uri, retry_max=3, retry_delay=5.0)
+    await connection.simple_bind_s(who, cred)
+    # Whatever happens to the server in between, this is answered.
+    entries = await connection.search_ext_s(base, ldap.SCOPE_SUBTREE)
+
+Unlike python-ldap's, it does not open the connection before the first
+operation: nothing is sent until something is awaited, so there is nothing
+to reconnect until an operation has failed.
+
 What is not here
 ----------------
 
-- **GSSAPI**, which needs Kerberos, and the ``OPT_X_SASL_*`` options that
-  configure Cyrus SASL. The SASL option numbers are defined, since a
-  mechanism may want to name them, but setting them does nothing.
-- **``ldap.async``/``ldap.asyncsearch`` and ``ldap.syncrepl``**.
-- **``ReconnectLDAPObject``'s reconnection**: the name is here and is the
-  plain object, which does not reconnect behind the caller's back.
+- **``ldap.syncrepl``**, which needs the intermediate responses of RFC 4533.
+- **GSSAPI without the ``gssapi`` package**: the mechanism is
+  :class:`anyldap.ldap.sasl.gssapi`, and it says so if it is asked for
+  without Kerberos to hand. The SASL security layer it negotiates is always
+  none: what protects a connection here is TLS.
+- **The ``OPT_X_SASL_*`` options beyond what they say**: they supply the
+  defaults a mechanism reads and report what the bind ended up with, rather
+  than configuring Cyrus SASL, which is not what does the exchange here.
 - **Referrals are never chased**: a search hands back the referral URLs as
   ``(None, [uri, ...])``, which is what python-ldap does with
   ``OPT_REFERRALS`` off.
@@ -271,6 +310,14 @@ anyldap.ldap.ldapurl module
 ---------------------------
 
 .. automodule:: anyldap.ldap.ldapurl
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+anyldap.ldap.asyncsearch module
+-------------------------------
+
+.. automodule:: anyldap.ldap.asyncsearch
     :members:
     :undoc-members:
     :show-inheritance:

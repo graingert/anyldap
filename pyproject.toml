@@ -97,6 +97,12 @@ ignore = [
 strict = true
 plugins = ["mypy_zope:plugin"]
 
+# gssapi is what the GSSAPI SASL mechanism asks for if it is used, and is
+# not a dependency: it is imported inside the call that needs it.
+[[tool.mypy.overrides]]
+module = "gssapi"
+ignore_missing_imports = true
+
 [tool.coverage.run]
 branch = true
 source_pkgs = ["anyldap"]

@@ -120,6 +120,12 @@ OPT_X_SASL_AUTHCID: Final = 0x6102
 OPT_X_SASL_AUTHZID: Final = 0x6103
 OPT_X_SASL_USERNAME: Final = 0x610C
 OPT_X_SASL_SSF: Final = 0x6104
+OPT_X_SASL_SSF_EXTERNAL: Final = 0x6105
+OPT_X_SASL_SECPROPS: Final = 0x6106
+OPT_X_SASL_SSF_MIN: Final = 0x6107
+OPT_X_SASL_SSF_MAX: Final = 0x6108
+OPT_X_SASL_MAXBUFSIZE: Final = 0x6109
+OPT_X_SASL_NOCANON: Final = 0x610B
 
 # The port LDAP is served on, and the limit that is no limit.
 PORT: Final = 389

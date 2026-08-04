@@ -1895,7 +1895,7 @@ def test_a_case_insensitive_dict_answers_to_any_spelling() -> None:
 
 def test_the_object_python_ldap_hands_back_is_the_one_named_here() -> None:
     assert ldap.LDAPObject is ldapobject.SimpleLDAPObject
-    assert ldap.ReconnectLDAPObject is ldapobject.SimpleLDAPObject
+    assert issubclass(ldap.ReconnectLDAPObject, ldapobject.SimpleLDAPObject)
     assert isinstance(ldap.initialize("ldap://x"), ldap.SimpleLDAPObject)
 
 
@@ -2075,3 +2075,538 @@ def test_the_extensions_of_a_url_are_a_mapping_of_their_own() -> None:
     # An empty extension between two commas is passed over.
     extensions.parse("bindname=cn=root,,X-BINDPW=secret")
     assert sorted(extensions) == ["X-BINDPW", "bindname"]
+
+
+# The SASL options, and what they fill in.
+
+
+async def test_the_sasl_options_say_what_a_bind_was_not_told() -> None:
+    connection = ldap.initialize("ldap://x")
+    connection.set_option(ldap.OPT_X_SASL_REALM, "example.com")
+    connection.set_option(ldap.OPT_X_SASL_AUTHCID, "jack")
+    connection.set_option(ldap.OPT_X_SASL_SSF_EXTERNAL, 128)
+    connection.set_option(ldap.OPT_X_SASL_NOCANON, 1)
+    assert connection.get_option(ldap.OPT_X_SASL_REALM) == "example.com"
+    assert connection.get_option(ldap.OPT_X_SASL_NOCANON) == 1
+    # Nothing has bound yet, so the mechanism is whatever was asked for.
+    assert connection.get_option(ldap.OPT_X_SASL_MECH) is None
+    assert connection.get_option(ldap.OPT_X_SASL_USERNAME) is None
+    assert connection.get_option(ldap.OPT_X_SASL_SSF) == 128
+    assert connection.get_option(ldap.OPT_X_SASL_SSF_MIN) is None
+    connection.set_option(ldap.OPT_X_SASL_MECH, "CRAM-MD5")
+    assert connection.get_option(ldap.OPT_X_SASL_MECH) == "CRAM-MD5"
+
+    # What the bind ended up with is the server's to say, not the caller's.
+    for option in (ldap.OPT_X_SASL_USERNAME, ldap.OPT_X_SASL_SSF):
+        with pytest.raises(ValueError, match="cannot be set"):
+            connection.set_option(option, "jack")
+
+
+async def test_a_bind_is_told_what_the_options_say_and_reports_what_it_did() -> None:
+    servers: list[SaslServer] = []
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = SaslServer()
+        servers.append(server)
+        return server
+
+    async with serving(factory) as server, connected(server) as connection:
+        connection.set_option(ldap.OPT_X_SASL_AUTHZID, "u:jack")
+        # EXTERNAL was given no identity, so the option's is the one sent.
+        await connection.sasl_interactive_bind_s("", ldap.sasl.external())
+        assert servers[0].seen == [(b"EXTERNAL", b"u:jack")]
+        assert connection.get_option(ldap.OPT_X_SASL_MECH) == "EXTERNAL"
+        assert connection.get_option(ldap.OPT_X_SASL_USERNAME) == "u:jack"
+
+    async with serving(factory) as server, connected(server) as connection:
+        await connection.sasl_interactive_bind_s(
+            "", ldap.sasl.cram_md5("jack", "secret")
+        )
+        # A mechanism that was told who it is keeps what it was told.
+        assert connection.get_option(ldap.OPT_X_SASL_USERNAME) == "jack"
+
+
+def test_the_gssapi_mechanism_speaks_rfc_4752(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeContext:
+        """What the gssapi package hands back, as far as this uses it."""
+
+        def __init__(self) -> None:
+            self.complete = False
+            self.sent: list[bytes | None] = []
+
+        def step(self, challenge: bytes | None) -> bytes | None:
+            self.sent.append(challenge)
+            if challenge is None:
+                return b"first token"
+            self.complete = True
+            # A library that has nothing more to send says so with nothing.
+            return None
+
+        def unwrap(self, message: bytes) -> object:
+            self.unwrapped = message
+            return message
+
+        def wrap(self, message: bytes, confidential: bool) -> object:
+            self.wrapped = message
+            return type("Wrapped", (), {"message": b"wrapped:" + message})
+
+    contexts: list[FakeContext] = []
+
+    class FakeGssapi:
+        NameType = type("NameType", (), {"hostbased_service": object()})
+
+        @staticmethod
+        def Name(name: str, name_type: object) -> str:
+            return name
+
+        @staticmethod
+        def SecurityContext(name: str, usage: str) -> FakeContext:
+            context = FakeContext()
+            contexts.append(context)
+            return context
+
+    mechanism = ldap.sasl.gssapi("u:jack", service="ldap@ldap.example.com")
+    assert mechanism.mech == b"GSSAPI"
+    monkeypatch.setattr(ldap.sasl, "_gssapi", lambda: FakeGssapi)
+    assert mechanism.process() == b"first token"
+    # Whatever the library says to send goes as it stands, and nothing to
+    # send is nothing to send.
+    assert mechanism.process(b"server token") == b""
+    # The context is up: what is left is to say which security layer.
+    answer = mechanism.process(b"wrapped offer")
+    assert answer == b"wrapped:\x01\x00\x00\x00u:jack"
+    assert contexts[0].unwrapped == b"wrapped offer"
+
+    # It has to know what the ticket is for, which the bind fills in.
+    with pytest.raises(ValueError, match="which service"):
+        ldap.sasl.gssapi().process()
+
+
+async def test_a_gssapi_bind_asks_for_a_ticket_for_the_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mechanism = ldap.sasl.gssapi()
+
+    def not_installed() -> object:
+        raise ImportError("no Kerberos here")
+
+    monkeypatch.setattr(ldap.sasl, "_gssapi", not_installed)
+    async with serving(SaslServer) as server, connected(server) as connection:
+        # The exchange itself needs Kerberos; what is checked here is that
+        # the bind says which service the ticket should be for.
+        with pytest.raises(ImportError, match="no Kerberos here"):
+            await connection.sasl_interactive_bind_s("", mechanism)
+    assert mechanism.service == f"ldap@{server.host}"
+
+
+# A search read result by result.
+
+
+async def test_a_search_is_read_one_result_at_a_time() -> None:
+    async with serving_tree() as server, bound(server) as connection:
+        collected = ldap.asyncsearch.List(connection)
+        await collected.startSearch(
+            "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(objectClass=*)"
+        )
+        assert await collected.processResults() == 0
+        assert len(collected.allResults) == 2
+        assert collected.beginResultsDropped == 0
+
+        # Into a dictionary, keyed by name.
+        keyed = ldap.asyncsearch.Dict(connection)
+        await keyed.startSearch(
+            "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(objectClass=*)"
+        )
+        await keyed.processResults()
+        assert JACK in keyed.allEntries
+
+        # And with an index of which names hold which values.
+        indexed = ldap.asyncsearch.IndexedDict(connection, ["uid"])
+        await indexed.startSearch(
+            "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(objectClass=*)"
+        )
+        await indexed.processResults()
+        assert indexed.index["uid"][b"jack"] == [JACK]
+
+
+async def test_a_search_can_be_read_in_part_and_then_abandoned() -> None:
+    async with serving_tree() as server, bound(server) as connection:
+        # The first is dropped and the rest taken.
+        dropping = ldap.asyncsearch.List(connection)
+        await dropping.startSearch(
+            "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(objectClass=*)"
+        )
+        assert await dropping.processResults(1, 1) == 0
+        assert dropping.beginResultsDropped == 1
+        assert len(dropping.allResults) == 1
+
+        # Only the first is wanted, and the search is abandoned after it.
+        first = ldap.asyncsearch.List(connection)
+        await first.startSearch(
+            "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(objectClass=*)"
+        )
+        assert await first.processResults(0, 1) == 1
+        assert len(first.allResults) == 1
+        assert first.endResultBreak == 1
+
+
+async def test_a_search_written_out_as_it_arrives() -> None:
+    import io
+
+    async with serving_tree() as server, bound(server) as connection:
+        out = io.BytesIO()
+        writer = ldap.asyncsearch.LDIFWriter(
+            connection, out, b"# entries\n", b"# done\n"
+        )
+        await writer.startSearch(
+            "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(uid=jack)"
+        )
+        await writer.processResults()
+    written = out.getvalue()
+    assert written.startswith(b"# entries\n")
+    assert written.endswith(b"# done\n")
+    assert b"dn: " + JACK.encode() in written
+
+
+async def test_a_result_a_search_cannot_have_answered_with_is_refused() -> None:
+    class WrongServer(ldapserver.BaseLDAPServer):
+        """A server that answers a search with something else entirely."""
+
+        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
+            await self._send_anyio_write(
+                pureldap.LDAPMessage(
+                    pureldap.LDAPModifyResponse(resultCode=0), id=msg.id
+                ).toWire()
+            )
+
+    async with serving(WrongServer) as server, connected(server) as connection:
+        collected = ldap.asyncsearch.List(connection)
+        await collected.startSearch("dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=*)")
+        with pytest.raises(ldap.PROTOCOL_ERROR):
+            await collected.processResults()
+
+    error = ldap.asyncsearch.WrongResultType(
+        ldap.RES_BIND, {ldap.RES_SEARCH_ENTRY}
+    )
+    assert "Received wrong result type" in str(error)
+
+
+# A connection that opens itself again.
+
+
+async def test_a_connection_that_reconnects_replays_what_was_done_to_it() -> None:
+    root = make_root()
+    factory = tree_server(root)
+    async with serving(factory) as server:
+        connection = ldap.ReconnectLDAPObject(server.uri)
+        connection.set_option(ldap.OPT_PROTOCOL_VERSION, ldap.VERSION3)
+        await connection.simple_bind_s(JACK, "secret")
+        assert len(await connection.search_ext_s(JACK, ldap.SCOPE_BASE)) == 1
+
+        # The server goes away underneath it: the next operation opens the
+        # connection again, binds as it was bound, and is answered.
+        assert connection._stream is not None
+        await anyio.aclose_forcefully(connection._stream)
+        assert len(await connection.search_ext_s(JACK, ldap.SCOPE_BASE)) == 1
+        assert connection._reconnects_done == 1
+        assert connection.get_option(ldap.OPT_PROTOCOL_VERSION) == ldap.VERSION3
+        await connection.unbind_s()
+
+
+async def test_a_reconnect_gives_up_after_being_told_how_many_times_to_try(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    slept: list[float] = []
+
+    async def no_waiting(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(anyio, "sleep", no_waiting)
+    host, port = "127.0.0.1", 1
+    connection = ldap.ReconnectLDAPObject(
+        f"ldap://{host}:{port}", retry_max=3, retry_delay=0.5
+    )
+    with pytest.raises(ldap.SERVER_DOWN):
+        await connection.whoami_s()
+    # Three tries at opening it, with a wait between each pair.
+    assert slept == [0.5, 0.5]
+
+
+async def test_a_reconnect_that_the_server_refuses_is_reported() -> None:
+    class RefusingServer(ldapserver.BaseLDAPServer):
+        """A server that will not have anyone bind to it."""
+
+        async def handle_LDAPBindRequest(
+            self,
+            request: pureldap.LDAPBindRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPBindResponse:
+            return pureldap.LDAPBindResponse(resultCode=49)
+
+    async with serving(RefusingServer) as server:
+        connection = ldap.ReconnectLDAPObject(server.uri)
+        with pytest.raises(ldap.INVALID_CREDENTIALS):
+            await connection.reconnect(server.uri)
+        await connection.unbind_s()
+
+
+async def test_a_reconnect_that_is_not_forced_leaves_a_live_connection_alone() -> None:
+    async with serving_tree() as server:
+        connection = ldap.ReconnectLDAPObject(server.uri)
+        await connection.simple_bind_s()
+        stream = connection._stream
+        await connection.reconnect(server.uri, force=False)
+        assert connection._stream is stream
+        assert connection._reconnects_done == 0
+        await connection.unbind_s()
+
+
+async def test_a_reconnecting_connection_can_be_written_down_and_read_back() -> None:
+    import pickle
+
+    async with serving_tree() as server:
+        connection = ldap.ReconnectLDAPObject(server.uri)
+        await connection.simple_bind_s(JACK, "secret")
+        written = pickle.dumps(connection)
+        await connection.unbind_s()
+
+        # What comes back is not open, and opens itself when it is used.
+        read_back = pickle.loads(written)
+        assert read_back._stream is None
+        assert len(await read_back.search_ext_s(JACK, ldap.SCOPE_BASE)) == 1
+        await read_back.unbind_s()
+
+
+class Answering:
+    """A connection that answers a search with whatever it was given."""
+
+    def __init__(self, answers: list[tuple[int, list[object]]]) -> None:
+        self.answers = answers
+        self.abandoned: list[int] = []
+
+    async def search_ext(self, *args: object, **kwargs: object) -> int:
+        return 1
+
+    async def result3(
+        self, msgid: int, all: int, timeout: float
+    ) -> tuple[int, list[object], int, list[object]]:
+        rtype, data = self.answers.pop(0)
+        return rtype, data, msgid, []
+
+    async def abandon(self, msgid: int) -> None:
+        self.abandoned.append(msgid)
+
+
+async def test_a_reference_a_search_hands_back_is_passed_over() -> None:
+    reference = (None, ["ldap://other.example.com/dc=example,dc=com"])
+    entry = (JACK, {"uid": [b"jack"]})
+
+    for handler_class in (
+        ldap.asyncsearch.Dict,
+        ldap.asyncsearch.IndexedDict,
+        ldap.asyncsearch.LDIFWriter,
+    ):
+        answering = Answering(
+            [
+                (ldap.RES_SEARCH_REFERENCE, [reference]),
+                (ldap.RES_SEARCH_ENTRY, [entry]),
+                (ldap.RES_SEARCH_RESULT, []),
+            ]
+        )
+        arguments: list[object] = [answering]
+        if handler_class is ldap.asyncsearch.IndexedDict:
+            arguments.append(["uid"])
+        elif handler_class is ldap.asyncsearch.LDIFWriter:
+            import io
+
+            arguments.append(io.BytesIO())
+        handler = handler_class(*arguments)  # type: ignore[arg-type]
+        await handler.startSearch("dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=*)")
+        await handler.processResults()
+        if isinstance(handler, ldap.asyncsearch.Dict):
+            # The entry is kept; where to look next is not an entry.
+            assert list(handler.allEntries) == [JACK]
+
+
+async def test_a_result_that_is_not_a_search_result_at_all_is_refused() -> None:
+    answering = Answering([(ldap.RES_BIND, [(JACK, {})])])
+    collected = ldap.asyncsearch.List(answering)  # type: ignore[arg-type]
+    await collected.startSearch("dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=*)")
+    with pytest.raises(ldap.asyncsearch.WrongResultType) as raised:
+        await collected.processResults()
+    assert str(raised.value).startswith("Received wrong result type 97")
+
+
+async def test_every_operation_on_a_reconnecting_connection_is_answered() -> None:
+    root = make_root()
+
+    class AnsweringServer(ldapserver.LDAPServer):
+        """The tree, and an answer to whatever extended request arrives."""
+
+        async def handle_LDAPExtendedRequest(
+            self,
+            request: pureldap.LDAPExtendedRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPExtendedResponse:
+            return pureldap.LDAPExtendedResponse(
+                resultCode=0,
+                responseName=request.requestName,
+                response=b"dn:" + JACK.encode(),
+            )
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = AnsweringServer()
+        server.factory = root
+        return server
+
+    async with serving(factory) as server:
+        async with ldap.ReconnectLDAPObject(server.uri) as connection:
+            await connection.simple_bind_s()
+            await connection.bind_s(JACK, "secret")
+            assert await connection.whoami_s() == f"dn:{JACK}"
+            assert await connection.search_ext_s(JACK, ldap.SCOPE_BASE)
+            await connection.add_ext_s(
+                "uid=jill,ou=People,dc=example,dc=com",
+                [
+                    ("objectClass", ["inetOrgPerson"]),
+                    ("uid", ["jill"]),
+                    ("cn", ["Jill"]),
+                ],
+            )
+            await connection.modify_ext_s(
+                "uid=jill,ou=People,dc=example,dc=com",
+                [(ldap.MOD_REPLACE, "cn", ["Jillian"])],
+            )
+            assert await connection.compare_ext_s(
+                "uid=jill,ou=People,dc=example,dc=com", "cn", "Jillian"
+            )
+            await connection.rename_s(
+                "uid=jill,ou=People,dc=example,dc=com", "uid=jules"
+            )
+            await connection.delete_ext_s("uid=jules,ou=People,dc=example,dc=com")
+            _, value = await connection.extop_s(
+                pureldap.LDAPExtendedRequest(requestName=b"1.2.3")
+            )
+            assert value == b"dn:" + JACK.encode()
+            assert await connection.passwd_s(JACK, "secret", "newer")
+            with pytest.raises(ldap.AUTH_METHOD_NOT_SUPPORTED):
+                await connection.sasl_interactive_bind_s(
+                    "", ldap.sasl.sasl({}, "NOTHING")
+                )
+            with pytest.raises(ldap.AUTH_METHOD_NOT_SUPPORTED):
+                await connection.sasl_bind_s("", "NOTHING", None)
+
+
+async def test_a_forced_reconnect_says_goodbye_to_the_connection_it_replaces() -> None:
+    async with serving_tree() as server:
+        connection = ldap.ReconnectLDAPObject(server.uri, trace_level=1)
+        await connection.simple_bind_s()
+        stream = connection._stream
+        await connection.reconnect(server.uri, force=True)
+        # A different connection, bound the same way.
+        assert connection._stream is not stream
+        assert connection._reconnects_done == 1
+        await connection.unbind_s()
+
+
+async def test_a_reconnect_raises_tls_again_if_it_had_been_raised() -> None:
+    server_context, client_context = tls_pair()
+    root = make_root()
+
+    class StartTLSServer(ldapserver.LDAPServer):
+        async def handle_LDAPExtendedRequest(
+            self,
+            request: pureldap.LDAPExtendedRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> None:
+            assert request.requestName == pureldap.LDAPStartTLSRequest.oid
+            self.start_tls(server_context)
+            reply(pureldap.LDAPStartTLSResponse(resultCode=0))
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = StartTLSServer()
+        server.factory = root
+        return server
+
+    async with serving(factory) as server:
+        connection = ldap.ReconnectLDAPObject(
+            f"ldap://localhost:{server.port}", ssl_context=client_context
+        )
+        await connection.start_tls_s()
+        await connection.simple_bind_s()
+        assert await connection.search_ext_s("dc=example,dc=com", ldap.SCOPE_ONELEVEL)
+
+        # The connection goes: what comes back has TLS raised on it again.
+        assert connection._stream is not None
+        await anyio.aclose_forcefully(connection._stream)
+        assert await connection.search_ext_s("dc=example,dc=com", ldap.SCOPE_ONELEVEL)
+        assert isinstance(connection._stream, anyio.streams.tls.TLSStream)
+        await connection.unbind_s()
+
+
+async def test_a_reconnect_that_is_told_to_trace_says_it_is_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_waiting(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(anyio, "sleep", no_waiting)
+    connection = ldap.ReconnectLDAPObject(
+        "ldap://127.0.0.1:1", trace_level=1, retry_max=2
+    )
+    with pytest.raises(ldap.SERVER_DOWN):
+        await connection.whoami_s()
+
+
+async def test_a_search_that_is_left_unread_is_abandoned() -> None:
+    answering = Answering(
+        [
+            (ldap.RES_SEARCH_ENTRY, [(JACK, {"uid": [b"jack"]})]),
+            (ldap.RES_SEARCH_ENTRY, [("uid=jill,dc=example,dc=com", {})]),
+        ]
+    )
+    collected = ldap.asyncsearch.List(answering)  # type: ignore[arg-type]
+    await collected.startSearch("dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=*)")
+    assert await collected.processResults(0, 1) == 1
+    assert answering.abandoned == [1]
+
+
+async def test_a_reconnecting_connection_remembers_the_sasl_bind_it_made() -> None:
+    root = make_root()
+
+    class SaslTreeServer(ldapserver.LDAPServer):
+        """The tree, bound to with whatever mechanism is offered."""
+
+        async def handle_LDAPBindRequest(
+            self,
+            request: pureldap.LDAPBindRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPBindResponse:
+            return pureldap.LDAPBindResponse(resultCode=0)
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = SaslTreeServer()
+        server.factory = root
+        return server
+
+    async with serving(factory) as server:
+        async with ldap.ReconnectLDAPObject(server.uri) as connection:
+            await connection.sasl_interactive_bind_s("", ldap.sasl.external())
+            assert connection._last_bind is not None
+            assert connection._last_bind[0] == "sasl_interactive_bind_s"
+
+            # And the step-by-step spelling of the same thing.
+            await connection.sasl_bind_s("", "EXTERNAL", b"")
+            assert connection._last_bind[0] == "sasl_bind_s"
+
+            # The connection goes: the bind it remembers is made again.
+            assert connection._stream is not None
+            await anyio.aclose_forcefully(connection._stream)
+            assert await connection.search_ext_s(JACK, ldap.SCOPE_BASE)
+            assert connection._reconnects_done == 1

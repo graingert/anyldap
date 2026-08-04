@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import secrets
 from collections.abc import Mapping
+from typing import Any
 
 from anyldap._encoder import to_bytes
 
@@ -57,13 +58,13 @@ class external(sasl):
     """
 
     def __init__(self, authz_id: str | None = None) -> None:
-        sasl.__init__(self, {}, "EXTERNAL")
+        sasl.__init__(self, {CB_USER: authz_id} if authz_id else {}, "EXTERNAL")
         self.authz_id = authz_id
 
     def process(self, challenge: bytes | None = None) -> bytes:
         # The response is always sent, even when it is empty: that is what
         # says the identity is the connection's own.
-        return to_bytes(self.authz_id or "")
+        return to_bytes(self.authz_id or self.cb_value_dict.get(CB_USER, ""))
 
 
 class plain(sasl):
@@ -171,6 +172,64 @@ class digest_md5(sasl):
         if self.authz_id:
             answer.append(b'authzid="' + to_bytes(self.authz_id) + b'"')
         return b",".join(answer)
+
+
+class gssapi(sasl):
+    """GSSAPI: Kerberos, as RFC 4752 exchanges it.
+
+    The exchange needs a Kerberos library, which the ``gssapi`` package is:
+    it is not a dependency, and this mechanism says so if it is asked for
+    without it. The ticket comes from the caller's credential cache, so
+    there is nothing to pass but the identity to act as, if any.
+
+    ``service`` names what the ticket is for. Left unset, the bind fills it
+    in with ``ldap@`` and the host it is connecting to, which is what a
+    server registers itself as.
+    """
+
+    def __init__(self, authz_id: str = "", service: str | None = None) -> None:
+        sasl.__init__(self, {CB_USER: authz_id}, "GSSAPI")
+        self.authz_id = authz_id
+        self.service = service
+        self._context: Any = None
+
+    def process(self, challenge: bytes | None = None) -> bytes:
+        gssapi = _gssapi()
+        if self._context is None:
+            if self.service is None:
+                raise ValueError("gssapi() was not told which service to ask for")
+            name = gssapi.Name(self.service, gssapi.NameType.hostbased_service)
+            self._context = gssapi.SecurityContext(name=name, usage="initiate")
+        context = self._context
+        if not context.complete:
+            # Still proving who each side is: whatever the library says to
+            # send next goes as it stands.
+            return context.step(challenge) or b""
+        # The context is up, and what is left is to say which security layer
+        # to use. The server offers them in a wrapped token; this answers
+        # with none, since TLS is what protects the connection.
+        assert challenge is not None
+        context.unwrap(challenge)
+        answer = bytes([_NO_SECURITY_LAYER, 0, 0, 0]) + to_bytes(self.authz_id)
+        wrapped = context.wrap(answer, False)
+        return bytes(wrapped.message)
+
+
+# What RFC 4752 calls the bit for "no security layer": the connection is
+# protected by TLS, or by nothing, but not by SASL.
+_NO_SECURITY_LAYER = 0x01
+
+
+def _gssapi() -> Any:  # pragma: no cover - depends on what is installed
+    """The ``gssapi`` package, or a plain word about it not being there."""
+    try:
+        import gssapi
+    except ImportError as exc:
+        raise ImportError(
+            "the GSSAPI mechanism needs the gssapi package, which is not"
+            " installed: pip install gssapi"
+        ) from exc
+    return gssapi
 
 
 def _parse_challenge(challenge: bytes) -> dict[bytes, bytes]:

@@ -20,10 +20,15 @@ passed to ``initialize()`` instead.
 
 SASL binds are made with the mechanisms in ``anyldap.ldap.sasl``, which
 answer for themselves rather than through Cyrus SASL: EXTERNAL, PLAIN,
-CRAM-MD5 and DIGEST-MD5. GSSAPI needs Kerberos and is not among them; a
+CRAM-MD5, DIGEST-MD5, and GSSAPI if the ``gssapi`` package is installed. A
 mechanism of your own works if it answers ``process()`` the same way.
+
+``ldap.asyncsearch`` reads a long search result by result, and
+``ReconnectLDAPObject`` opens a connection again when the server goes away
+and tries the operation once more.
 """
 
+from anyldap.ldap import asyncsearch as asyncsearch
 from anyldap.ldap import cidict as cidict
 from anyldap.ldap import controls as controls
 from anyldap.ldap import dn as dn
@@ -78,9 +83,15 @@ from anyldap.ldap.constants import (
     OPT_URI,
     OPT_X_SASL_AUTHCID,
     OPT_X_SASL_AUTHZID,
+    OPT_X_SASL_MAXBUFSIZE,
     OPT_X_SASL_MECH,
+    OPT_X_SASL_NOCANON,
     OPT_X_SASL_REALM,
+    OPT_X_SASL_SECPROPS,
     OPT_X_SASL_SSF,
+    OPT_X_SASL_SSF_EXTERNAL,
+    OPT_X_SASL_SSF_MAX,
+    OPT_X_SASL_SSF_MIN,
     OPT_X_SASL_USERNAME,
     OPT_X_TLS,
     OPT_X_TLS_ALLOW,
@@ -329,9 +340,15 @@ __all__ = [
     "OPT_URI",
     "OPT_X_SASL_AUTHCID",
     "OPT_X_SASL_AUTHZID",
+    "OPT_X_SASL_MAXBUFSIZE",
     "OPT_X_SASL_MECH",
+    "OPT_X_SASL_NOCANON",
     "OPT_X_SASL_REALM",
+    "OPT_X_SASL_SECPROPS",
     "OPT_X_SASL_SSF",
+    "OPT_X_SASL_SSF_EXTERNAL",
+    "OPT_X_SASL_SSF_MAX",
+    "OPT_X_SASL_SSF_MIN",
     "OPT_X_SASL_USERNAME",
     "OPT_X_TLS",
     "OPT_X_TLS_ALLOW",
@@ -415,6 +432,7 @@ __all__ = [
     "WHOAMI_OID",
     "X_PROXY_AUTHZ_FAILURE",
     "addModlist",
+    "asyncsearch",
     "cidict",
     "controls",
     "dn",
@@ -429,6 +447,7 @@ __all__ = [
     "functions",
     "initialize",
     "is_dn",
+    "ldapurl",
     "modifyModlist",
     "modlist",
     "open",
