@@ -115,6 +115,16 @@ uses the connection that is already open::
 
     dn, subschema = await ldap.schema.urlfetch("ldap://localhost")
 
+It takes the address of an LDIF file as well, and reads the schema out of
+its first record -- which is how a schema someone else published is read
+without a server to ask::
+
+    dn, subschema = await ldap.schema.urlfetch("file:///tmp/subschema.ldif")
+
+A definition may name itself rather than be numbered
+(``( nsEncryptionConfig-oid NAME 'nsEncryptionConfig' ... )``), which RFC
+4512 section 1.4 allows and 389-ds publishes a great many of.
+
 TLS
 ---
 

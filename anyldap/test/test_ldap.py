@@ -3865,6 +3865,27 @@ async def test_the_schema_can_be_fetched_from_the_url_of_a_server() -> None:
         assert only.listall(ldap.schema.AttributeType) == []
 
 
+async def test_the_schema_can_be_fetched_from_an_ldif_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    """python-ldap takes the address of an LDIF file here as well as a URL."""
+    published = tmp_path / "subschema.ldif"
+    published.write_text(
+        "dn: cn=Subschema\n"
+        "objectClasses: ( 2.5.6.6 NAME 'person' SUP top STRUCTURAL"
+        " MUST ( sn $ cn ) )\n"
+        "attributeTypes: ( 2.5.4.3 NAME 'cn' SUP name )\n"
+        "\n"
+    )
+    dn, sub = await ldap.schema.urlfetch(published.as_uri())
+    assert dn == "cn=Subschema"
+    assert sub is not None
+    person = sub.get_obj(ldap.schema.ObjectClass, "person")
+    assert isinstance(person, ldap.schema.ObjectClass)
+    assert person.oid == "2.5.6.6"
+    assert sub.getoid(ldap.schema.AttributeType, "cn") == "2.5.4.3"
+
+
 async def test_a_server_that_says_where_its_schema_is_not_answers_with_none() -> None:
     class Bare(ldapserver.BaseLDAPServer):
         """A server whose root DSE names no subschema subentry."""

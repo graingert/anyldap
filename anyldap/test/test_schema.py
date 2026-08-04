@@ -1148,3 +1148,27 @@ attributetype ( 0.9.2342.19200300.100.1.37
 	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26 )
 
 """
+
+
+def test_a_definition_may_name_itself_rather_than_be_numbered() -> None:
+    """RFC 4512 lets an OID be a descriptor, and 389-ds schemas use one."""
+    described = schema.ObjectClassDescription(
+        b"( nsEncryptionConfig-oid NAME 'nsEncryptionConfig' "
+        b"DESC 'Netscape defined objectclass' SUP top STRUCTURAL MUST cn )"
+    )
+    assert described.oid == b"nsEncryptionConfig-oid"
+    assert described.name == (b"nsEncryptionConfig",)
+    # It is written back out the way it came in.
+    assert to_bytes(described).startswith(b"( nsEncryptionConfig-oid ")
+
+    numbered = schema.AttributeTypeDescription(
+        b"( 2.16.840.1.113730.3.1.2091 NAME 'nsslapd-suffix' "
+        b"SYNTAX 1.3.6.1.4.1.1466.115.121.1.12 )"
+    )
+    assert numbered.oid == b"2.16.840.1.113730.3.1.2091"
+
+
+def test_what_could_be_neither_a_number_nor_a_name_is_refused() -> None:
+    for oid in (b"1abc", b"abc!def", b"-leading"):
+        with pytest.raises(AssertionError, match="Not an OID"):
+            schema.ObjectClassDescription(b"( %s STRUCTURAL )" % oid)

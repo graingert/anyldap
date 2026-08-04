@@ -39,6 +39,7 @@ This directory                  python-ldap
 ``test_ldapobject.py``          ``Tests/t_ldapobject.py``,
                                 ``Tests/t_bind.py``,
                                 ``Tests/t_edit.py``
+``data/*.ldif``                 ``Tests/data/*.ldif``
 ==============================  =========================================
 
 Licence
@@ -62,6 +63,12 @@ What was changed
   python-ldap's own, unchanged.
 - Where python-ldap reaches into an object's internals (``cidict._keys``),
   the port asks the same question through the public API.
+- The two subschema LDIF files upstream reads, about half a megabyte each,
+  are here verbatim under ``data/``. They are what a real 389-ds and a real
+  OpenLDAP publish, which is what makes them worth carrying: between them
+  they hold 252 definitions that name themselves rather than being
+  numbered, and that is not something a schema written for a test would
+  think to do.
 - Each test runs twice, once on asyncio and once on trio, which is what the
   rest of the test suite does. One slapd is shared by a module and so by
   both runs, so a test that writes to the directory writes under a name of
@@ -111,10 +118,6 @@ What was not ported, and why
   ``TLS_AVAIL``): there is no C library here for them to be about. The
   pyasn1 classes that describe what a control's value looks like are not
   here either, because the values are encoded with anyldap's own BER.
-- **The two LDIF files ``t_ldap_schema_subentry.py`` reads**, which are
-  about half a megabyte each. The definitions each of its tests needs are
-  inline in ``test_schema_subentry.py`` instead, taken from those files, and
-  the tests that read a whole schema read slapd's.
 - **The ``fileno`` variants**, which hand libldap a socket that was opened
   elsewhere. ``ReconnectLDAPObject``'s own tests are ported, except that
   ``__getstate__()`` is checked field by field: what it stores beside

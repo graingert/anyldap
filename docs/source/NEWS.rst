@@ -120,6 +120,14 @@ Features
   leave undecoded, and an error says how far the server did recognise the
   name as python-ldap's ``matched``. A search continuation is handed back as
   ``RES_SEARCH_REFERENCE`` rather than as an entry.
+- ``ldap.schema.urlfetch()`` takes the address of an LDIF file as well as an
+  LDAP URL, and reads the schema out of its first record, which is what
+  python-ldap's does. Reading the file is handed to a worker thread rather
+  than done on the task that asked.
+- A schema definition may name itself rather than be numbered:
+  ``( nsEncryptionConfig-oid NAME ... )`` is what a 389-ds server publishes,
+  and RFC 4512 section 1.4 allows it. It used to be refused, which meant a
+  real FreeIPA schema could not be read at all.
 
 Other changes
 ^^^^^^^^^^^^^

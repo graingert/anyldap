@@ -25,6 +25,23 @@ def peekWord(text: bytes) -> bytes | None:
 
 
 class ASN1ParserThingie:
+    def _check_oid(self, oid: bytes) -> None:
+        """An OID is a string of numbers, or a name standing for one.
+
+        RFC 4512 section 1.4 lets an ``oid`` be a ``descr`` as well as a
+        ``numericoid``, and directory servers take it up: a 389-DS schema
+        names object classes ``nsEncryptionConfig-oid`` and the like. What
+        is refused is a name that could not be either.
+        """
+        assert oid
+        if all(c in b"0123456789." for c in oid):
+            return
+        assert oid[:1].isalpha(), "Not an OID: %s" % repr(oid)
+        for c in oid[1:]:
+            assert (
+                bytes((c,)).isalnum() or c in b"-;"
+            ), "Not an OID: %s" % repr(oid)
+
     def _to_list(self, text: bytes) -> tuple[bytes, ...]:
         """Split text into $-separated list."""
         r = []
@@ -297,9 +314,7 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
         if not self.type:
             self.type = b"STRUCTURAL"
 
-        assert self.oid
-        for c in self.oid:
-            assert c in b"0123456789."
+        self._check_oid(self.oid)
         assert self.name is None or self.name
         assert self.type in (b"ABSTRACT", b"STRUCTURAL", b"AUXILIARY")
 
@@ -555,9 +570,7 @@ class AttributeTypeDescription(ASN1ParserThingie, WireStrAlias):
         if self.no_user_modification is None:
             self.no_user_modification = 0
 
-        assert self.oid
-        for c in self.oid:
-            assert c in b"0123456789."
+        self._check_oid(self.oid)
         assert self.name is None or self.name
         assert self.usage is None or self.usage in (
             b"userApplications",
@@ -676,9 +689,7 @@ class SyntaxDescription(ASN1ParserThingie, WireStrAlias):
 
         assert text == b"", "Text was not empty: %s" % repr(text)
 
-        assert self.oid
-        for c in self.oid:
-            assert c in b"0123456789."
+        self._check_oid(self.oid)
 
     def toWire(self) -> bytes:
         assert self.oid is not None
@@ -789,9 +800,7 @@ class MatchingRuleDescription(ASN1ParserThingie, WireStrAlias):
 
         if self.obsolete is None:
             self.obsolete = 0
-        assert self.oid
-        for c in self.oid:
-            assert c in b"0123456789."
+        self._check_oid(self.oid)
         assert self.syntax
 
     def toWire(self) -> bytes:
