@@ -33,3 +33,6 @@ from anyldap.ldap.schema.subentry import (
 from anyldap.ldap.schema.subentry import (
     SubSchema as SubSchema,
 )
+from anyldap.ldap.schema.subentry import (
+    urlfetch as urlfetch,
+)

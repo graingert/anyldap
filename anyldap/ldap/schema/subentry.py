@@ -46,6 +46,18 @@ class SubSchema:
                     self.name2oid[cls][name.lower()] = element.oid
                 self.name2oid[cls][element.oid] = element.oid
 
+    def ldap_entry(self) -> dict[str, list[str]]:
+        """The entry this schema was read from, written out again.
+
+        Each element as the definition it would be published as, keyed by
+        the attribute it is published in.
+        """
+        entry: dict[str, list[str]] = {}
+        for cls, elements in self.sed.items():
+            for element in elements.values():
+                entry.setdefault(cls.schema_attribute, []).append(str(element))
+        return entry
+
     def listall(
         self,
         schema_element_class: type[SchemaElement],
@@ -151,3 +163,33 @@ def _attribute_name(attribute: str) -> str:
         if to_unicode(attribute).split(";")[0].lower() == known.lower():
             return known
     return to_unicode(attribute)
+
+
+async def urlfetch(uri: str, trace_level: int = 0) -> tuple[str | None, "SubSchema | None"]:
+    """The schema the server named by this LDAP URL publishes.
+
+    python-ldap takes either an LDAP URL or the address of an LDIF file
+    here; this takes the URL. A connection is opened, bound as the URL says
+    to bind, asked where its schema is and then for the schema itself, and
+    closed again -- which is what makes this different from
+    ``read_schema_s()`` on a connection that is already open.
+    """
+    from anyldap.ldap import cidict, ldapobject
+    from anyldap.ldap.ldapurl import LDAPUrl
+
+    url = LDAPUrl(uri.strip())
+    async with ldapobject.SimpleLDAPObject(url.initializeUrl(), trace_level) as conn:
+        await conn.simple_bind_s(url.who or "", url.cred or "")
+        subschemasubentry_dn = await conn.search_subschemasubentry_s(url.dn)
+        if subschemasubentry_dn is None:
+            return None, None
+        published = await conn.read_subschemasubentry_s(
+            subschemasubentry_dn, attrs=url.attrs if url.attrs else SCHEMA_ATTRS
+        )
+
+    # Work-around for mixed-cased attribute names
+    entry: cidict.cidict[list[bytes]] = cidict.cidict()
+    for attribute, definitions in (published or {}).items():
+        if attribute in SCHEMA_CLASS_MAPPING:
+            entry.setdefault(attribute, []).extend(definitions)
+    return subschemasubentry_dn, SubSchema(entry)

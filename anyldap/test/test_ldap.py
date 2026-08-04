@@ -15,6 +15,7 @@ import pytest
 import trustme
 
 from anyldap import inmemory, ldap
+from anyldap._encoder import to_unicode
 from anyldap.ldap import ldapobject
 from anyldap.ldap.controls import openldap
 from anyldap.protocols import pureber, pureldap
@@ -1474,6 +1475,11 @@ SUBSCHEMA = {
 }
 
 
+# What the server publishes: the schema, and the entry's own name, which
+# is not schema and is passed over.
+PUBLISHED = dict(SUBSCHEMA, cn=[b"Subschema"])
+
+
 def test_the_schema_says_what_an_entry_must_and_may_have() -> None:
     sub = ldap.schema.SubSchema(SUBSCHEMA)
 
@@ -1482,7 +1488,11 @@ def test_the_schema_says_what_an_entry_must_and_may_have() -> None:
     assert person.oid == "2.5.6.6"
     assert person.kind == ldap.schema.STRUCTURAL
     assert sorted(person.must) == ["cn", "sn"]
-    assert str(person) == "person"
+    # A definition writes itself back out the way python-ldap writes it.
+    assert str(person) == (
+        "( 2.5.6.6 NAME 'person' SUP top STRUCTURAL MUST ( sn $ cn )"
+        " MAY ( userPassword $ description ) )"
+    )
     assert "2.5.6.6" in repr(person)
 
     top = sub.get_obj(ldap.schema.ObjectClass, "top")
@@ -1569,10 +1579,10 @@ def test_the_schema_reads_attribute_types_matching_rules_and_syntaxes() -> None:
         ldap.schema.SchemaElement("( 1.2.3 )")
 
 
-async def test_the_schema_can_be_read_off_the_connection() -> None:
-    class SchemaServer(ldapserver.LDAPServer):
-        """A server that publishes a subschema subentry, as a real one does."""
+def schema_server() -> ServerFactory:
+    """A server that publishes a subschema subentry, as a real one does."""
 
+    class SchemaServer(ldapserver.LDAPServer):
         async def handle_LDAPSearchRequest(
             self,
             request: pureldap.LDAPSearchRequest,
@@ -1580,11 +1590,14 @@ async def test_the_schema_can_be_read_off_the_connection() -> None:
             reply: ldapserver.Reply,
         ) -> pureldap.LDAPSearchResultDone:
             if request.baseObject == b"cn=Subschema":
+                asked = [to_unicode(name) for name in request.attributes]
                 reply(
                     pureldap.LDAPSearchResultEntry(
                         objectName="cn=Subschema",
                         attributes=[
-                            (key, values) for key, values in SUBSCHEMA.items()
+                            (key, values)
+                            for key, values in PUBLISHED.items()
+                            if key == "cn" or not asked or key in asked
                         ],
                     )
                 )
@@ -1597,7 +1610,11 @@ async def test_the_schema_can_be_read_off_the_connection() -> None:
                 )
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
-    async with serving(SchemaServer) as server, bound(server) as connection:
+    return SchemaServer
+
+
+async def test_the_schema_can_be_read_off_the_connection() -> None:
+    async with serving(schema_server()) as server, bound(server) as connection:
         assert await connection.search_subschemasubentry_s(
             "dc=example,dc=com"
         ) == "cn=Subschema"
@@ -3142,3 +3159,139 @@ def test_the_server_to_open_can_be_named_again_before_anything_is_sent() -> None
     assert connection.uri == "ldapi:///path/to/socket"
     assert connection._unix is True
     assert connection._host == "/path/to/socket"
+
+
+def test_a_definition_writes_itself_out_the_way_python_ldap_writes_it() -> None:
+    # Every field of an attribute type, and where the definition came from.
+    attribute = ldap.schema.AttributeType(
+        "( 1.3.6.1.4.1.11.1.3.1.1.3 NAME ( 'searchTimeLimit' 'timeLimit' )"
+        " DESC 'How long a search may take' OBSOLETE SUP name"
+        " EQUALITY integerMatch ORDERING integerOrderingMatch"
+        " SUBSTR caseIgnoreSubstringsMatch"
+        " SYNTAX 1.3.6.1.4.1.1466.115.121.1.27{64} SINGLE-VALUE COLLECTIVE"
+        " NO-USER-MODIFICATION USAGE directoryOperation"
+        " X-ORIGIN ( 'RFC4876' 'user defined' ) )"
+    )
+    assert attribute.x_origin == ("RFC4876", "user defined")
+    assert attribute.syntax_len == 64
+    assert str(attribute) == (
+        "( 1.3.6.1.4.1.11.1.3.1.1.3 NAME ( 'searchTimeLimit' 'timeLimit' )"
+        " DESC 'How long a search may take' SUP name OBSOLETE"
+        " EQUALITY integerMatch ORDERING integerOrderingMatch"
+        " SUBSTR caseIgnoreSubstringsMatch"
+        " SYNTAX 1.3.6.1.4.1.1466.115.121.1.27{64} SINGLE-VALUE COLLECTIVE"
+        " NO-USER-MODIFICATION USAGE directoryOperation"
+        " X-ORIGIN ( 'RFC4876' 'user defined' ) )"
+    )
+
+    # An object class that says nothing is under top and is structural.
+    empty = ldap.schema.ObjectClass("( 2.999 )")
+    assert (empty.sup, empty.x_origin, empty.names) == (("top",), (), ())
+    assert str(empty) == "( 2.999 SUP top STRUCTURAL )"
+    assert str(ldap.schema.AttributeType("( 2.999 )")) == "( 2.999 )"
+
+    obsolete = ldap.schema.ObjectClass(
+        "( 2.999 NAME 'gone' OBSOLETE SUP top AUXILIARY X-ORIGIN 'nowhere' )"
+    )
+    assert str(obsolete) == (
+        "( 2.999 NAME 'gone' SUP top OBSOLETE AUXILIARY X-ORIGIN 'nowhere' )"
+    )
+
+    rule = ldap.schema.MatchingRule(
+        "( 2.5.13.0 NAME 'objectIdentifierMatch' DESC 'by OID' OBSOLETE"
+        " SYNTAX 1.3.6.1.4.1.1466.115.121.1.38 X-ORIGIN 'RFC 4517' )"
+    )
+    assert rule.x_origin == ("RFC 4517",)
+    assert str(rule) == (
+        "( 2.5.13.0 NAME 'objectIdentifierMatch' DESC 'by OID' OBSOLETE"
+        " SYNTAX 1.3.6.1.4.1.1466.115.121.1.38 )"
+    )
+
+    syntax = ldap.schema.LDAPSyntax(
+        "( 1.3.6.1.4.1.1466.115.121.1.4 DESC 'Audio'"
+        " X-NOT-HUMAN-READABLE 'TRUE' X-SUBST '1.3.6.1.4.1.1466.115.121.1.40' )"
+    )
+    assert syntax.not_human_readable == 1
+    assert syntax.x_subst == "1.3.6.1.4.1.1466.115.121.1.40"
+    assert str(syntax) == (
+        "( 1.3.6.1.4.1.1466.115.121.1.4 DESC 'Audio'"
+        " X-SUBST '1.3.6.1.4.1.1466.115.121.1.40' X-NOT-HUMAN-READABLE 'TRUE' )"
+    )
+
+    # A quote inside a value is written escaped, and a name can be set.
+    quoted = ldap.schema.AttributeType("( 2.999 )")
+    quoted.desc = "it's here"
+    assert " DESC 'it\\'s here'" in str(quoted)
+    quoted.set_id("2.998")
+    assert quoted.get_id() == "2.998"
+
+    # The base class, which a definition of a kind this does not know would
+    # be read into, writes out what every definition has.
+    base = ldap.schema.SchemaElement()
+    base.oid = "2.999"
+    base.desc = "whatever it is"
+    assert str(base) == "( 2.999 DESC 'whatever it is' )"
+    with pytest.raises(AssertionError):
+        quoted.key_attr("DESC", 42)  # type: ignore[arg-type]
+    with pytest.raises(AssertionError):
+        quoted.key_list("NAME", ["a"])  # type: ignore[arg-type]
+
+
+def test_the_schema_writes_out_the_entry_it_was_read_from() -> None:
+    sub = ldap.schema.SubSchema(SUBSCHEMA)
+    entry = sub.ldap_entry()
+    assert sorted(entry) == [
+        "attributeTypes",
+        "ldapSyntaxes",
+        "matchingRules",
+        "objectClasses",
+    ]
+    assert "( 2.5.6.0 NAME 'top' SUP top ABSTRACT MUST objectClass )" in (
+        entry["objectClasses"]
+    )
+    # And what it wrote reads back as the same schema.
+    again = ldap.schema.SubSchema(entry)
+    assert again.listall(ldap.schema.ObjectClass) == sub.listall(
+        ldap.schema.ObjectClass
+    )
+
+
+async def test_the_schema_can_be_fetched_from_the_url_of_a_server() -> None:
+    async with serving(schema_server()) as server:
+        dn, sub = await ldap.schema.urlfetch(f"{server.uri}/dc=example,dc=com")
+        assert dn == "cn=Subschema"
+        assert sub is not None
+        person = sub.get_obj(ldap.schema.ObjectClass, "person")
+        assert isinstance(person, ldap.schema.ObjectClass)
+        assert person.oid == "2.5.6.6"
+
+        # The attributes the URL names are the ones asked for.
+        _, only = await ldap.schema.urlfetch(
+            f"{server.uri}/dc=example,dc=com?objectClasses"
+        )
+        assert only is not None
+        assert only.listall(ldap.schema.AttributeType) == []
+
+
+async def test_a_server_that_says_where_its_schema_is_not_answers_with_none() -> None:
+    class Bare(ldapserver.BaseLDAPServer):
+        """A server whose root DSE names no subschema subentry."""
+
+        async def handle_LDAPBindRequest(
+            self,
+            request: pureldap.LDAPBindRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPBindResponse:
+            return pureldap.LDAPBindResponse(resultCode=0)
+
+        async def handle_LDAPSearchRequest(
+            self,
+            request: pureldap.LDAPSearchRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPSearchResultDone:
+            return pureldap.LDAPSearchResultDone(resultCode=0)
+
+    async with serving(Bare) as server:
+        assert await ldap.schema.urlfetch(server.uri) == (None, None)

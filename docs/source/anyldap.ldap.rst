@@ -99,9 +99,15 @@ the model classes python-ldap names, on top of the schema parsing in
     person = subschema.get_obj(ldap.schema.ObjectClass, "person")
     must, may = subschema.attribute_types(["inetOrgPerson"])
 
-``read_schema_s()`` is not a method python-ldap has: it fetches schema with
-``ldap.schema.urlfetch()``, which opens a connection of its own, and this
-uses the one already open.
+A definition writes itself back out again -- ``str(person)`` is the
+``objectClasses`` value the server published -- and ``x_origin`` and the
+rest of the ``X-`` fields a definition carries are read into ``extensions``.
+
+``urlfetch()`` is python-ldap's, taking an LDAP URL and opening a connection
+of its own to ask; ``read_schema_s()`` is not a method python-ldap has, and
+uses the connection that is already open::
+
+    dn, subschema = await ldap.schema.urlfetch("ldap://localhost")
 
 TLS
 ---

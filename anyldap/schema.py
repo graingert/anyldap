@@ -50,6 +50,53 @@ class ASN1ParserThingie:
             text = text[end + 1 :]
         return tuple(r)
 
+    def _parse_extensions(
+        self, text: bytes
+    ) -> tuple[list[tuple[bytes, bytes | tuple[bytes, ...]]], bytes]:
+        """The ``X-`` fields at the end of a definition, and what is left.
+
+        A schema definition may end with any number of extensions -- RFC 4512
+        section 4.1 lets a server define its own, and ``X-ORIGIN`` saying
+        where a definition came from is on nearly everything OpenLDAP and
+        389-ds publish. Each is a name and either one string or several.
+        """
+        extensions: list[tuple[bytes, bytes | tuple[bytes, ...]]] = []
+        while True:
+            text = text.lstrip()
+            word = peekWord(text)
+            if word is None or not word.startswith(b"X-"):
+                break
+            value: bytes | tuple[bytes, ...]
+            text = text[len(word) :].lstrip()
+            if text[:1] == b"'":
+                text = text[1:]
+                end = text.index(b"'")
+                value = text[:end]
+                text = text[end + 1 :]
+            elif text[:1] == b"(":
+                text = text[1:].lstrip()
+                end = text.index(b")")
+                value = self._strings_to_list(text[:end])
+                text = text[end + 1 :]
+            else:
+                raise AssertionError(f"extension {word!r} has no value")
+            extensions.append((word, value))
+        return extensions, text
+
+    def _extensions_to_wire(
+        self, extensions: Sequence[tuple[bytes, bytes | tuple[bytes, ...]]]
+    ) -> list[bytes]:
+        """The extensions, written out again as they were read."""
+        written = []
+        for name, value in extensions:
+            if isinstance(value, bytes):
+                written.append(b"%s '%s'" % (name, value))
+            else:
+                written.append(
+                    b"%s ( %s )" % (name, b" ".join(b"'%s'" % s for s in value))
+                )
+        return written
+
     def _str_list(self, l: Sequence[bytes]) -> bytes:
         s = b" ".join([self._str(x) for x in l])
         if len(l) > 1:
@@ -125,6 +172,7 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
         self.type: bytes | None = None
         self.must: list[bytes] = []
         self.may: list[bytes] = []
+        self.x_attrs: list[tuple[bytes, bytes | tuple[bytes, ...]]] = []
 
         if text is not None:
             self._parse(to_bytes(text))
@@ -242,6 +290,8 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
 
         text = text.lstrip()
 
+        self.x_attrs, text = self._parse_extensions(text)
+
         assert text == b"", "Text was not empty: %s" % repr(text)
 
         if not self.type:
@@ -282,6 +332,7 @@ class ObjectClassDescription(ASN1ParserThingie, WireStrAlias):
             r.append(b"MUST %s" % self._list(self.must))
         if self.may:
             r.append(b"MAY %s" % self._list(self.may))
+        r.extend(self._extensions_to_wire(self.x_attrs))
         return b"( %s " % self.oid + b"\n        ".join(r) + b" )"
 
     def __lt__(self, other: object) -> bool:
@@ -491,34 +542,7 @@ class AttributeTypeDescription(ASN1ParserThingie, WireStrAlias):
             text = text.lstrip()
             self.usage, text = extractWord(text)
 
-        while True:
-            text = text.lstrip()
-
-            word = peekWord(text)
-            if word is None:
-                break
-
-            if word.startswith(b"X-"):
-                value: bytes | tuple[bytes, ...]
-                text = text[len(word + b" ") :]
-                text = text.lstrip()
-                if text[:1] == b"'":
-                    text = text[1:]
-                    end = text.index(b"'")
-                    value = text[:end]
-                    text = text[end + 1 :]
-                elif text[:1] == b"(":
-                    text = text[1:]
-                    text = text.lstrip()
-                    end = text.index(b")")
-                    value = self._strings_to_list(text[:end])
-                    text = text[end + 1 :]
-                else:
-                    raise AssertionError()
-
-                self.x_attrs.append((word, value))
-            else:
-                raise AssertionError("Unhandled attributeType: %r", word)
+        self.x_attrs, text = self._parse_extensions(text)
 
         assert text == b"", "Text was not empty: %s" % repr(text)
 
@@ -587,17 +611,7 @@ class AttributeTypeDescription(ASN1ParserThingie, WireStrAlias):
             r.append(b"NO-USER-MODIFICATION")
         if self.usage is not None:
             r.append(b"USAGE %s" % self.usage)
-        for name, value in self.x_attrs:
-            if isinstance(value, (bytes, str)):
-                r.append(b"%s '%s'" % (name, value))
-            else:
-                r.append(
-                    b"%s ( %s )"
-                    % (
-                        name,
-                        b" ".join(b"'%s'" % s for s in value),
-                    ),
-                )
+        r.extend(self._extensions_to_wire(self.x_attrs))
         return b"( %s " % self.oid + b"\n        ".join(r) + b" )"
 
 
@@ -616,6 +630,7 @@ class SyntaxDescription(ASN1ParserThingie, WireStrAlias):
         self.desc: bytes | None = None
         self.binary_transfer_required: bool | None = False
         self.human_readable: bool | None = True
+        self.x_attrs: list[tuple[bytes, bytes | tuple[bytes, ...]]] = []
 
         if text is not None:
             self._parse(to_bytes(text))
@@ -657,6 +672,8 @@ class SyntaxDescription(ASN1ParserThingie, WireStrAlias):
 
         text = text.lstrip()
 
+        self.x_attrs, text = self._parse_extensions(text)
+
         assert text == b"", "Text was not empty: %s" % repr(text)
 
         assert self.oid
@@ -673,6 +690,7 @@ class SyntaxDescription(ASN1ParserThingie, WireStrAlias):
             r.append(b"X-BINARY-TRANSFER-REQUIRED 'TRUE'")
         if self.human_readable is False:
             r.append(b"X-NOT-HUMAN-READABLE 'TRUE'")
+        r.extend(self._extensions_to_wire(self.x_attrs))
 
         return b"( " + b" ".join(r) + b" )"
 
@@ -705,6 +723,7 @@ class MatchingRuleDescription(ASN1ParserThingie, WireStrAlias):
         self.desc: bytes | None = None
         self.obsolete: int | None = None
         self.syntax: bytes | None = None
+        self.x_attrs: list[tuple[bytes, bytes | tuple[bytes, ...]]] = []
 
         if text is not None:
             self._parse(to_bytes(text))
@@ -764,6 +783,8 @@ class MatchingRuleDescription(ASN1ParserThingie, WireStrAlias):
 
         text = text.lstrip()
 
+        self.x_attrs, text = self._parse_extensions(text)
+
         assert text == b"", "Text was not empty: %s" % repr(text)
 
         if self.obsolete is None:
@@ -784,6 +805,7 @@ class MatchingRuleDescription(ASN1ParserThingie, WireStrAlias):
         if self.obsolete:
             r.append(b"OBSOLETE")
         r.append(b"SYNTAX %s" % self.syntax)
+        r.extend(self._extensions_to_wire(self.x_attrs))
 
         return b"( " + b" ".join(r) + b" )"
 

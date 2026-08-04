@@ -63,6 +63,11 @@ Features
   assertion and matched-values, and the valueless ones.
 - The ``OPT_X_TLS_*`` options build the ``ssl.SSLContext`` a connection is
   raised with; a context can still be passed to ``initialize()`` instead.
+- A schema definition writes itself back out the way python-ldap writes it,
+  and ``x_origin`` and the other ``X-`` fields a definition carries are read
+  rather than refused. ``ldap.schema.urlfetch()`` takes an LDAP URL and
+  opens a connection of its own to ask, and ``SubSchema.ldap_entry()``
+  writes a whole schema back out as the entry it was read from.
 
 Other changes
 ^^^^^^^^^^^^^

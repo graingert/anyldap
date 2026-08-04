@@ -23,6 +23,7 @@ This directory                  python-ldap
 ``test_ldapurl.py``             ``Tests/t_ldapurl.py``
 ``test_options.py``             ``Tests/t_ldap_options.py``
 ``test_sasl.py``                ``Tests/t_ldap_sasl.py``
+``test_schema_subentry.py``     ``Tests/t_ldap_schema_subentry.py``
 ``test_syncrepl.py``            ``Tests/t_ldap_syncrepl.py``
 ``test_controls.py``            ``Tests/t_ldap_controls_libldap.py``,
                                 ``Tests/t_ldap_controls_readentry.py``,
@@ -86,6 +87,10 @@ What was not ported, and why
   expectation, so the ones python-ldap does reject stay rejected here.
 - **The GSSAPI parts of ``t_ldap_sasl.py``**, which need a Kerberos realm to
   bind against.
+- **The two LDIF files ``t_ldap_schema_subentry.py`` reads**, which are
+  about half a megabyte each. The definitions each of its tests needs are
+  inline in ``test_schema_subentry.py`` instead, taken from those files, and
+  the tests that read a whole schema read slapd's.
 - **The ``fileno`` variants**, which hand libldap a socket that was opened
   elsewhere. ``ReconnectLDAPObject``'s own tests are ported, except that
   ``__getstate__()`` is checked field by field: what it stores beside

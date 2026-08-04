@@ -21,6 +21,18 @@ def _texts(values: Sequence[bytes | str] | None) -> tuple[str, ...]:
     return tuple(to_unicode(value) for value in values or ())
 
 
+def _extensions(
+    parsed: Sequence[tuple[bytes, bytes | tuple[bytes, ...]]],
+) -> dict[str, tuple[str, ...]]:
+    """The ``X-`` fields of a definition, each as a tuple of its values."""
+    read: dict[str, tuple[str, ...]] = {}
+    for name, value in parsed:
+        read[to_unicode(name)] = (
+            (to_unicode(value),) if isinstance(value, bytes) else _texts(value)
+        )
+    return read
+
+
 class SchemaElement:
     """One definition out of a schema, whatever kind it is."""
 
@@ -31,17 +43,58 @@ class SchemaElement:
         self.names: tuple[str, ...] = ()
         self.desc: str | None = None
         self.obsolete: int = 0
+        self.x_origin: tuple[str, ...] = ()
+        self.extensions: dict[str, tuple[str, ...]] = {}
         if schema_element_str is not None:
             self._parse(to_bytes(schema_element_str))
 
     def _parse(self, definition: bytes) -> None:
         raise NotImplementedError
 
+    def _read_extensions(
+        self, parsed: Sequence[tuple[bytes, bytes | tuple[bytes, ...]]]
+    ) -> None:
+        self.extensions = _extensions(parsed)
+        self.x_origin = self.extensions.get("X-ORIGIN", ())
+
+    def set_id(self, element_id: str) -> None:
+        self.oid = element_id
+
     def get_id(self) -> str | None:
         return self.oid
 
+    def key_attr(self, key: str, value: str | None, quoted: int = 0) -> str:
+        """One field of a definition, written the way python-ldap writes it."""
+        assert value is None or isinstance(value, str), TypeError(
+            "value has to be of str, was %r" % value
+        )
+        if not value:
+            return ""
+        if quoted:
+            return " {} '{}'".format(key, value.replace("'", "\\'"))
+        return f" {key} {value}"
+
+    def key_list(
+        self, key: str, values: tuple[str, ...], sep: str = " ", quoted: int = 0
+    ) -> str:
+        """A field with several values, written the way python-ldap writes it."""
+        assert isinstance(values, tuple), TypeError(
+            "values has to be a tuple, was %r" % values
+        )
+        if not values:
+            return ""
+        if quoted:
+            written = ["'%s'" % value.replace("'", "\\'") for value in values]
+        else:
+            written = list(values)
+        if len(values) == 1:
+            return f" {key} {written[0]}"
+        return " {} ( {} )".format(key, sep.join(written))
+
     def __str__(self) -> str:
-        return self.names[0] if self.names else (self.oid or "")
+        return "( %s )" % "".join(
+            [str(self.oid), self.key_attr("DESC", self.desc, quoted=1)]
+        )
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self}, oid={self.oid!r})"
@@ -65,12 +118,30 @@ class ObjectClass(SchemaElement):
         self.names = _texts(parsed.name)
         self.desc = _text(parsed.desc)
         self.obsolete = int(parsed.obsolete)
-        self.sup = _texts(parsed.sup)
+        # An object class with no SUP is under top, which is what
+        # python-ldap fills in when the definition does not say.
+        self.sup = _texts(parsed.sup) or ("top",)
         self.must = _texts(parsed.must)
         self.may = _texts(parsed.may)
         # python-ldap numbers the kinds: structural, abstract, auxiliary.
         kind = (_text(parsed.type) or "STRUCTURAL").upper()
         self.kind = {"STRUCTURAL": 0, "ABSTRACT": 1, "AUXILIARY": 2}[kind]
+        self._read_extensions(parsed.x_attrs)
+
+    def __str__(self) -> str:
+        return "( %s )" % "".join(
+            [
+                str(self.oid),
+                self.key_list("NAME", self.names, quoted=1),
+                self.key_attr("DESC", self.desc, quoted=1),
+                self.key_list("SUP", self.sup, sep=" $ "),
+                " OBSOLETE" if self.obsolete else "",
+                {0: " STRUCTURAL", 1: " ABSTRACT", 2: " AUXILIARY"}[self.kind],
+                self.key_list("MUST", self.must, sep=" $ "),
+                self.key_list("MAY", self.may, sep=" $ "),
+                self.key_list("X-ORIGIN", self.x_origin, quoted=1),
+            ]
+        )
 
 
 class AttributeType(SchemaElement):
@@ -116,6 +187,35 @@ class AttributeType(SchemaElement):
             "distributedoperation": 2,
             "dsaoperation": 3,
         }.get(usage, 0)
+        self._read_extensions(parsed.x_attrs)
+
+    def __str__(self) -> str:
+        return "( %s )" % "".join(
+            [
+                str(self.oid),
+                self.key_list("NAME", self.names, quoted=1),
+                self.key_attr("DESC", self.desc, quoted=1),
+                self.key_list("SUP", self.sup, sep=" $ "),
+                " OBSOLETE" if self.obsolete else "",
+                self.key_attr("EQUALITY", self.equality),
+                self.key_attr("ORDERING", self.ordering),
+                self.key_attr("SUBSTR", self.substr),
+                self.key_attr("SYNTAX", self.syntax),
+                ""
+                if not self.syntax_len
+                else "{%d}" % self.syntax_len,
+                " SINGLE-VALUE" if self.single_value else "",
+                " COLLECTIVE" if self.collective else "",
+                " NO-USER-MODIFICATION" if self.no_user_mod else "",
+                {
+                    0: "",
+                    1: " USAGE directoryOperation",
+                    2: " USAGE distributedOperation",
+                    3: " USAGE dSAOperation",
+                }[self.usage],
+                self.key_list("X-ORIGIN", self.x_origin, quoted=1),
+            ]
+        )
 
 
 class MatchingRule(SchemaElement):
@@ -134,6 +234,18 @@ class MatchingRule(SchemaElement):
         self.desc = _text(parsed.desc)
         self.obsolete = int(bool(parsed.obsolete))
         self.syntax = _text(parsed.syntax)
+        self._read_extensions(parsed.x_attrs)
+
+    def __str__(self) -> str:
+        return "( %s )" % "".join(
+            [
+                str(self.oid),
+                self.key_list("NAME", self.names, quoted=1),
+                self.key_attr("DESC", self.desc, quoted=1),
+                " OBSOLETE" if self.obsolete else "",
+                self.key_attr("SYNTAX", self.syntax),
+            ]
+        )
 
 
 class LDAPSyntax(SchemaElement):
@@ -144,6 +256,7 @@ class LDAPSyntax(SchemaElement):
     def __init__(self, schema_element_str: str | bytes | None = None) -> None:
         self.not_human_readable = 0
         self.x_binary_transfer_required = 0
+        self.x_subst: str | None = None
         SchemaElement.__init__(self, schema_element_str)
 
     def _parse(self, definition: bytes) -> None:
@@ -152,6 +265,18 @@ class LDAPSyntax(SchemaElement):
         self.desc = _text(parsed.desc)
         self.not_human_readable = int(not parsed.human_readable)
         self.x_binary_transfer_required = int(bool(parsed.binary_transfer_required))
+        self._read_extensions(parsed.x_attrs)
+        self.x_subst = self.extensions.get("X-SUBST", (None,))[0]
+
+    def __str__(self) -> str:
+        return "( %s )" % "".join(
+            [
+                str(self.oid),
+                self.key_attr("DESC", self.desc, quoted=1),
+                self.key_attr("X-SUBST", self.x_subst, quoted=1),
+                " X-NOT-HUMAN-READABLE 'TRUE'" if self.not_human_readable else "",
+            ]
+        )
 
 
 # What python-ldap calls the classes it knows how to read, keyed by the
