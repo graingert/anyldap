@@ -67,11 +67,16 @@ Quick Usage Example
         anyio.run(example)
 
 
-python-ldap's API, awaited
---------------------------
+python-ldap's API but async
+---------------------------
 
-``anyldap.ldap`` is python-ldap's ``ldap`` module with every operation
-awaited, so code written against python-ldap ports by adding ``await``:
+``anyldap.ldap`` is python-ldap's ``ldap`` module made async: the names, the
+arguments they take and the values they hand back are python-ldap's, with
+every operation a coroutine, so code written against it ports by adding
+``await``. It runs on asyncio and on trio, since it is written against AnyIO,
+and none of it is a binding to OpenLDAP's C library -- the protocol, the SASL
+mechanisms and the TLS handshake are anyldap's own, which is also why the
+handful of things only libldap can answer are not here:
 
 .. code-block:: python
 
@@ -93,11 +98,14 @@ awaited, so code written against python-ldap ports by adding ``await``:
     if __name__ == "__main__":
         anyio.run(example)
 
-What it does and does not cover is in the `documentation
-<https://anyldap.readthedocs.io/en/latest/anyldap.ldap.html>`_. Its answers
-are checked against python-ldap itself, running the same operations against
-one OpenLDAP server; those tests live in ``interop/`` and run with ``tox -e
-interop``.
+``ldap.controls``, ``ldap.schema``, ``ldap.sasl``, ``ldap.dn``, ``ldap.filter``,
+``ldap.modlist``, ``ldap.cidict``, ``ldap.ldapurl``, ``ldap.asyncsearch``,
+``ldap.syncrepl`` and ``ReconnectLDAPObject`` are here too. What it does and
+does not cover is in the `documentation
+<https://anyldap.readthedocs.io/en/latest/anyldap.ldap.html>`_. Most of
+python-ldap's own test suite is ported under ``interop/``, next to tests that
+run the same operations through both libraries against one OpenLDAP server and
+compare the answers; ``tox -e interop`` runs them.
 
 
 Installation
