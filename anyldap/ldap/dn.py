@@ -77,7 +77,7 @@ def _ava(text: str) -> AVA:
         raise errors.DECODING_ERROR(
             {
                 "desc": errors.DECODING_ERROR.desc,
-                "info": "not an attribute and value: {!r}".format(text),
+                "info": f"not an attribute and value: {text!r}",
             }
         )
     unescaped = _unescape(value)
@@ -109,7 +109,7 @@ def _split(text: str, separator: str) -> list[str]:
         raise errors.DECODING_ERROR(
             {
                 "desc": errors.DECODING_ERROR.desc,
-                "info": "empty part in {!r}".format(text),
+                "info": f"empty part in {text!r}",
             }
         )
     return parts

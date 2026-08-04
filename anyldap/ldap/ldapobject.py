@@ -1134,7 +1134,7 @@ class SimpleLDAPObject:
             raise errors.NO_UNIQUE_ENTRY(
                 {
                     "desc": errors.NO_UNIQUE_ENTRY.desc,
-                    "info": "no or non-unique search result for {!r}".format(filterstr),
+                    "info": f"no or non-unique search result for {filterstr!r}",
                 }
             )
         dn, attributes = data[0]
