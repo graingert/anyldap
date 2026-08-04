@@ -20,7 +20,7 @@ from typing import Any, ClassVar, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
 import anyio
-from anyio.abc import ByteStream
+from anyio.abc import ByteStream, SocketAttribute
 from anyio.streams.tls import TLSStream
 
 from anyldap._encoder import to_bytes, to_unicode
@@ -450,6 +450,7 @@ class SimpleLDAPObject:
         self._host, self._port, self._tls = _parse_uri(uri)
         self._unix = urlparse(uri).scheme == "ldapi"
         self._stream: ByteStream | None = None
+        self._fileno = -1
         self._buffer = b""
         self._pending: dict[int, _Pending] = {}
         self._reading = anyio.Lock()
@@ -503,19 +504,26 @@ class SimpleLDAPObject:
         return self._built_context
 
     async def _connect_stream(self) -> ByteStream:
+        stream: ByteStream
         if self._unix:
-            return await anyio.connect_unix(self._host)
-        # anyio.connect_tcp takes tls as a literal, and a context is a
-        # request for TLS on its own.
+            stream = await anyio.connect_unix(self._host)
+        else:
+            stream = await anyio.connect_tcp(self._host, self._port)
+        # The socket is asked for its number here, while it is still the
+        # plain stream: what fileno() answers with afterwards is this, so
+        # that raising TLS over it does not change the answer.
+        self._fileno = stream.extra(SocketAttribute.raw_socket).fileno()
         if self._tls:
-            return await anyio.connect_tcp(
-                self._host,
-                self._port,
-                tls=True,
+            # ldaps:// raises TLS before anything is sent, which is the same
+            # wrapping StartTLS does to a connection that is already open.
+            stream = await TLSStream.wrap(
+                stream,
+                server_side=False,
+                hostname=self._host,
                 ssl_context=self._ssl_context,
-                tls_standard_compatible=False,
+                standard_compatible=False,
             )
-        return await anyio.connect_tcp(self._host, self._port)
+        return stream
 
     async def _connected(self) -> ByteStream:
         if self._unbound:
@@ -540,12 +548,9 @@ class SimpleLDAPObject:
         its own. It raises if nothing is open yet, because there is no
         socket to name until the first operation has been awaited.
         """
-        stream = self._stream
-        if stream is None:
+        if self._stream is None:
             raise errors.LDAPError({"desc": "the connection is not open"})
-        # A TLS stream hands on what the socket underneath it says, so this
-        # is the same number whether or not TLS was raised.
-        return int(stream.extra(anyio.abc.SocketAttribute.raw_socket).fileno())
+        return self._fileno
 
     async def _lost(self, reason: str) -> None:
         """The connection has gone: every operation on it fails with it."""
@@ -1757,6 +1762,7 @@ class ReconnectLDAPObject(SimpleLDAPObject):
             "_writing",
             "_reconnecting",
             "_retrying",
+            "_fileno",
         }
     )
 
@@ -1805,6 +1811,7 @@ class ReconnectLDAPObject(SimpleLDAPObject):
         # said goodbye to: it opens itself when it is next used.
         self._unbound = False
         self._stream = None
+        self._fileno = -1
         self._buffer = b""
         self._pending = {}
         self._reading = anyio.Lock()

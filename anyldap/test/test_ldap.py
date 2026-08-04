@@ -3396,7 +3396,9 @@ async def test_an_operation_can_be_stopped_and_collected_by_message_id() -> None
         await connection.abandon_ext(msgid)
         assert msgid not in connection._pending
 
-        assert isinstance(connection.fileno(), int)
+        assert connection.fileno() == connection._stream.extra(
+            anyio.abc.SocketAttribute.raw_socket
+        ).fileno()
 
 
 async def test_a_gssapi_bind_can_be_asked_for_by_name(
@@ -3615,3 +3617,45 @@ async def test_an_extended_operation_answers_the_message_id_it_was_started_as() 
 
 def test_a_time_span_that_says_nothing_is_the_moment_it_is_asked() -> None:
     assert ldap.time_span_filter().startswith("(&(modifyTimestamp>=")
+
+
+async def test_the_socket_a_connection_names_is_the_one_under_the_tls() -> None:
+    server_context, client_context = tls_pair()
+    root = make_root()
+
+    class StartTLSServer(ldapserver.LDAPServer):
+        async def handle_LDAPExtendedRequest(
+            self,
+            request: pureldap.LDAPExtendedRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> None:
+            self.start_tls(server_context)
+            reply(pureldap.LDAPStartTLSResponse(resultCode=0))
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = StartTLSServer()
+        server.factory = root
+        return server
+
+    # Raised after the connection was made: the number does not change.
+    async with serving(factory) as server:
+        async with connected(
+            server, f"ldap://localhost:{server.port}", client_context
+        ) as connection:
+            await connection.simple_bind_s()
+            plain = connection.fileno()
+            await connection.start_tls_s()
+            assert isinstance(connection._stream, anyio.streams.tls.TLSStream)
+            assert connection.fileno() == plain
+
+    # And raised before anything was sent, which is what ldaps:// does.
+    async with serving(tree_server(root), server_context) as server:
+        async with connected(
+            server, f"ldaps://localhost:{server.port}", client_context
+        ) as connection:
+            await connection.simple_bind_s()
+            assert isinstance(connection._stream, anyio.streams.tls.TLSStream)
+            assert connection.fileno() == connection._stream.extra(
+                anyio.abc.SocketAttribute.raw_socket
+            ).fileno()
