@@ -1060,7 +1060,7 @@ class SimpleLDAPObject:
             raise errors.NO_UNIQUE_ENTRY(
                 {
                     "desc": errors.NO_UNIQUE_ENTRY.desc,
-                    "info": "no or non-unique search result for %r" % (filterstr,),
+                    "info": "no or non-unique search result for {!r}".format(filterstr),
                 }
             )
         dn, attributes = data[0]
@@ -1398,7 +1398,7 @@ class SimpleLDAPObject:
             raise errors.PROTOCOL_ERROR(
                 {
                     "desc": errors.PROTOCOL_ERROR.desc,
-                    "info": "StartTLS answered to {!r}".format(name),
+                    "info": f"StartTLS answered to {name!r}",
                 }
             )
         if self._buffer:
