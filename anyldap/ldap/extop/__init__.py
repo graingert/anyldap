@@ -20,8 +20,11 @@ class ExtendedRequest:
     """An extended operation being asked for.
 
     ``requestName`` is the OID that says which operation it is, and
-    ``requestValue`` the bytes that go with it.
+    ``requestValue`` the bytes that go with it. A subclass says which OID it
+    is by naming one here, which is what the connection asks it for.
     """
+
+    requestName: str | None = None
 
     def __init__(self, requestName: str, requestValue: bytes) -> None:
         self.requestName = requestName
@@ -36,7 +39,13 @@ class ExtendedRequest:
 
 
 class ExtendedResponse:
-    """What the server answered an extended operation with."""
+    """What the server answered an extended operation with.
+
+    A subclass names the OID it reads, which is what ``extop_s()`` checks
+    the server answered to before handing the answer over.
+    """
+
+    responseName: str | None = None
 
     def __init__(self, responseName: str | None, encodedResponseValue: bytes) -> None:
         self.responseName = responseName

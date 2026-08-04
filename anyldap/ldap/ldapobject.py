@@ -16,7 +16,7 @@ import ssl
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import TracebackType
-from typing import Any, ClassVar, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast, overload
 from urllib.parse import unquote, urlparse
 
 import anyio
@@ -79,10 +79,14 @@ from anyldap.ldap.constants import (
     VERSION3,
     WHOAMI_OID,
 )
+from anyldap.ldap.errors import NO_UNIQUE_ENTRY as NO_UNIQUE_ENTRY
 from anyldap.ldap.schema import SCHEMA_ATTRS
 from anyldap.ldapfilter import InvalidLDAPFilter, parseFilter
 from anyldap.protocols import pureber, pureldap
 from anyldap.runtime import logger
+
+if TYPE_CHECKING:  # pragma: no cover
+    from anyldap.ldap.extop import ExtendedResponse
 
 # A value as it goes out on the wire, or the text of one.
 Value = str | bytes
@@ -197,7 +201,11 @@ def _reference(message: pureldap.LDAPSearchResultReference) -> Reference:
     return None, uris
 
 
-def _found(queue: Sequence[_Answer], add_ctrls: int) -> Result4Data:
+def _found(
+    queue: Sequence[_Answer],
+    add_ctrls: int,
+    known: Mapping[str, type["controls.ResponseControl"]] | None = None,
+) -> Result4Data:
     """Everything a search found, in the order the server sent it.
 
     An intermediate response is not one of the things a search found, so it
@@ -208,9 +216,7 @@ def _found(queue: Sequence[_Answer], add_ctrls: int) -> Result4Data:
         if rtype == RES_INTERMEDIATE:
             continue
         if add_ctrls:
-            found.append(
-                (*payload, controls.decode_controls(payload_controls))
-            )
+            found.append((*payload, controls.decode_controls(payload_controls, known)))
         else:
             found.append(payload)
     return found
@@ -407,6 +413,9 @@ def _tls_context(options: Mapping[int, object]) -> ssl.SSLContext:
 # Whatever a connection was opened as, which is what a with statement on it
 # hands back: a subclass stays itself.
 _Connection = TypeVar("_Connection", bound="SimpleLDAPObject")
+
+# What an extended operation's answer is read into, when a class is named.
+_Response = TypeVar("_Response", bound="ExtendedResponse")
 
 
 class SimpleLDAPObject:
@@ -737,14 +746,21 @@ class SimpleLDAPObject:
         return rtype, data, rmsgid
 
     async def result3(
-        self, msgid: int = RES_ANY, all: int = 1, timeout: float | None = None
+        self,
+        msgid: int = RES_ANY,
+        all: int = 1,
+        timeout: float | None = None,
+        resp_ctrl_classes: Mapping[str, type["controls.ResponseControl"]]
+        | None = None,
     ) -> tuple[int, ResultData, int, Sequence["controls.ResponseControl"]]:
         """Wait for an operation started earlier, and answer with its result.
 
         ``RES_ANY`` takes the operation that was started first, which is the
         one python-ldap would most likely hand back.
         """
-        rtype, data, rmsgid, controls, _, _ = await self.result4(msgid, all, timeout)
+        rtype, data, rmsgid, controls, _, _ = await self.result4(
+            msgid, all, timeout, resp_ctrl_classes=resp_ctrl_classes
+        )
         # Without add_ctrls or add_intermediates, what result4() hands back
         # is what a search found and nothing else.
         return rtype, cast(ResultData, data), rmsgid, controls
@@ -757,6 +773,8 @@ class SimpleLDAPObject:
         add_ctrls: int = 0,
         add_intermediates: int = 0,
         add_extop: int = 0,
+        resp_ctrl_classes: Mapping[str, type["controls.ResponseControl"]]
+        | None = None,
     ) -> tuple[
         int,
         Result4Data,
@@ -784,7 +802,9 @@ class SimpleLDAPObject:
         # reported as finished when it is not.
         if not all:
             while True:
-                queued = self._queued(operation, add_ctrls, add_intermediates)
+                queued = self._queued(
+                    operation, add_ctrls, add_intermediates, resp_ctrl_classes
+                )
                 if queued is not None:
                     return queued[0], queued[1], msgid, [], None, None
                 if operation.done:
@@ -800,16 +820,19 @@ class SimpleLDAPObject:
             raise operation.error
         return (
             operation.rtype,
-            _found(operation.queue, add_ctrls),
+            _found(operation.queue, add_ctrls, resp_ctrl_classes),
             msgid,
-            controls.decode_controls(operation.controls),
+            controls.decode_controls(operation.controls, resp_ctrl_classes),
             operation.name,
             operation.value,
         )
 
     @staticmethod
     def _queued(
-        operation: _Pending, add_ctrls: int, add_intermediates: int
+        operation: _Pending,
+        add_ctrls: int,
+        add_intermediates: int,
+        known: Mapping[str, type["controls.ResponseControl"]] | None = None,
     ) -> tuple[int, Result4Data] | None:
         """The next message the operation has to hand out, if it has one.
 
@@ -823,7 +846,9 @@ class SimpleLDAPObject:
                 continue
             operation.queue.pop(0)
             if add_ctrls:
-                return rtype, [(*payload, controls.decode_controls(payload_controls))]
+                return rtype, [
+                    (*payload, controls.decode_controls(payload_controls, known))
+                ]
             return rtype, [payload]
         return None
 
@@ -1074,6 +1099,7 @@ class SimpleLDAPObject:
         sasl_mech: str,
         serverctrls: Controls = None,
         clientctrls: Controls = None,
+        sasl_flags: int = SASL_QUIET,
         authz_id: str = "",
     ) -> None:
         """A SASL bind with a mechanism that asks the caller nothing."""
@@ -1089,7 +1115,7 @@ class SimpleLDAPObject:
                 }
             )
         await self.sasl_interactive_bind_s(
-            "", mechanisms[sasl_mech](authz_id), serverctrls, clientctrls
+            "", mechanisms[sasl_mech](authz_id), serverctrls, clientctrls, sasl_flags
         )
 
     async def sasl_gssapi_bind_s(
@@ -1101,24 +1127,25 @@ class SimpleLDAPObject:
     ) -> None:
         """Bind with Kerberos, which is what the GSSAPI mechanism is."""
         await self.sasl_non_interactive_bind_s(
-            "GSSAPI", serverctrls, clientctrls, authz_id
+            "GSSAPI", serverctrls, clientctrls, sasl_flags, authz_id
         )
 
     async def sasl_external_bind_s(
         self,
         serverctrls: Controls = None,
         clientctrls: Controls = None,
+        sasl_flags: int = SASL_QUIET,
         authz_id: str = "",
     ) -> None:
         """Bind as whoever the connection underneath already proved to be."""
         await self.sasl_non_interactive_bind_s(
-            "EXTERNAL", serverctrls, clientctrls, authz_id
+            "EXTERNAL", serverctrls, clientctrls, sasl_flags, authz_id
         )
 
     async def sasl_bind_s(
         self,
         dn: str,
-        mech: str | bytes,
+        mechanism: str | bytes,
         cred: Value | None,
         serverctrls: Controls = None,
         clientctrls: Controls = None,
@@ -1130,7 +1157,10 @@ class SimpleLDAPObject:
         """
         message = await self._send(
             pureldap.LDAPBindRequest(
-                version=self.protocol_version, dn=dn, auth=(mech, cred), sasl=True
+                version=self.protocol_version,
+                dn=dn,
+                auth=(mechanism, cred),
+                sasl=True,
             ),
             serverctrls,
         )
@@ -1146,7 +1176,7 @@ class SimpleLDAPObject:
             creds = operation.error.args[0].get("serverSaslCreds")
             assert creds is None or isinstance(creds, bytes)
             return creds
-        self._sasl_mechanism = to_bytes(mech)
+        self._sasl_mechanism = to_bytes(mechanism)
         return operation.value
 
     async def unbind_ext(
@@ -1622,17 +1652,52 @@ class SimpleLDAPObject:
             extreq, serverctrls, RES_EXTENDED, pureldap.LDAPExtendedResponse
         )
 
+    @overload
+    async def extop_s(
+        self,
+        extreq: pureldap.LDAPExtendedRequest,
+        serverctrls: Controls = ...,
+        clientctrls: Controls = ...,
+        extop_resp_class: None = ...,
+    ) -> tuple[str | None, bytes | None]: ...
+
+    @overload
+    async def extop_s(
+        self,
+        extreq: pureldap.LDAPExtendedRequest,
+        serverctrls: Controls,
+        clientctrls: Controls,
+        extop_resp_class: "type[_Response]",
+    ) -> "_Response": ...
+
     async def extop_s(
         self,
         extreq: pureldap.LDAPExtendedRequest,
         serverctrls: Controls = None,
         clientctrls: Controls = None,
-    ) -> tuple[str | None, bytes | None]:
+        extop_resp_class: "type[ExtendedResponse] | None" = None,
+    ) -> "tuple[str | None, bytes | None] | ExtendedResponse":
+        """Send an extended operation and wait for what it answers.
+
+        Given ``extop_resp_class``, the answer is read into one of those
+        rather than handed back as the name and the bytes; a server that
+        answers to a different name than the class expects is refused.
+        """
         msgid = await self.extop(extreq, serverctrls, clientctrls)
-        _, _, _, _, name, value = await self.result4(
-            msgid, all=1, timeout=self.timeout, add_extop=1
-        )
-        return name, value
+        name, value = await self.extop_result(msgid, all=1, timeout=self.timeout)
+        if extop_resp_class is None:
+            return name, value
+        if extop_resp_class.responseName != name:
+            raise errors.PROTOCOL_ERROR(
+                {
+                    "desc": errors.PROTOCOL_ERROR.desc,
+                    "info": (
+                        "Wrong OID in extended response! Expected"
+                        f" {extop_resp_class.responseName}, got {name}"
+                    ),
+                }
+            )
+        return extop_resp_class(extop_resp_class.responseName, value or b"")
 
     async def extop_result(
         self,
@@ -1680,11 +1745,16 @@ class SimpleLDAPObject:
             clientctrls,
         )
 
-    async def whoami_s(self) -> str:
+    async def whoami_s(
+        self, serverctrls: Controls = None, clientctrls: Controls = None
+    ) -> str:
         """The identity the server has this connection bound as."""
         _, value = await self.extop_s(
-            pureldap.LDAPExtendedRequest(requestName=WHOAMI_OID)
+            pureldap.LDAPExtendedRequest(requestName=WHOAMI_OID),
+            serverctrls,
+            clientctrls,
         )
+        assert value is None or isinstance(value, bytes)
         return "" if value is None else to_unicode(value)
 
     async def start_tls_s(self) -> None:

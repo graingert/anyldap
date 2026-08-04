@@ -5,6 +5,7 @@ anyldap already has, so the module is only a place for the names to live.
 """
 
 from anyldap.ldap.constants import CONTROL_ASSERT, CONTROL_VALUESRETURNFILTER
+from anyldap.ldap.controls import KNOWN_RESPONSE_CONTROLS as KNOWN_RESPONSE_CONTROLS
 from anyldap.ldap.controls import RequestControl
 from anyldap.ldap.controls.pagedresults import (
     SimplePagedResultsControl as SimplePagedResultsControl,

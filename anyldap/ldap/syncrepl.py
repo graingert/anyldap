@@ -39,6 +39,7 @@ from anyldap.ldap.constants import (
     RES_SEARCH_RESULT,
     SCOPE_SUBTREE,
 )
+from anyldap.ldap.constants import RES_INTERMEDIATE as RES_INTERMEDIATE
 from anyldap.ldap.controls import (
     KNOWN_RESPONSE_CONTROLS,
     RequestControl,

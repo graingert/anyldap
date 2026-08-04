@@ -55,7 +55,16 @@ from anyldap.ldap.schema.subentry import (
     STRUCTURAL as STRUCTURAL,
 )
 from anyldap.ldap.schema.subentry import (
+    NameNotUnique as NameNotUnique,
+)
+from anyldap.ldap.schema.subentry import (
+    OIDNotUnique as OIDNotUnique,
+)
+from anyldap.ldap.schema.subentry import (
     SubSchema as SubSchema,
+)
+from anyldap.ldap.schema.subentry import (
+    SubschemaError as SubschemaError,
 )
 from anyldap.ldap.schema.subentry import (
     urlfetch as urlfetch,

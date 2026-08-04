@@ -83,9 +83,7 @@ What was not ported, and why
 - **The options that are the C library's** (from ``t_ldap_options.py``):
   ``OPT_API_INFO`` describes libldap, and ``OPT_CLIENT_CONTROLS`` and
   ``OPT_SERVER_CONTROLS`` are its default controls -- which upstream's own
-  connection-level tests are marked as expected failures. The module-level
-  ``ldap.get_option()``/``set_option()`` are not here either: options belong
-  to a connection.
+  connection-level tests are marked as expected failures.
 - **``t_ldapurl.test_bad_urls``** is marked as failing upstream too: the URLs
   it lists ought to be rejected and are not. It is ported with the same
   expectation, so the ones python-ldap does reject stay rejected here.
@@ -95,7 +93,9 @@ What was not ported, and why
   ``DN_FORMAT_*`` flags, the threading locks, the C entry points and the
   constants that describe libldap itself (``API_VERSION``,
   ``LIBLDAP_API_INFO``, ``OPT_API_INFO``, ``OPT_DESC``, ``OPT_ERROR_*``,
-  ``TLS_AVAIL``): there is no C library here for them to be about.
+  ``TLS_AVAIL``): there is no C library here for them to be about. The
+  pyasn1 classes that describe what a control's value looks like are not
+  here either, because the values are encoded with anyldap's own BER.
 - **The two LDIF files ``t_ldap_schema_subentry.py`` reads**, which are
   about half a megabyte each. The definitions each of its tests needs are
   inline in ``test_schema_subentry.py`` instead, taken from those files, and

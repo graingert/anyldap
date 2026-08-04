@@ -1532,6 +1532,11 @@ def test_the_schema_says_what_an_entry_must_and_may_have() -> None:
     with pytest.raises(KeyError):
         sub.attribute_types(["partial"], raise_keyerror=1)
     assert sub.getoid(ldap.schema.ObjectClass, "unknown") == "unknown"
+    # Sub-types are dropped before looking a name up, and a name the schema
+    # does not describe is made something of only when asked.
+    assert sub.getoid(ldap.schema.AttributeType, "cn;lang-en") == "2.5.4.3"
+    with pytest.raises(KeyError, match="No registered AttributeType-OID"):
+        sub.getoid(ldap.schema.AttributeType, "nothing", raise_keyerror=1)
 
 
 def test_the_schema_reads_attribute_types_matching_rules_and_syntaxes() -> None:
@@ -1652,6 +1657,32 @@ def test_response_controls_are_a_sequence_even_when_there_are_none() -> None:
     assert ldapobject._controls(None) == []
     control: pureldap.Control = (b"1.2.3", None, None)
     assert ldapobject._controls([control]) == [control]
+
+
+def test_every_error_says_which_result_code_it_stands_for() -> None:
+    # errnum is the name python-ldap gives it, on the class and on what is
+    # raised.
+    assert ldap.NO_SUCH_OBJECT.errnum == 32
+    assert ldap.LDAPError.errnum is None
+    try:
+        raise ldap.INVALID_CREDENTIALS({"desc": "x"})
+    except ldap.LDAPError as raised:
+        assert raised.errnum == 49
+
+    # A read that found no one entry is a kind of "no such object", which
+    # is what python-ldap makes it as well.
+    assert issubclass(ldap.NO_UNIQUE_ENTRY, ldap.NO_SUCH_OBJECT)
+    assert ldap.NO_UNIQUE_ENTRY.errnum == 32
+    # The code still belongs to the error that is named for it.
+    assert isinstance(ldap.error_for_result(32, ""), ldap.NO_SUCH_OBJECT)
+    assert ldapobject.NO_UNIQUE_ENTRY is ldap.NO_UNIQUE_ENTRY
+
+    # An error of your own that stands for no result code takes none.
+    class Mine(ldap.LDAPError):
+        """Something this caller raises, which no server ever sends."""
+
+    assert Mine.errnum is None
+    assert isinstance(ldap.error_for_result(49, ""), ldap.INVALID_CREDENTIALS)
 
 
 def test_an_error_carries_what_the_server_said() -> None:
@@ -3667,3 +3698,164 @@ async def test_the_socket_a_connection_names_is_the_one_under_the_tls() -> None:
             assert connection.fileno() == stream.extra(
                 anyio.abc.SocketAttribute.raw_socket
             ).fileno()
+
+
+async def test_an_extended_response_can_be_read_into_the_class_that_knows_it() -> (
+    None
+):
+    answered = pureber.BERSequence(
+        [pureber.BERInteger(1800, tag=pureber.CLASS_CONTEXT | 0x01)]
+    ).toWire()
+
+    class RefreshingServer(ldapserver.BaseLDAPServer):
+        """A server that answers the refresh request RFC 2589 describes."""
+
+        async def handle_LDAPExtendedRequest(
+            self,
+            request: pureldap.LDAPExtendedRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPExtendedResponse:
+            return pureldap.LDAPExtendedResponse(
+                resultCode=0,
+                responseName=request.requestName,
+                response=answered,
+            )
+
+    async with serving(RefreshingServer) as server, connected(server) as connection:
+        request = ldap.extop.RefreshRequest(entryName=JACK, requestTtl=3600)
+        assert request.requestName is not None
+        response = await connection.extop_s(
+            pureldap.LDAPExtendedRequest(
+                requestName=request.requestName,
+                requestValue=request.encodedRequestValue(),
+            ),
+            None,
+            None,
+            ldap.extop.RefreshResponse,
+        )
+        assert response.responseTtl == 1800
+
+        # A server that answered to a different name than the class reads.
+        with pytest.raises(ldap.PROTOCOL_ERROR, match="Wrong OID"):
+            await connection.extop_s(
+                pureldap.LDAPExtendedRequest(requestName=b"1.2.3"),
+                None,
+                None,
+                ldap.extop.RefreshResponse,
+            )
+
+
+async def test_a_control_can_be_read_by_a_class_named_for_the_one_call() -> None:
+    class Mine(ldap.controls.ResponseControl):
+        """A reading of the paged results control that is not the usual one."""
+
+        def decodeControlValue(self, encodedControlValue: bytes) -> None:
+            self.raw = encodedControlValue
+
+    class PagingServer(ldapserver.BaseLDAPServer):
+        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
+            await self._send_anyio_write(
+                pureldap.LDAPMessage(
+                    pureldap.LDAPSearchResultDone(resultCode=0),
+                    id=msg.id,
+                    controls=[(ldap.CONTROL_PAGEDRESULTS, 0, b"0\x05\x02\x01\x02\x04\x00")],
+                ).toWire()
+            )
+
+    async with serving(PagingServer) as server, connected(server) as connection:
+        msgid = await connection.search_ext("dc=example,dc=com")
+        _, _, _, answered = await connection.result3(
+            msgid, resp_ctrl_classes={ldap.CONTROL_PAGEDRESULTS: Mine}
+        )
+        [control] = answered
+        assert isinstance(control, Mine)
+        assert control.raw == b"0\x05\x02\x01\x02\x04\x00"
+
+        # Without saying so, it is read by the class that is registered.
+        msgid = await connection.search_ext("dc=example,dc=com")
+        _, _, _, usual = await connection.result3(msgid)
+        assert isinstance(usual[0], ldap.controls.SimplePagedResultsControl)
+
+
+async def test_the_bind_arguments_are_the_ones_python_ldap_takes() -> None:
+    servers: list[SaslServer] = []
+
+    def factory() -> ldapserver.BaseLDAPServer:
+        server = SaslServer()
+        servers.append(server)
+        return server
+
+    async with serving(factory) as server, connected(server) as connection:
+        # sasl_flags comes before authz_id, as it does in python-ldap: an
+        # identity passed positionally lands where it is meant to.
+        await connection.sasl_external_bind_s(None, None, ldap.SASL_QUIET, "u:jack")
+        assert servers[0].seen == [(b"EXTERNAL", b"u:jack")]
+
+    async with serving(factory) as server, connected(server) as connection:
+        # And the mechanism of a step-by-step bind is called mechanism.
+        assert await connection.sasl_bind_s(
+            "", mechanism="EXTERNAL", cred=b""
+        ) is None
+
+
+async def test_who_the_server_says_we_are_takes_the_controls_it_may() -> None:
+    class WhoamiServer(ldapserver.BaseLDAPServer):
+        seen: list[list[pureldap.Control]] = []
+
+        async def handle_LDAPExtendedRequest(
+            self,
+            request: pureldap.LDAPExtendedRequest,
+            controls: Iterable[pureldap.Control] | None,
+            reply: ldapserver.Reply,
+        ) -> pureldap.LDAPExtendedResponse:
+            WhoamiServer.seen.append(list(controls or ()))
+            return pureldap.LDAPExtendedResponse(
+                resultCode=0, responseName=request.requestName, response=b"dn:cn=jack"
+            )
+
+    async with serving(WhoamiServer) as server, connected(server) as connection:
+        assert await connection.whoami_s(
+            [ldap.controls.ManageDSAITControl()]
+        ) == "dn:cn=jack"
+    assert WhoamiServer.seen[0][0][0] == b"2.16.840.1.113730.3.4.2"
+
+
+def test_a_schema_that_says_one_thing_twice_is_read_as_python_ldap_reads_it() -> None:
+    twice = {
+        "objectClasses": [
+            b"( 2.5.6.6 NAME 'person' STRUCTURAL MUST cn )",
+            b"( 2.5.6.6 NAME 'other' STRUCTURAL MUST sn )",
+        ]
+    }
+    # By default both are kept, the second under a name of its own.
+    sub = ldap.schema.SubSchema(twice)
+    assert sorted(sub.sed[ldap.schema.ObjectClass]) == ["2.5.6.6", "2.5.6.6;1"]
+    assert sub.non_unique_oids == ["2.5.6.6"]
+
+    # Asked to be strict about it, the schema is refused.
+    with pytest.raises(ldap.schema.OIDNotUnique, match="OID not unique"):
+        ldap.schema.SubSchema(twice, check_uniqueness=2)
+
+    # Told not to check, the second simply replaces the first.
+    quiet = ldap.schema.SubSchema(twice, check_uniqueness=0)
+    assert list(quiet.sed[ldap.schema.ObjectClass]) == ["2.5.6.6"]
+    assert quiet.non_unique_oids == []
+
+    # A name claimed twice is refused however it was asked for.
+    with pytest.raises(ldap.schema.NameNotUnique, match="NAME not unique"):
+        ldap.schema.SubSchema(
+            {
+                "objectClasses": [
+                    b"( 2.5.6.6 NAME 'person' STRUCTURAL MUST cn )",
+                    b"( 2.5.6.7 NAME 'person' STRUCTURAL MUST sn )",
+                ]
+            }
+        )
+    assert issubclass(ldap.schema.OIDNotUnique, ldap.schema.SubschemaError)
+
+    # A name is looked up however it is written, and an empty definition is
+    # passed over rather than read.
+    sub = ldap.schema.SubSchema({"objectClasses": [b"", SUBSCHEMA["objectClasses"][0]]})
+    assert sub.getoid(ldap.schema.ObjectClass, "TOP") == "2.5.6.0"
+    assert len(sub.listall(ldap.schema.ObjectClass)) == 1

@@ -3,6 +3,13 @@
 from collections.abc import Iterable, Mapping, Sequence
 
 from anyldap._encoder import to_unicode
+from anyldap.ldap import cidict
+from anyldap.ldap.schema.models import (
+    NOT_HUMAN_READABLE_LDAP_SYNTAXES as NOT_HUMAN_READABLE_LDAP_SYNTAXES,
+)
+from anyldap.ldap.schema.models import (
+    SCHEMA_ATTR_MAPPING as SCHEMA_ATTR_MAPPING,
+)
 from anyldap.ldap.schema.models import (
     SCHEMA_ATTRS,
     SCHEMA_CLASS_MAPPING,
@@ -13,6 +20,30 @@ from anyldap.ldap.schema.models import (
 
 # What an object class of each kind is numbered, as python-ldap numbers them.
 STRUCTURAL, ABSTRACT, AUXILIARY = 0, 1, 2
+
+
+class SubschemaError(ValueError):
+    """Something is wrong with the schema a server published."""
+
+
+class OIDNotUnique(SubschemaError):
+    """Two definitions of the same kind claim one OID."""
+
+    def __init__(self, desc: str) -> None:
+        self.desc = desc
+
+    def __str__(self) -> str:
+        return "OID not unique for %s" % (self.desc)
+
+
+class NameNotUnique(SubschemaError):
+    """Two definitions of the same kind claim one name."""
+
+    def __init__(self, desc: str) -> None:
+        self.desc = desc
+
+    def __str__(self) -> str:
+        return "NAME not unique for %s" % (self.desc)
 
 
 class SubSchema:
@@ -27,24 +58,62 @@ class SubSchema:
         sub_schema_sub_entry: Mapping[str, Iterable[bytes | str]],
         check_uniqueness: int = 1,
     ) -> None:
+        """Read what a server published into the definitions it describes.
+
+        ``check_uniqueness`` says what to do about a schema that describes
+        one thing twice: 0 lets the second definition replace the first, 1
+        keeps both by giving the second a suffix and records the OID in
+        ``non_unique_oids``, and 2 or more refuses the schema outright. A
+        name claimed twice is refused whichever of those it is.
+        """
         # Every element read, by its OID, and where its names point.
         self.sed: dict[type[SchemaElement], dict[str, SchemaElement]] = {
             cls: {} for cls in SCHEMA_CLASS_MAPPING.values()
         }
-        self.name2oid: dict[type[SchemaElement], dict[str, str]] = {
-            cls: {} for cls in SCHEMA_CLASS_MAPPING.values()
+        self.name2oid: dict[type[SchemaElement], cidict.cidict[str]] = {
+            cls: cidict.cidict() for cls in SCHEMA_CLASS_MAPPING.values()
         }
-        for attribute, definitions in sub_schema_sub_entry.items():
-            cls = SCHEMA_CLASS_MAPPING.get(_attribute_name(attribute))
-            if cls is None:
-                continue
-            for definition in definitions:
+        self.non_unique_names: dict[type[SchemaElement], cidict.cidict[None]] = {
+            cls: cidict.cidict() for cls in SCHEMA_CLASS_MAPPING.values()
+        }
+        seen_twice: dict[str, None] = {}
+
+        published = {
+            _attribute_name(attribute): definitions
+            for attribute, definitions in sub_schema_sub_entry.items()
+        }
+        for attribute in SCHEMA_ATTRS:
+            cls = SCHEMA_CLASS_MAPPING[attribute]
+            for definition in published.get(attribute, []):
+                if not definition:
+                    continue
                 element = cls(definition)
-                assert element.oid is not None
-                self.sed[cls][element.oid] = element
+                element_id = element.get_id()
+                assert element_id is not None
+
+                if check_uniqueness and element_id in self.sed[cls]:
+                    seen_twice[element_id] = None
+                    if check_uniqueness == 1:
+                        # Keep both, by giving this one a suffix.
+                        suffix = 1
+                        unique = element_id
+                        while unique in self.sed[cls]:
+                            unique = ";".join((element_id, str(suffix)))
+                            suffix += 1
+                        element_id = unique
+                    else:
+                        raise OIDNotUnique(to_unicode(definition))
+
+                self.sed[cls][element_id] = element
+
                 for name in element.names:
-                    self.name2oid[cls][name.lower()] = element.oid
-                self.name2oid[cls][element.oid] = element.oid
+                    if check_uniqueness and name in self.name2oid[cls]:
+                        self.non_unique_names[cls][element_id] = None
+                        raise NameNotUnique(to_unicode(definition))
+                    self.name2oid[cls][name] = element_id
+
+        # Turn dict into list maybe more handy for applications
+        self.non_unique_oids = list(seen_twice)
 
     def ldap_entry(self) -> dict[str, list[str]]:
         """The entry this schema was read from, written out again.
@@ -68,29 +137,48 @@ class SubSchema:
 
     def get_obj(
         self,
-        schema_element_class: type[SchemaElement],
-        name_or_oid: str,
+        se_class: type[SchemaElement],
+        nameoroid: str,
         default: SchemaElement | None = None,
         raise_keyerror: int = 0,
     ) -> SchemaElement | None:
         """What the server said about this name, or about this OID."""
-        oid = self.getoid(schema_element_class, name_or_oid)
+        oid = self.getoid(se_class, nameoroid)
         try:
-            return self.sed[schema_element_class][oid]
+            return self.sed[se_class][oid]
         except KeyError:
             if raise_keyerror:
                 raise KeyError(
-                    f"No {schema_element_class.__name__} named {name_or_oid!r}"
+                    f"No {se_class.__name__} named {nameoroid!r}"
                 ) from None
             return default
 
     def getoid(
-        self, schema_element_class: type[SchemaElement], name_or_oid: str
+        self,
+        se_class: type[SchemaElement],
+        nameoroid: str,
+        raise_keyerror: int = 0,
     ) -> str:
-        """The OID a name stands for, or the OID itself."""
-        return self.name2oid[schema_element_class].get(
-            to_unicode(name_or_oid).lower(), to_unicode(name_or_oid)
-        )
+        """The OID a name stands for, or the OID itself.
+
+        Sub-types are dropped first, so ``cn;lang-en`` is asked about as
+        ``cn``. A name the schema does not describe comes back as it was
+        given unless ``raise_keyerror`` says to make something of it.
+        """
+        stripped = to_unicode(nameoroid).split(";")[0].strip()
+        if stripped in self.sed[se_class]:
+            # name_or_oid is already a registered OID
+            return stripped
+        try:
+            return self.name2oid[se_class][stripped]
+        except KeyError:
+            if raise_keyerror:
+                raise KeyError(
+                    "No registered {}-OID for nameoroid {}".format(
+                        se_class.__name__, repr(stripped)
+                    )
+                ) from None
+            return stripped
 
     def attribute_types(
         self,
@@ -148,9 +236,9 @@ class SubSchema:
                 pending.extend(object_class.sup)
         return seen
 
-    def get_structural_oc(self, object_class_list: Sequence[str]) -> str | None:
+    def get_structural_oc(self, oc_list: Sequence[str]) -> str | None:
         """The one object class of these that says what the entry is."""
-        for name in object_class_list:
+        for name in oc_list:
             object_class = self.get_obj(ObjectClass, name)
             if isinstance(object_class, ObjectClass) and object_class.kind == STRUCTURAL:
                 return object_class.oid

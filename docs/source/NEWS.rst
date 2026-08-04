@@ -72,6 +72,19 @@ Features
   which is why a server's own ``matchingRuleUse`` is no longer dropped.
   ``ldap.schema.Entry`` is an entry that knows its schema, and
   ``split_tokens()``/``extract_tokens()`` are what read a definition.
+- Every error class carries ``errnum``, the result code it stands for,
+  under the name python-ldap gives it, and ``NO_UNIQUE_ENTRY`` is a kind of
+  ``NO_SUCH_OBJECT`` as it is there.
+- ``SubSchema`` checks that a schema does not describe one thing twice, the
+  way python-ldap does: ``check_uniqueness`` decides whether the second
+  definition is kept under a name of its own, replaces the first, or is
+  refused with ``OIDNotUnique``, and a name claimed twice raises
+  ``NameNotUnique``.
+- ``extop_s()`` takes the class to read the answer into, ``result3()`` and
+  ``result4()`` take the classes that read particular controls, ``whoami_s()``
+  takes controls, and the SASL binds take ``sasl_flags`` where python-ldap
+  takes it -- before the identity, so one passed positionally lands where it
+  is meant to.
 - The names python-ldap has that were missing: ``ldap.error``, the ``REQ_*``
   and ``TAG_*`` constants, ``OPT_NAMES_DICT`` and every ``OPT_*`` number,
   ``abandon_ext()``, ``fileno()``, ``sasl_gssapi_bind_s()``,

@@ -26,9 +26,9 @@ DN = list[RDN]
 _TYPE = re.compile(r"[A-Za-z][A-Za-z0-9-]*|[0-9]+(?:\.[0-9]+)+")
 
 
-def escape_dn_chars(value: str) -> str:
+def escape_dn_chars(s: str) -> str:
     """A value with the characters a DN would read escaped."""
-    return _dn.escape(value)
+    return _dn.escape(s)
 
 
 def _unescape(text: str) -> str:
@@ -146,10 +146,10 @@ def explode_rdn(rdn: Value, notypes: int = 0, flags: int = 0) -> list[str]:
     return [dn2str([[ava]]) for ava in parsed]
 
 
-def is_dn(dn: str, flags: int = 0) -> bool:
+def is_dn(s: str, flags: int = 0) -> bool:
     """Whether this is a distinguished name that can be parsed."""
     try:
-        str2dn(dn, flags)
+        str2dn(s, flags)
     except errors.DECODING_ERROR:
         return False
     return True
