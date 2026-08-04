@@ -1,6 +1,53 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+Features
+^^^^^^^^
+
+- ``anyldap.ldap`` is python-ldap's API, awaited. Every method python-ldap
+  spells synchronously is a coroutine here, taking the same arguments and
+  handing back the same values, so code ports by adding ``await``::
+
+      import anyldap.ldap as ldap
+
+      async with ldap.initialize("ldap://localhost") as connection:
+          await connection.simple_bind_s("cn=admin,dc=example,dc=com", "secret")
+          for dn, entry in await connection.search_s(
+              "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=jack)"
+          ):
+              print(dn, entry)
+
+  Like python-ldap, a connection reads its socket only while an operation is
+  being waited for, so it needs no task group and no background task: it can
+  be used from whichever task holds it.
+- The parts of python-ldap that live beside the connection are here under the
+  same names: ``ldap.dn``, ``ldap.filter``, ``ldap.modlist``, ``ldap.cidict``,
+  ``ldap.functions``, ``ldap.sasl``, ``ldap.controls``, ``ldap.schema`` and
+  ``ldap.ldapurl``, along with the error classes, the constants and the
+  ``*_s``, ``*_ext`` and ``result3()``/``result4()`` spellings of each
+  operation.
+- SASL binds are driven by the client: EXTERNAL, PLAIN, CRAM-MD5 and
+  DIGEST-MD5 answer for themselves, and ``ldapi://`` connects to a socket in
+  the filesystem, which is what EXTERNAL is usually asked over.
+- The controls python-ldap encodes with pyasn1 are encoded with the BER
+  library anyldap already has: paged results, pre-read and post-read,
+  server-side sorting, the password policy response, OpenLDAP's no-op search,
+  assertion and matched-values, and the valueless ones.
+- The ``OPT_X_TLS_*`` options build the ``ssl.SSLContext`` a connection is
+  raised with; a context can still be passed to ``initialize()`` instead.
+
+Other changes
+^^^^^^^^^^^^^
+
+- python-ldap's own test suite is ported under ``interop/python_ldap/``, with
+  its licences and a note of what each file came from, and ``tox -e interop``
+  runs this client and python-ldap through the same script against one real
+  OpenLDAP server.
+
+
 0.1.0 (2026-08-02)
 ------------------
 

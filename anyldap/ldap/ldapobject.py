@@ -16,6 +16,7 @@ import ssl
 from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import TracebackType
+from typing import TypeVar
 from urllib.parse import unquote, urlparse
 
 import anyio
@@ -300,6 +301,11 @@ def _tls_context(options: Mapping[int, object]) -> ssl.SSLContext:
     return context
 
 
+# Whatever a connection was opened as, which is what a with statement on it
+# hands back: a subclass stays itself.
+_Connection = TypeVar("_Connection", bound="SimpleLDAPObject")
+
+
 class SimpleLDAPObject:
     """A connection to one LDAP server, with the API of python-ldap's own.
 
@@ -337,7 +343,9 @@ class SimpleLDAPObject:
         self._unbound = False
         self._sasl_mechanism: bytes | None = None
 
-    async def __aenter__(self) -> "SimpleLDAPObject":
+    async def __aenter__(self: _Connection) -> _Connection:
+        # Whatever this was opened as is what the body of the with
+        # statement is handed, so a subclass keeps its own methods.
         return self
 
     async def __aexit__(

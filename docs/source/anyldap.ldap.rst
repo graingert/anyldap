@@ -78,8 +78,12 @@ hands back the ones it carried, read into the classes that know them:
         paged.cookie = cookies[0]
 
 The controls with a class of their own are paged results, pre-read and
-post-read, ManageDSAIT, relax rules, proxied authorization and the
-authorization identity pair; anything else is an ``LDAPControl`` carrying
+post-read, server-side sorting, the password policy response, OpenLDAP's
+no-op search, assertion and matched-values, ManageDSAIT, relax rules,
+proxied authorization and the authorization identity pair; each lives in
+the module python-ldap keeps it in, and the names are re-exported from
+:mod:`anyldap.ldap.controls` as python-ldap re-exports them. Anything else
+is an ``LDAPControl`` carrying
 the bytes as they came, and a control of your own only has to encode and
 decode its own value. A ``(type, criticality, value)`` triple is still
 accepted wherever controls are.
@@ -109,14 +113,28 @@ starts a new one. A context can be passed to ``initialize()`` instead, and
 then it is used as it stands. ``ldaps://`` raises TLS before anything is
 sent; ``start_tls_s()`` raises it on a connection that is already open.
 
+URLs
+----
+
+:mod:`anyldap.ldap.ldapurl` is python-ldap's top-level ``ldapurl`` module:
+an LDAP URL taken apart into what it says, and written back out again::
+
+    from anyldap.ldap.ldapurl import LDAPUrl
+
+    url = LDAPUrl("ldap://localhost/dc=example,dc=com?cn?sub?(cn=jack)")
+    async with ldap.initialize(url.initializeUrl()) as connection:
+        found = await connection.search_s(url.dn, url.scope, url.filterstr)
+
+``who`` and ``cred`` are the bind DN and its password, which a URL carries
+as the ``bindname`` and ``X-BINDPW`` extensions.
+
 What is not here
 ----------------
 
 - **GSSAPI**, which needs Kerberos, and the ``OPT_X_SASL_*`` options that
   configure Cyrus SASL. The SASL option numbers are defined, since a
   mechanism may want to name them, but setting them does nothing.
-- **``ldap.async``/``ldap.asyncsearch`` and ``ldap.syncrepl``**, and
-  ``LDAPUrl``.
+- **``ldap.async``/``ldap.asyncsearch`` and ``ldap.syncrepl``**.
 - **``ReconnectLDAPObject``'s reconnection**: the name is here and is the
   plain object, which does not reconnect behind the caller's back.
 - **Referrals are never chased**: a search hands back the referral URLs as
@@ -225,6 +243,34 @@ anyldap.ldap.controls package
     :show-inheritance:
 
 .. automodule:: anyldap.ldap.controls.readentry
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.controls.sss
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.controls.ppolicy
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.controls.libldap
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+.. automodule:: anyldap.ldap.controls.openldap
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+anyldap.ldap.ldapurl module
+---------------------------
+
+.. automodule:: anyldap.ldap.ldapurl
     :members:
     :undoc-members:
     :show-inheritance:

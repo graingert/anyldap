@@ -16,6 +16,7 @@ import trustme
 
 from anyldap import inmemory, ldap
 from anyldap.ldap import ldapobject
+from anyldap.ldap.controls import openldap
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
 from anyldap.test._anyio_helpers import local_address
@@ -1159,6 +1160,166 @@ def test_a_control_that_cannot_be_read_says_which_one_it_was() -> None:
         )
 
 
+def test_a_control_that_carries_a_filter_writes_the_filter_out() -> None:
+    from anyldap.ldap.controls import libldap
+
+    # RFC 4528: do the operation only if the entry matches.
+    assertion = libldap.AssertionControl()
+    assert assertion.controlType == ldap.CONTROL_ASSERT
+    assert assertion.criticality is True
+    assert assertion.encodeControlValue() == b"\x87\x0bobjectClass"
+
+    # RFC 3876: a sequence of the filters whose values to send back.
+    matched = libldap.MatchedValuesControl(filterstr="(cn=jack)")
+    assert matched.controlType == ldap.CONTROL_VALUESRETURNFILTER
+    assert matched.criticality is False
+    assert matched.encodeControlValue() == b"0\x0c\xa3\n\x04\x02cn\x04\x04jack"
+
+    # The paged results control is here too, under python-ldap's other name.
+    assert libldap.SimplePagedResultsControl is ldap.controls.SimplePagedResultsControl
+
+
+def test_a_sort_control_says_what_to_sort_by_and_how_it_went() -> None:
+    from anyldap.ldap.controls import sss
+
+    # One rule on its own is taken as though it were a list of one.
+    assert sss.SSSRequestControl(ordering_rules="cn").ordering_rules == ["cn"]
+
+    control = sss.SSSRequestControl(
+        criticality=True, ordering_rules=["-uidNumber", "cn:caseIgnoreMatch"]
+    )
+    assert control.controlType == ldap.CONTROL_SORTREQUEST
+    # The same bytes python-ldap writes, except that BER says true with
+    # every bit set where python-ldap writes it as one.
+    assert control.encodeControlValue() == (
+        b"0'"
+        b"0\x0e\x04\tuidNumber\x81\x01\xff"
+        b"0\x15\x04\x02cn\x80\x0fcaseIgnoreMatch"
+    )
+    assert sss.SSSRequestControl().encodeControlValue() == b"0\x00"
+
+    with pytest.raises(ValueError, match="empty attribute"):
+        sss.SSSRequestControl(ordering_rules=["-:caseIgnoreMatch"])
+    with pytest.raises(ValueError, match="syntax for ordering rule"):
+        sss.SSSRequestControl(ordering_rules=["cn:a:b"])
+
+    # The response says how the sort went, and names the attribute that
+    # stopped it when one did.
+    answer = sss.SSSResponseControl()
+    answer.decodeControlValue(pureber.BERSequence([pureber.BEREnumerated(0)]).toWire())
+    assert answer.result == 0
+    assert answer.result_code == "success"
+    assert answer.attribute_type_error is None
+
+    refused = sss.SSSResponseControl()
+    refused.decodeControlValue(
+        pureber.BERSequence(
+            [
+                pureber.BEREnumerated(16),
+                pureber.BEROctetString("cn", tag=pureber.CLASS_CONTEXT | 0x00),
+            ]
+        ).toWire()
+    )
+    assert refused.result_code == "noSuchAttribute"
+    assert refused.attribute_type_error == "cn"
+    assert ldap.controls.KNOWN_RESPONSE_CONTROLS[ldap.CONTROL_SORTRESPONSE] is (
+        sss.SSSResponseControl
+    )
+
+
+def test_the_password_policy_control_reads_what_the_server_warned() -> None:
+    from anyldap.ldap.controls import ppolicy
+
+    control = ppolicy.PasswordPolicyControl()
+    assert control.controlType == ldap.CONTROL_PASSWORDPOLICYREQUEST
+    assert control.encodeControlValue() is None
+
+    # SEQUENCE { warning [0] { graceAuthNsRemaining [1] INTEGER 2 } }
+    control.decodeControlValue(b"\x30\x05\xa0\x03\x81\x01\x02")
+    assert control.graceAuthNsRemaining == 2
+    assert control.timeBeforeExpiration is None
+
+    # SEQUENCE { warning [0] { timeBeforeExpiration [0] INTEGER 50 } }
+    control = ppolicy.PasswordPolicyControl()
+    control.decodeControlValue(b"\x30\x05\xa0\x03\x80\x01\x32")
+    assert control.timeBeforeExpiration == 50
+    assert control.graceAuthNsRemaining is None
+
+    # SEQUENCE { error [1] ENUMERATED 0 }, which is passwordExpired.
+    control = ppolicy.PasswordPolicyControl()
+    control.decodeControlValue(b"\x30\x03\x81\x01\x00")
+    assert control.error == 0
+
+    # A server may warn and refuse in the one answer, and anything else it
+    # sends alongside is passed over.
+    control = ppolicy.PasswordPolicyControl()
+    control.decodeControlValue(b"\x30\x0b\xa0\x03\x81\x01\x02\x81\x01\x01\x82\x01\x07")
+    assert control.graceAuthNsRemaining == 2
+    assert control.error == 1
+
+    assert ldap.controls.KNOWN_RESPONSE_CONTROLS[
+        ldap.CONTROL_PASSWORDPOLICYRESPONSE
+    ] is (ppolicy.PasswordPolicyControl)
+
+
+class Counting(openldap.SearchNoOpMixIn, ldapobject.SimpleLDAPObject):
+    """A connection that can ask how much a search would have found."""
+
+
+def noop_answer(controls: list[pureldap.Control] | None) -> ServerFactory:
+    """A server that answers a search with these controls and nothing else."""
+
+    class NoOpServer(ldapserver.BaseLDAPServer):
+        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
+            code = 0 if controls else 3
+            await self._send_anyio_write(
+                pureldap.LDAPMessage(
+                    pureldap.LDAPSearchResultDone(resultCode=code),
+                    id=msg.id,
+                    controls=controls,
+                ).toWire()
+            )
+
+    return NoOpServer
+
+
+async def test_a_noop_search_counts_what_it_would_have_found() -> None:
+    # SEQUENCE { resultCode, numSearchResults, numSearchContinuations }
+    counted = pureber.BERSequence(
+        [pureber.BEREnumerated(0), pureber.BERInteger(3), pureber.BERInteger(1)]
+    ).toWire()
+    factory = noop_answer(
+        [(openldap.SEARCH_NOOP_OID, 0, counted), (b"1.2.3", 0, b"other")]
+    )
+    async with serving(factory) as server:
+        async with Counting(server.uri) as connection:
+            assert await connection.noop_search_st("dc=example,dc=com") == (3, 1)
+
+    # A server that says nothing about it leaves the numbers unknown.
+    async with serving(noop_answer([])) as server:
+        async with Counting(server.uri) as connection:
+            with pytest.raises(ldap.TIMELIMIT_EXCEEDED):
+                await connection.noop_search_st("dc=example,dc=com")
+
+    async with serving(noop_answer([(b"1.2.3", 0, b"other")])) as server:
+        async with Counting(server.uri) as connection:
+            assert await connection.noop_search_st("dc=example,dc=com") == (None, None)
+
+
+def test_a_noop_control_reads_the_numbers_the_server_sent() -> None:
+    control = openldap.SearchNoOpControl(criticality=True)
+    assert control.criticality is True
+    assert control.encodeControlValue() is None
+    control.decodeControlValue(
+        pureber.BERSequence(
+            [pureber.BEREnumerated(0), pureber.BERInteger(7), pureber.BERInteger(2)]
+        ).toWire()
+    )
+    assert control.resultCode == 0
+    assert control.numSearchResults == 7
+    assert control.numSearchContinuations == 2
+
+
 # TLS, as the options describe it.
 
 
@@ -1736,3 +1897,181 @@ def test_the_object_python_ldap_hands_back_is_the_one_named_here() -> None:
     assert ldap.LDAPObject is ldapobject.SimpleLDAPObject
     assert ldap.ReconnectLDAPObject is ldapobject.SimpleLDAPObject
     assert isinstance(ldap.initialize("ldap://x"), ldap.SimpleLDAPObject)
+
+
+# LDAP URLs, as RFC 4516 writes them.
+
+
+def test_a_url_says_where_a_server_is_and_what_to_ask_it() -> None:
+    url = ldap.ldapurl.LDAPUrl(
+        "ldap://localhost:1389/dc=example,dc=com?cn,sn?sub?"
+        + quote("(objectClass=*)")
+        + "?!bindname="
+        + quote("cn=admin,dc=example,dc=com")
+        + ",X-BINDPW=secret"
+    )
+    assert url.urlscheme == "ldap"
+    assert url.hostport == "localhost:1389"
+    assert url.dn == "dc=example,dc=com"
+    assert url.attrs == ["cn", "sn"]
+    assert url.scope == ldap.ldapurl.LDAP_SCOPE_SUBTREE
+    assert url.filterstr == "(objectClass=*)"
+    assert url.who == "cn=admin,dc=example,dc=com"
+    assert url.cred == "secret"
+
+    # And it writes back out to something that says the same thing again.
+    assert ldap.ldapurl.LDAPUrl(url.unparse()) == url
+    assert str(url) == url.unparse()
+    assert "LDAPUrl" in repr(url)
+    assert url != ldap.ldapurl.LDAPUrl("ldap:///")
+    assert url != "not a url"
+    assert (url == "not a url") is False
+
+
+def test_what_is_and_is_not_a_url() -> None:
+    assert ldap.ldapurl.isLDAPUrl("LDAPI://%2Frun%2Fldap.sock")
+    assert not ldap.ldapurl.isLDAPUrl(" ldap://space.example")
+    assert ldap.ldapurl.ldapUrlEscape("dc=x,dc=y/z") == "dc%3Dx%2Cdc%3Dy%2Fz"
+    with pytest.raises(ValueError, match="does not seem to be a LDAP URL"):
+        ldap.ldapurl.LDAPUrl("http://example.com")
+    with pytest.raises(ValueError, match="Invalid search scope"):
+        ldap.ldapurl.LDAPUrl("ldap:///??nowhere")
+
+
+def test_a_url_is_read_however_much_of_it_is_written() -> None:
+    LDAPUrl = ldap.ldapurl.LDAPUrl
+
+    # Nothing after the host at all.
+    bare = LDAPUrl("ldap://localhost")
+    assert (bare.hostport, bare.dn, bare.attrs, bare.scope) == (
+        "localhost",
+        "",
+        None,
+        None,
+    )
+    assert bare.filterstr is None
+    assert bare.extensions is not None and len(bare.extensions) == 0
+
+    # A question mark before any slash leaves the DN empty.
+    assert LDAPUrl("ldap://localhost?cn").attrs == ["cn"]
+    # An empty filter field is no filter at all.
+    assert LDAPUrl("ldap:///???").filterstr is None
+    # An extensions field that is there and says nothing is not the same as
+    # a URL that has no extensions field.
+    assert LDAPUrl("ldap:///????").extensions is None
+    assert LDAPUrl("ldap:///????").who is None
+
+
+def test_a_url_is_written_out_the_way_python_ldap_writes_it() -> None:
+    LDAPUrl = ldap.ldapurl.LDAPUrl
+
+    assert LDAPUrl("ldap://localhost/dc=example,dc=com").unparse() == (
+        "ldap://localhost/dc%3Dexample%2Cdc%3Dcom???"
+    )
+    assert LDAPUrl(
+        "ldap://localhost/dc=example,dc=com?cn?one?(cn=jack)?bindname=cn=root"
+    ).unparse() == (
+        "ldap://localhost/dc%3Dexample%2Cdc%3Dcom?cn?one?%28cn%3Djack%29"
+        "?bindname=cn%3Droot"
+    )
+
+    # The socket an ldapi URL names has slashes, so it is escaped.
+    socket = LDAPUrl(urlscheme="ldapi", hostport="/tmp/ldapi")
+    assert socket.initializeUrl() == "ldapi://%2Ftmp%2Fldapi"
+    assert socket.unparse() == "ldapi://%2Ftmp%2Fldapi/???"
+    assert LDAPUrl("ldap://localhost").initializeUrl() == "ldap://localhost"
+
+    assert LDAPUrl("ldap:///dc=x").htmlHREF() == (
+        '<a href="ldap:///dc%3Dx???">ldap:///dc%3Dx???</a>'
+    )
+    assert LDAPUrl("ldap:///dc=x").htmlHREF(
+        urlPrefix="/go?", hrefText="there", hrefTarget="_blank"
+    ) == '<a target="_blank" href="/go?ldap:///dc%3Dx???">there</a>'
+
+
+def test_what_a_url_did_not_say_is_filled_in_from_the_defaults() -> None:
+    url = ldap.ldapurl.LDAPUrl("ldap://localhost/dc=example,dc=com")
+    url.applyDefaults({"scope": ldap.ldapurl.LDAP_SCOPE_BASE, "hostport": "other"})
+    assert url.scope == ldap.ldapurl.LDAP_SCOPE_BASE
+    # What the URL did say is left alone.
+    assert url.hostport == "localhost"
+
+
+def test_the_bind_dn_a_url_carries_is_an_extension_underneath() -> None:
+    url = ldap.ldapurl.LDAPUrl("ldap:///", who="cn=root", cred="secret")
+    assert url.extensions is not None
+    assert url.extensions["bindname"].exvalue == "cn=root"
+    assert url.who == "cn=root"
+
+    url.who = None
+    assert url.who is None
+    assert "bindname" not in url.extensions
+    # Deleting one that was never there is quiet, as is deleting from a URL
+    # whose extensions field was empty.
+    del url.who
+    empty = ldap.ldapurl.LDAPUrl("ldap:///????")
+    del empty.who
+    assert empty.who is None
+    # Giving one to a URL that said it had none starts the field off.
+    empty.who = "cn=root"
+    assert empty.who == "cn=root"
+
+    # An extension the URL names with no value at all answers with none.
+    assert ldap.ldapurl.LDAPUrl("ldap:///????bindname").who is None
+    with pytest.raises(AttributeError, match="no attribute"):
+        url.nonesuch
+
+    # Anything that is not one of those is an ordinary attribute.
+    url.hostport = "localhost"
+    assert url.hostport == "localhost"
+    del url.hostport
+    assert not hasattr(url, "hostport")
+
+
+def test_the_extensions_of_a_url_are_a_mapping_of_their_own() -> None:
+    LDAPUrlExtension = ldap.ldapurl.LDAPUrlExtension
+    LDAPUrlExtensions = ldap.ldapurl.LDAPUrlExtensions
+
+    critical = LDAPUrlExtension("!bindname=cn=root")
+    assert (critical.critical, critical.extype, critical.exvalue) == (
+        1,
+        "bindname",
+        "cn=root",
+    )
+    assert critical.unparse() == "!bindname=cn%3Droot"
+    assert str(critical) == critical.unparse()
+    assert "LDAPUrlExtension" in repr(critical)
+
+    # An extension with no value at all, and one parsed from nothing.
+    assert LDAPUrlExtension("startTLS").unparse() == "startTLS"
+    nothing = LDAPUrlExtension("  ")
+    assert (nothing.extype, nothing.exvalue) == (None, None)
+
+    assert critical == LDAPUrlExtension("!bindname=cn=root")
+    assert critical != LDAPUrlExtension("bindname=cn=root")
+    assert critical != "not an extension"
+    assert (critical == "not an extension") is False
+
+    extensions = LDAPUrlExtensions({"bindname": critical})
+    assert extensions["bindname"] is critical
+    assert list(extensions) == ["bindname"]
+    assert len(extensions) == 1
+    assert str(extensions) == "!bindname=cn%3Droot"
+    assert extensions.unparse() == "!bindname=cn%3Droot"
+    assert "LDAPUrlExtensions" in repr(extensions)
+    assert extensions == LDAPUrlExtensions({"bindname": critical})
+    assert extensions != LDAPUrlExtensions()
+    assert extensions != {"bindname": critical}
+    assert (extensions == {"bindname": critical}) is False
+
+    # It is keyed by the type of what is put in it, and says so otherwise.
+    with pytest.raises(TypeError, match="must be LDAPUrlExtension"):
+        extensions["bindname"] = "cn=root"  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="does not match extension type"):
+        extensions["other"] = critical
+
+    del extensions["bindname"]
+    assert len(extensions) == 0
+    # An empty extension between two commas is passed over.
+    extensions.parse("bindname=cn=root,,X-BINDPW=secret")
+    assert sorted(extensions) == ["X-BINDPW", "bindname"]

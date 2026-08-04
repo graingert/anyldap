@@ -126,7 +126,12 @@ def decode_controls(
         if cls is None:
             control = LDAPControl(oid, bool(criticality))
         else:
-            control = cls(oid, bool(criticality))
+            # A registered control is asked for without arguments and then
+            # told what it is, which is what python-ldap does: not every
+            # response control takes its own OID.
+            control = cls()
+            control.controlType = oid
+            control.criticality = bool(criticality)
         if controlValue is not None:
             try:
                 control.decodeControlValue(to_bytes(controlValue))
@@ -159,8 +164,20 @@ def ResponseControlTuples(
     return list(ldapControls or ())
 
 
+from anyldap.ldap.controls.libldap import (  # noqa: E402
+    AssertionControl as AssertionControl,
+)
+from anyldap.ldap.controls.libldap import (  # noqa: E402
+    MatchedValuesControl as MatchedValuesControl,
+)
+from anyldap.ldap.controls.openldap import (  # noqa: E402
+    SearchNoOpControl as SearchNoOpControl,
+)
 from anyldap.ldap.controls.pagedresults import (  # noqa: E402
     SimplePagedResultsControl as SimplePagedResultsControl,
+)
+from anyldap.ldap.controls.ppolicy import (  # noqa: E402
+    PasswordPolicyControl as PasswordPolicyControl,
 )
 from anyldap.ldap.controls.readentry import (  # noqa: E402
     PostReadControl as PostReadControl,
@@ -191,4 +208,10 @@ from anyldap.ldap.controls.simple import (  # noqa: E402
 )
 from anyldap.ldap.controls.simple import (  # noqa: E402
     ValueLessRequestControl as ValueLessRequestControl,
+)
+from anyldap.ldap.controls.sss import (  # noqa: E402
+    SSSRequestControl as SSSRequestControl,
+)
+from anyldap.ldap.controls.sss import (  # noqa: E402
+    SSSResponseControl as SSSResponseControl,
 )

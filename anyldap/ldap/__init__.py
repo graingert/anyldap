@@ -29,6 +29,7 @@ from anyldap.ldap import controls as controls
 from anyldap.ldap import dn as dn
 from anyldap.ldap import filter as filter
 from anyldap.ldap import functions as functions
+from anyldap.ldap import ldapurl as ldapurl
 from anyldap.ldap import modlist as modlist
 from anyldap.ldap import sasl as sasl
 from anyldap.ldap import schema as schema

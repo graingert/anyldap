@@ -12,18 +12,24 @@ Provenance
 Ported from python-ldap 3.4.7 (the ``Tests/`` directory of the source
 distribution), taken from https://pypi.org/project/python-ldap/.
 
-==============================  ===============================
+==============================  =========================================
 This directory                  python-ldap
-==============================  ===============================
+==============================  =========================================
 ``test_dn.py``                  ``Tests/t_ldap_dn.py``
 ``test_filter.py``              ``Tests/t_ldap_filter.py``
 ``test_functions.py``           ``Tests/t_ldap_functions.py``
 ``test_modlist.py``             ``Tests/t_ldap_modlist.py``
 ``test_cidict.py``              ``Tests/t_cidict.py``
+``test_ldapurl.py``             ``Tests/t_ldapurl.py``
+``test_sasl.py``                ``Tests/t_ldap_sasl.py``
+``test_controls.py``            ``Tests/t_ldap_controls_libldap.py``,
+                                ``Tests/t_ldap_controls_readentry.py``,
+                                ``Tests/t_ldap_controls_ppolicy.py``,
+                                ``Tests/t_ldap_controls_sss.py``
 ``test_ldapobject.py``          ``Tests/t_ldapobject.py``,
                                 ``Tests/t_bind.py``,
                                 ``Tests/t_edit.py``
-==============================  ===============================
+==============================  =========================================
 
 Licence
 -------
@@ -59,10 +65,15 @@ What was not ported, and why
 - **``ldap.cidict.strlist_*`` and ``cidict.data``**, which python-ldap has
   deprecated, and ``t_cidict.test_strlist_deprecated`` with them.
 - **Anything needing a module this does not have**: ``ldap.asyncsearch``,
-  ``ldap.syncrepl``, ``LDAPUrl``, and the LDIF module python-ldap ships
-  (anyldap has its own, tested in ``anyldap/test``). ``ldap.schema``,
-  ``ldap.controls`` and ``ldap.sasl`` are here; the interop tests next door
-  check them against python-ldap's own.
+  ``ldap.syncrepl``, and the LDIF module python-ldap ships (anyldap has its
+  own, tested in ``anyldap/test``). ``ldap.schema``, ``ldap.controls``,
+  ``ldap.sasl`` and ``ldapurl`` are here; the interop tests next door check
+  them against python-ldap's own.
+- **``t_ldapurl.test_bad_urls``** is marked as failing upstream too: the URLs
+  it lists ought to be rejected and are not. It is ported with the same
+  expectation, so the ones python-ldap does reject stay rejected here.
+- **The GSSAPI parts of ``t_ldap_sasl.py``**, which need a Kerberos realm to
+  bind against.
 - **``ReconnectLDAPObject``'s reconnection tests** and the ``fileno``
   variant: this client's ``ReconnectLDAPObject`` is the plain object, which
   does not reconnect behind the caller's back.
