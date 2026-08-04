@@ -126,5 +126,6 @@ Dependencies:
 
 - `AnyIO <https://pypi.org/project/anyio/>`_ for asynchronous networking
 - `dnspython <https://pypi.org/project/dnspython/>`_ for LDAP service discovery
+- `httpx2 <https://pypi.org/project/httpx2/>`_ for fetching a schema over HTTP
 - `pyparsing <https://pypi.org/project/pyparsing/>`_ for LDAP filters
 - `zope.interface <https://pypi.org/project/zope.interface/>`_

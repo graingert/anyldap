@@ -126,10 +126,9 @@ refused. python-ldap hands the address to :func:`urllib.request.urlopen`,
 which fetches whatever scheme it happens to support -- so an address that
 was meant to name a file can turn out to be a request, and one that was
 meant to be a request can turn out to read a file. An ``http:`` address is
-fetched with `httpx2 <https://pypi.org/project/httpx2/>`_, which is not a
-dependency: install ``anyldap[http]`` for it, and it says so plainly if it
-is asked for without it. The same two rules apply to the URLs
-:mod:`anyldap.ldap.ldif` fetches when it is told to fetch any.
+fetched with `httpx2 <https://pypi.org/project/httpx2/>`_. The same two
+rules apply to the URLs :mod:`anyldap.ldap.ldif` fetches when it is told to
+fetch any.
 
 A definition may name itself rather than be numbered
 (``( nsEncryptionConfig-oid NAME 'nsEncryptionConfig' ... )``), which RFC
