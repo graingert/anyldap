@@ -608,7 +608,8 @@ class LDIFRecordList(LDIFParser):
     Collect all records of a LDIF file. It can be a memory hog!
 
     Records are stored in :attr:`.all_records` as a single list
-    of 2-tuples (dn, entry), after calling :meth:`.parse`.
+    of 2-tuples (dn, entry), after calling
+    :meth:`~anyldap.ldap.ldif.LDIFParser.parse`.
     """
 
     def __init__(
