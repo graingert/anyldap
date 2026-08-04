@@ -38,6 +38,8 @@ classifiers = [
 urls = { Homepage = "https://github.com/graingert/anyldap" }
 
 [project.optional-dependencies]
+# Fetching a schema, or an LDIF value, over HTTP. Nothing else needs it.
+http = ["httpx2"]
 docs = [
     "alabaster~=0.7.16; python_version == '3.10'",
     "alabaster~=1.0; python_version >= '3.11'",
@@ -101,6 +103,12 @@ plugins = ["mypy_zope:plugin"]
 # not a dependency: it is imported inside the call that needs it.
 [[tool.mypy.overrides]]
 module = "gssapi"
+ignore_missing_imports = true
+
+# httpx2 is what a schema fetched over HTTP is fetched with, and is not a
+# dependency either: it is imported inside the call that needs it.
+[[tool.mypy.overrides]]
+module = "httpx2"
 ignore_missing_imports = true
 
 [tool.coverage.run]
@@ -175,6 +183,7 @@ deps =
     exceptiongroup
     outcome
     pyparsing
+    httpx2
     pytest
     pytest-cov
     trustme

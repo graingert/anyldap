@@ -121,6 +121,16 @@ without a server to ask::
 
     dn, subschema = await ldap.schema.urlfetch("file:///tmp/subschema.ldif")
 
+Only ``file:``, ``http:`` and ``https:`` are read, and anything else is
+refused. python-ldap hands the address to :func:`urllib.request.urlopen`,
+which fetches whatever scheme it happens to support -- so an address that
+was meant to name a file can turn out to be a request, and one that was
+meant to be a request can turn out to read a file. An ``http:`` address is
+fetched with `httpx2 <https://pypi.org/project/httpx2/>`_, which is not a
+dependency: install ``anyldap[http]`` for it, and it says so plainly if it
+is asked for without it. The same two rules apply to the URLs
+:mod:`anyldap.ldap.ldif` fetches when it is told to fetch any.
+
 A definition may name itself rather than be numbered
 (``( nsEncryptionConfig-oid NAME 'nsEncryptionConfig' ... )``), which RFC
 4512 section 1.4 allows and 389-ds publishes a great many of.
@@ -172,6 +182,11 @@ stands; ``LDIFParser`` reads them, and a class of your own overrides
 ``handle()`` or ``handle_modify()``. ``LDIFRecordList`` collects them all,
 and ``LDIFCopy`` reads and writes at once. ``CreateLDIF()`` and
 ``ParseLDIF()``, which python-ldap has deprecated, are not here.
+
+A value an LDIF names by URL (``jpegPhoto:< file:///…``) is fetched only
+when ``process_url_schemes`` says which schemes to fetch, and is left unread
+otherwise -- which is what python-ldap does too. Of the schemes that can be
+asked for, ``file``, ``http`` and ``https`` are the ones that are read.
 
 Following referrals
 -------------------

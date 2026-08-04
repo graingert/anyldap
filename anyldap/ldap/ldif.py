@@ -26,7 +26,8 @@ from base64 import b64decode, b64encode
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Protocol, cast
 from urllib.parse import urlparse
-from urllib.request import urlopen
+
+from anyldap.ldap import _fetch
 
 __all__ = [
     "CHANGE_TYPES",
@@ -284,9 +285,11 @@ class LDIFParser:
             If non-zero specifies the maximum number of entries to be
             read from f.
         process_url_schemes
-            List containing strings with URLs schemes to process with urllib.
+            List containing strings with URLs schemes to process.
             An empty list turns off all URL processing and the attribute
-            is ignored completely.
+            is ignored completely. Only ``file``, ``http`` and ``https``
+            can be fetched; python-ldap hands the URL to urllib, which
+            fetches whatever it happens to support.
         line_sep
             String used as line separator
         """
@@ -393,8 +396,7 @@ class LDIFParser:
             if self._process_url_schemes:
                 u = urlparse(url)
                 if u[0] in self._process_url_schemes:
-                    with urlopen(url) as fd:
-                        attr_value = fd.read()
+                    attr_value = _fetch.read(url)
         else:
             # All values should be valid ascii; we support UTF-8 as a
             # non-official, backwards compatibility layer.

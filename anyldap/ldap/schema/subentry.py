@@ -1,13 +1,11 @@
 """``ldap.schema.subentry``: the schema a server publishes, read into objects."""
 
+import io
 from collections.abc import Iterable, Mapping, Sequence
 from typing import cast
-from urllib.request import urlopen
-
-import anyio.to_thread
 
 from anyldap._encoder import to_unicode
-from anyldap.ldap import cidict
+from anyldap.ldap import _fetch, cidict
 from anyldap.ldap.schema.models import (
     NOT_HUMAN_READABLE_LDAP_SYNTAXES as NOT_HUMAN_READABLE_LDAP_SYNTAXES,
 )
@@ -257,17 +255,12 @@ def _attribute_name(attribute: str) -> str:
     return to_unicode(attribute)
 
 
-def _read_ldif(uri: str) -> tuple[str | None, Mapping[str, list[bytes]]]:
-    """The first record of an LDIF file, wherever the address points.
-
-    Blocking work, so it is what a worker thread is handed rather than
-    something a task does while it is meant to be answering.
-    """
+def _read_ldif(read: bytes) -> tuple[str | None, Mapping[str, list[bytes]]]:
+    """The first record of some LDIF."""
     from anyldap.ldap import ldif
 
-    with urlopen(uri) as source:  # noqa: S310 - the address is the caller's
-        records = ldif.LDIFRecordList(source, max_entries=1)
-        records.parse()
+    records = ldif.LDIFRecordList(io.BytesIO(read), max_entries=1)
+    records.parse()
     dn, entry = records.all_records[0]
     # Only a value the LDIF names by URL is ever None, and none are fetched.
     return dn, cast(Mapping[str, list[bytes]], entry)
@@ -281,7 +274,9 @@ async def urlfetch(uri: str, trace_level: int = 0) -> tuple[str | None, "SubSche
     then for the schema itself, and closed again -- which is what makes this
     different from ``read_schema_s()`` on a connection that is already open.
     Anything else is the address of an LDIF file, and its first record is
-    the schema, which is what python-ldap makes of one too.
+    the schema, which is what python-ldap makes of one too. Unlike
+    python-ldap's, which hands the address to ``urlopen``, only ``file:``,
+    ``http:`` and ``https:`` are read.
     """
     from anyldap.ldap import cidict, ldapobject
     from anyldap.ldap.ldapurl import LDAPUrl
@@ -289,9 +284,7 @@ async def urlfetch(uri: str, trace_level: int = 0) -> tuple[str | None, "SubSche
     uri = uri.strip()
     published: Mapping[str, list[bytes]] | None
     if not uri.startswith(("ldap:", "ldaps:", "ldapi:")):
-        subschemasubentry_dn, published = await anyio.to_thread.run_sync(
-            _read_ldif, uri
-        )
+        subschemasubentry_dn, published = _read_ldif(await _fetch.read_async(uri))
     else:
         url = LDAPUrl(uri)
         async with ldapobject.SimpleLDAPObject(

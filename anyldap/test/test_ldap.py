@@ -3886,6 +3886,79 @@ async def test_the_schema_can_be_fetched_from_an_ldif_file(
     assert sub.getoid(ldap.schema.AttributeType, "cn") == "2.5.4.3"
 
 
+@asynccontextmanager
+async def publishing(body: bytes) -> AsyncGenerator[str, None]:
+    """An HTTP server answering one thing, for as long as the block runs.
+
+    Enough of HTTP/1.1 to be fetched from and no more: the point is that
+    what fetches it is a real client over a real socket.
+    """
+
+    async def handle(stream: anyio.abc.ByteStream) -> None:
+        async with stream:
+            while b"\r\n\r\n" not in await stream.receive():
+                pass  # pragma: no cover - the request arrives in one piece
+            await stream.send(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
+                b"Content-Length: %d\r\nConnection: close\r\n\r\n%s"
+                % (len(body), body)
+            )
+
+    listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
+    host, port = local_address(listener)
+    async with listener, anyio.create_task_group() as task_group:
+        task_group.start_soon(listener.serve, handle)
+        try:
+            yield f"http://{host}:{port}/subschema.ldif"
+        finally:
+            task_group.cancel_scope.cancel()
+
+
+async def test_the_schema_can_be_fetched_over_http() -> None:
+    """An address that is not a file is fetched, with httpx2."""
+    async with publishing(
+        b"dn: cn=Subschema\n"
+        b"objectClasses: ( 2.5.6.6 NAME 'person' SUP top STRUCTURAL"
+        b" MUST ( sn $ cn ) )\n\n"
+    ) as uri:
+        dn, sub = await ldap.schema.urlfetch(uri)
+    assert dn == "cn=Subschema"
+    assert sub is not None
+    assert sub.listall(ldap.schema.ObjectClass) == ["2.5.6.6"]
+
+
+async def test_an_ldif_value_can_be_fetched_over_http() -> None:
+    """The parser is not a coroutine, so fetching from it blocks the caller.
+
+    Which is why the whole parse is what a worker thread is handed here:
+    the server answering it is a task in this one.
+    """
+    async with publishing(b"from the network") as uri:
+        text = "dn: dc=x\na:< %s\n\n" % uri
+        records = await anyio.to_thread.run_sync(
+            lambda: parsed(text, process_url_schemes=["http"])
+        )
+    assert records == [("dc=x", {"a": [b"from the network"]})]
+
+
+async def test_only_the_schemes_that_are_read_here_are_read() -> None:
+    """python-ldap hands the address to urllib, which fetches far more."""
+    for uri in ("ftp://example.com/schema.ldif", "gopher://example.com", "nonsense"):
+        with pytest.raises(ValueError, match="not a scheme that is read here"):
+            await ldap.schema.urlfetch(uri)
+    for uri in ("ftp://example.com/value", "gopher://example.com"):
+        with pytest.raises(ValueError, match="not a scheme that is read here"):
+            parsed(
+                "dn: dc=x\na:< %s\n\n" % uri,
+                process_url_schemes=[uri.split(":")[0]],
+            )
+    # A URL whose scheme was not asked for is not fetched at all, and the
+    # value is left unread rather than refused.
+    assert parsed("dn: dc=x\na:< ftp://example.com/value\n\n") == [
+        ("dc=x", {"a": [None]})
+    ]
+
+
 async def test_a_server_that_says_where_its_schema_is_not_answers_with_none() -> None:
     class Bare(ldapserver.BaseLDAPServer):
         """A server whose root DSE names no subschema subentry."""
