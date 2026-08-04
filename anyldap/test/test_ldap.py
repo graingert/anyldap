@@ -1303,6 +1303,8 @@ async def test_a_noop_search_counts_what_it_would_have_found() -> None:
         async with Counting(server.uri) as connection:
             with pytest.raises(ldap.TIMELIMIT_EXCEEDED):
                 await connection.noop_search_st("dc=example,dc=com")
+            # The search was abandoned on the way out, and is forgotten.
+            assert connection._pending == {}
 
     async with serving(noop_answer([(b"1.2.3", 0, b"other")])) as server:
         async with Counting(server.uri) as connection:
@@ -1443,9 +1445,10 @@ async def test_the_options_raise_tls_on_a_real_connection() -> None:
             connection.set_option(ldap.OPT_X_TLS_CACERTFILE, str(ca_file))
             async with connection:
                 await connection.simple_bind_s()
-                assert await connection.search_s(
+                found = await connection.search_s(
                     "dc=example,dc=com", ldap.SCOPE_ONELEVEL
                 )
+            assert found
 
 
 # The schema a server publishes.
@@ -2520,6 +2523,8 @@ async def test_every_operation_on_a_reconnecting_connection_is_answered() -> Non
                 )
             with pytest.raises(ldap.AUTH_METHOD_NOT_SUPPORTED):
                 await connection.sasl_bind_s("", "NOTHING", None)
+            # A bind the server refused leaves the connection fit to use.
+            assert await connection.search_ext_s(JACK, ldap.SCOPE_BASE)
 
 
 async def test_a_forced_reconnect_says_goodbye_to_the_connection_it_replaces() -> None:
@@ -3396,7 +3401,9 @@ async def test_an_operation_can_be_stopped_and_collected_by_message_id() -> None
         await connection.abandon_ext(msgid)
         assert msgid not in connection._pending
 
-        assert connection.fileno() == connection._stream.extra(
+        stream = connection._stream
+        assert stream is not None
+        assert connection.fileno() == stream.extra(
             anyio.abc.SocketAttribute.raw_socket
         ).fileno()
 
@@ -3655,7 +3662,8 @@ async def test_the_socket_a_connection_names_is_the_one_under_the_tls() -> None:
             server, f"ldaps://localhost:{server.port}", client_context
         ) as connection:
             await connection.simple_bind_s()
-            assert isinstance(connection._stream, anyio.streams.tls.TLSStream)
-            assert connection.fileno() == connection._stream.extra(
+            stream = connection._stream
+            assert isinstance(stream, anyio.streams.tls.TLSStream)
+            assert connection.fileno() == stream.extra(
                 anyio.abc.SocketAttribute.raw_socket
             ).fileno()
