@@ -47,10 +47,10 @@ to send for as long as the server says the bind is still in progress:
         print(await connection.whoami_s())
 
 The mechanisms in :mod:`anyldap.ldap.sasl` answer for themselves rather than
-through Cyrus SASL: ``external``, ``plain``, ``cram_md5`` and
-``digest_md5``. GSSAPI needs Kerberos and is not among them. A mechanism of
-your own works anywhere these do, as long as it has a ``mech`` and a
-``process()`` that answers a challenge.
+through Cyrus SASL: ``external``, ``plain``, ``cram_md5``, ``digest_md5``,
+and ``gssapi`` if the ``gssapi`` package is installed, which is not a
+dependency. A mechanism of your own works anywhere these do, as long as it
+has a ``mech`` and a ``process()`` that answers a challenge.
 
 Controls
 --------
@@ -165,10 +165,29 @@ Unlike python-ldap's, it does not open the connection before the first
 operation: nothing is sent until something is awaited, so there is nothing
 to reconnect until an operation has failed.
 
+Keeping a copy
+--------------
+
+:mod:`anyldap.ldap.syncrepl` is RFC 4533, which is how a copy of what a
+server holds is kept up to date. A connection mixes in
+:class:`~anyldap.ldap.syncrepl.SyncreplConsumer`, overrides the
+``syncrepl_*`` methods to keep whatever it is keeping, and polls::
+
+    class Consumer(ldap.syncrepl.SyncreplConsumer, ldap.SimpleLDAPObject):
+        def syncrepl_entry(self, dn, attrs, uuid):
+            self.entries[uuid] = (dn, attrs)
+
+    msgid = await connection.syncrepl_search(base, ldap.SCOPE_SUBTREE)
+    while await connection.syncrepl_poll(msgid=msgid):
+        pass
+
+``refreshOnly`` stops once the copy has caught up and ``refreshAndPersist``
+stays open and keeps being told. ``cancel_s()`` stops a search that is
+staying open, and unlike ``abandon()`` the server answers to say it has.
+
 What is not here
 ----------------
 
-- **``ldap.syncrepl``**, which needs the intermediate responses of RFC 4533.
 - **GSSAPI without the ``gssapi`` package**: the mechanism is
   :class:`anyldap.ldap.sasl.gssapi`, and it says so if it is asked for
   without Kerberos to hand. The SASL security layer it negotiates is always
@@ -318,6 +337,14 @@ anyldap.ldap.asyncsearch module
 -------------------------------
 
 .. automodule:: anyldap.ldap.asyncsearch
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+anyldap.ldap.syncrepl module
+----------------------------
+
+.. automodule:: anyldap.ldap.syncrepl
     :members:
     :undoc-members:
     :show-inheritance:

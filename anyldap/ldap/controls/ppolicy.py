@@ -5,6 +5,7 @@ how long the password has left, how many grace logins remain, and what is
 wrong with it if the operation was refused because of it.
 """
 
+from anyldap.ldap._ber import elements
 from anyldap.ldap.constants import (
     CONTROL_PASSWORDPOLICYREQUEST,
     CONTROL_PASSWORDPOLICYRESPONSE,
@@ -21,23 +22,6 @@ _GRACE_AUTHNS_REMAINING = pureber.CLASS_CONTEXT | 0x01
 _ERROR = pureber.CLASS_CONTEXT | 0x01
 
 
-def _parts(data: bytes) -> list[tuple[int, bytes]]:
-    """The tag and content of each element written one after another.
-
-    Read by hand rather than through a decoder context: which warning the
-    server sent is told by the tag alone, and a context looks a tag up
-    without the bit that says it is constructed.
-    """
-    elements = []
-    while data:
-        tag = data[0]
-        length, lengthlength = pureber.berDecodeLength(data, offset=1)
-        start = 1 + lengthlength
-        elements.append((tag, data[start : start + length]))
-        data = data[start + length :]
-    return elements
-
-
 class PasswordPolicyControl(ValueLessRequestControl, ResponseControl):
     """Ask about the password policy, and read what the server said."""
 
@@ -52,11 +36,11 @@ class PasswordPolicyControl(ValueLessRequestControl, ResponseControl):
         self.error: int | None = None
 
     def decodeControlValue(self, encodedControlValue: bytes) -> None:
-        [(_, content)] = _parts(encodedControlValue)
-        for tag, value in _parts(content):
+        [(_, content)] = elements(encodedControlValue)
+        for tag, value in elements(content):
             if tag == _WARNING:
                 # The warning is a CHOICE, so it says one thing or the other.
-                [(warning, number)] = _parts(value)
+                [(warning, number)] = elements(value)
                 if warning == _TIME_BEFORE_EXPIRATION:
                     self.timeBeforeExpiration = pureber.ber2int(number)
                 else:

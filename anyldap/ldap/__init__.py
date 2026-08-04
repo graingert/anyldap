@@ -23,7 +23,8 @@ answer for themselves rather than through Cyrus SASL: EXTERNAL, PLAIN,
 CRAM-MD5, DIGEST-MD5, and GSSAPI if the ``gssapi`` package is installed. A
 mechanism of your own works if it answers ``process()`` the same way.
 
-``ldap.asyncsearch`` reads a long search result by result, and
+``ldap.asyncsearch`` reads a long search result by result,
+``ldap.syncrepl`` keeps a copy of what a server holds, and
 ``ReconnectLDAPObject`` opens a connection again when the server goes away
 and tries the operation once more.
 """
@@ -38,6 +39,7 @@ from anyldap.ldap import ldapurl as ldapurl
 from anyldap.ldap import modlist as modlist
 from anyldap.ldap import sasl as sasl
 from anyldap.ldap import schema as schema
+from anyldap.ldap import syncrepl as syncrepl
 from anyldap.ldap.constants import (
     AUTH_NONE,
     AUTH_SIMPLE,
@@ -125,6 +127,7 @@ from anyldap.ldap.constants import (
     RES_COMPARE,
     RES_DELETE,
     RES_EXTENDED,
+    RES_INTERMEDIATE,
     RES_MODIFY,
     RES_MODRDN,
     RES_SEARCH_ENTRY,
@@ -390,6 +393,7 @@ __all__ = [
     "RES_COMPARE",
     "RES_DELETE",
     "RES_EXTENDED",
+    "RES_INTERMEDIATE",
     "RES_MODIFY",
     "RES_MODRDN",
     "RES_SEARCH_ENTRY",
@@ -456,4 +460,5 @@ __all__ = [
     "str2dn",
     "strf_secs",
     "strp_secs",
+    "syncrepl",
 ]

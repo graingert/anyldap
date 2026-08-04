@@ -41,7 +41,22 @@ Features
   ``IndexedDict``, ``FileWriter`` and ``LDIFWriter`` handlers.
 - ``ReconnectLDAPObject`` opens the connection again when the server goes
   away and tries the operation once more, putting back the options that were
-  set, StartTLS if it had been raised, and the last bind that was made.
+  set, StartTLS if it had been raised, and the last bind that was made. It
+  can be pickled, and reads back as a connection that opens and binds itself
+  when it is next used.
+- ``ldap.syncrepl`` keeps a copy of what a server holds, as RFC 4533 says:
+  the Sync Request, Sync State and Sync Done controls, the Sync Info message
+  the server sends while the search runs, and the ``SyncreplConsumer`` mixin
+  that drives them.
+- ``cancel()`` and ``cancel_s()`` stop an operation and are answered, which
+  is what RFC 3909 adds over ``abandon()``. Intermediate responses (RFC 4511
+  section 4.13) are read, and ``result4(add_intermediates=1)`` hands them
+  back; ``add_ctrls=1`` hands back each message with the controls it
+  carried.
+- ``OPT_TIMEOUT`` and ``OPT_NETWORK_TIMEOUT`` say how long an operation may
+  take the way libldap says it: ``None`` and ``-1`` both mean no limit, and
+  anything else negative is refused. ``OPT_URI`` can be set as well as read,
+  which names another server to open.
 - The controls python-ldap encodes with pyasn1 are encoded with the BER
   library anyldap already has: paged results, pre-read and post-read,
   server-side sorting, the password policy response, OpenLDAP's no-op search,

@@ -5,7 +5,7 @@ is exercised is the wire behaviour rather than a stand-in for it.
 """
 
 import ssl
-from collections.abc import AsyncGenerator, Callable, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from urllib.parse import quote
 
@@ -2492,6 +2492,8 @@ async def test_every_operation_on_a_reconnecting_connection_is_answered() -> Non
                 pureldap.LDAPExtendedRequest(requestName=b"1.2.3")
             )
             assert value == b"dn:" + JACK.encode()
+            # Cancelling something that has already answered is answered too.
+            assert await connection.cancel_s(1) == (ldap.RES_EXTENDED, [])
             assert await connection.passwd_s(JACK, "secret", "newer")
             with pytest.raises(ldap.AUTH_METHOD_NOT_SUPPORTED):
                 await connection.sasl_interactive_bind_s(
@@ -2610,3 +2612,533 @@ async def test_a_reconnecting_connection_remembers_the_sasl_bind_it_made() -> No
             await anyio.aclose_forcefully(connection._stream)
             assert await connection.search_ext_s(JACK, ldap.SCOPE_BASE)
             assert connection._reconnects_done == 1
+
+
+# Keeping a copy of what the server holds.
+
+
+UUIDS = [
+    "8dc44601-a936-11ea-8aaf-f248c5fa5780",
+    "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
+]
+
+
+def sync_state(state: int, uuid: str, cookie: bytes | None = None) -> bytes:
+    """A Sync State control value, as a server writes one."""
+    import uuid as uuid_module
+
+    value: list[pureber.BERBase] = [
+        pureber.BEREnumerated(state),
+        pureber.BEROctetString(uuid_module.UUID(uuid).bytes),
+    ]
+    if cookie is not None:
+        value.append(pureber.BEROctetString(cookie))
+    return pureber.BERSequence(value).toWire()
+
+
+def sync_info(tag: int, *parts: pureber.BERBase) -> bytes:
+    """A Sync Info message, written under the tag that says what it is."""
+    return pureber.BERSequence(list(parts), tag=tag).toWire()
+
+
+class Consumer(ldap.syncrepl.SyncreplConsumer, ldapobject.SimpleLDAPObject):
+    """A connection that writes down what the server tells it."""
+
+    def __init__(self, uri: str) -> None:
+        super().__init__(uri)
+        self.entries: dict[str, tuple[str, dict[str, list[bytes]]]] = {}
+        self.present: list[str] = []
+        self.deleted: list[str] = []
+        self.cookies: list[str] = []
+        self.reset: list[bool | None] = []
+        self.refreshed = False
+
+    def syncrepl_set_cookie(self, cookie: str) -> None:
+        self.cookies.append(cookie)
+
+    def syncrepl_get_cookie(self) -> str | None:
+        return self.cookies[-1] if self.cookies else None
+
+    def syncrepl_entry(
+        self, dn: str, attrs: dict[str, list[bytes]], uuid: str
+    ) -> None:
+        self.entries[uuid] = (dn, attrs)
+
+    def syncrepl_present(
+        self, uuids: Sequence[str] | None, refreshDeletes: bool | None = False
+    ) -> None:
+        if uuids is None:
+            self.reset.append(refreshDeletes)
+        else:
+            self.present.extend(uuids)
+
+    def syncrepl_delete(self, uuids: Sequence[str]) -> None:
+        self.deleted.extend(uuids)
+
+    def syncrepl_refreshdone(self) -> None:
+        self.refreshed = True
+
+
+class SyncServer(ldapserver.BaseLDAPServer):
+    """A server that plays a whole syncrepl session, refresh and persist."""
+
+    asked: list[list[pureldap.Control]] = []
+
+    async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
+        if not isinstance(msg.value, pureldap.LDAPSearchRequest):
+            return
+        SyncServer.asked.append(list(msg.controls or ()))
+        await self.send_entry(msg.id, "cn=one,dc=example,dc=com", 1, UUIDS[0])
+        # The refresh is over, and the cookie says where it got to.
+        await self.send_info(
+            msg.id,
+            sync_info(
+                pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x02,
+                pureber.BEROctetString(b"csn=refreshed"),
+                pureber.BERBoolean(1),
+            ),
+        )
+        # Then what changes: one entry is still there, one has gone.
+        await self.send_entry(msg.id, "cn=two,dc=example,dc=com", 0, UUIDS[1])
+        await self.send_entry(msg.id, "cn=two,dc=example,dc=com", 3, UUIDS[1])
+        # And a set of entries that are all gone, then a cookie on its own.
+        await self.send_info(
+            msg.id,
+            sync_info(
+                pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x03,
+                pureber.BEROctetString(b"csn=set"),
+                pureber.BERBoolean(1),
+                pureber.BERSet(
+                    [pureber.BEROctetString(__import__("uuid").UUID(UUIDS[0]).bytes)]
+                ),
+            ),
+        )
+        await self.send_info(
+            msg.id,
+            pureber.BEROctetString(
+                b"csn=later", tag=pureber.CLASS_CONTEXT | 0x00
+            ).toWire(),
+        )
+        # A message this consumer is not interested in, passed over.
+        await self._send_anyio_write(
+            pureldap.LDAPMessage(
+                pureldap.LDAPIntermediateResponse(
+                    responseName=b"1.2.3", responseValue=b"other"
+                ),
+                id=msg.id,
+            ).toWire()
+        )
+        await self._send_anyio_write(
+            pureldap.LDAPMessage(
+                pureldap.LDAPSearchResultDone(resultCode=0),
+                id=msg.id,
+                controls=[
+                    (
+                        ldap.CONTROL_SYNC_DONE,
+                        0,
+                        pureber.BERSequence(
+                            [
+                                pureber.BEROctetString(b"csn=done"),
+                                pureber.BERBoolean(1),
+                            ]
+                        ).toWire(),
+                    )
+                ],
+            ).toWire()
+        )
+
+    async def send_entry(self, msgid: int, dn: str, state: int, uuid: str) -> None:
+        await self._send_anyio_write(
+            pureldap.LDAPMessage(
+                pureldap.LDAPSearchResultEntry(
+                    objectName=dn, attributes=[("cn", [dn.split(",")[0][3:]])]
+                ),
+                id=msgid,
+                controls=[(ldap.CONTROL_SYNC_STATE, 0, sync_state(state, uuid))],
+            ).toWire()
+        )
+
+    async def send_info(self, msgid: int, value: bytes) -> None:
+        await self._send_anyio_write(
+            pureldap.LDAPMessage(
+                pureldap.LDAPIntermediateResponse(
+                    responseName=ldap.syncrepl.SYNC_INFO, responseValue=value
+                ),
+                id=msgid,
+            ).toWire()
+        )
+
+
+async def test_a_syncrepl_search_is_told_what_the_server_holds() -> None:
+    SyncServer.asked = []
+    async with serving(SyncServer) as server:
+        async with Consumer(server.uri) as connection:
+            msgid = await connection.syncrepl_search(
+                "dc=example,dc=com", ldap.SCOPE_SUBTREE, mode="refreshAndPersist"
+            )
+            while await connection.syncrepl_poll(msgid=msgid):
+                pass
+
+    # The search asked for syncrepl, in the mode it was told to.
+    [(oid, criticality, value)] = SyncServer.asked[0]
+    assert oid == ldap.CONTROL_SYNC.encode()
+    assert bool(criticality) is True
+    request = ldap.syncrepl.SyncRequestControl(mode="refreshAndPersist")
+    assert value == request.encodeControlValue()
+
+    # The entry that was added is kept, the one that went is gone, and the
+    # one that was there was recorded as present.
+    assert connection.entries[UUIDS[0]][0] == "cn=one,dc=example,dc=com"
+    assert connection.present[:2] == [UUIDS[0], UUIDS[1]]
+    assert connection.deleted == [UUIDS[1], UUIDS[0]]
+    assert connection.refreshed is True
+    # Every cookie the server sent, in the order it sent them.
+    assert connection.cookies == ["csn=refreshed", "csn=set", "csn=later", "csn=done"]
+    # The refresh ending resets the record; the Sync Done control does too.
+    assert connection.reset == [False, True]
+
+
+async def test_a_syncrepl_search_starts_from_the_cookie_it_was_left() -> None:
+    SyncServer.asked = []
+    async with serving(SyncServer) as server:
+        async with Consumer(server.uri) as connection:
+            connection.cookies.append("csn=earlier")
+            msgid = await connection.syncrepl_search(
+                "dc=example,dc=com", serverctrls=[ldap.controls.ManageDSAITControl()]
+            )
+            while await connection.syncrepl_poll(msgid=msgid):
+                pass
+
+    # The control it was given is still sent, with the sync request after it.
+    oids = [oid for oid, _, _ in SyncServer.asked[0]]
+    assert oids == [b"2.16.840.1.113730.3.4.2", ldap.CONTROL_SYNC.encode()]
+    asked = ldap.syncrepl.SyncRequestControl(cookie="csn=earlier")
+    assert SyncServer.asked[0][1][2] == asked.encodeControlValue()
+
+
+def test_what_a_syncrepl_message_says_is_read_out_of_it() -> None:
+    import binascii
+
+    # A refresh that is not done, with no cookie.
+    message = ldap.syncrepl.SyncInfoMessage(
+        sync_info(
+            pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x01,
+            pureber.BERBoolean(0),
+        )
+    )
+    assert message.refreshDelete == {"refreshDone": False}
+    assert message.refreshPresent is None
+
+    # A refresh with nothing said at all: it is done, by default.
+    empty = ldap.syncrepl.SyncInfoMessage(
+        sync_info(pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x02)
+    )
+    assert empty.refreshPresent == {"refreshDone": True}
+
+    # A set of entries that are present rather than gone, with no cookie.
+    import uuid as uuid_module
+
+    present = ldap.syncrepl.SyncInfoMessage(
+        sync_info(
+            pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x03,
+            pureber.BERSet(
+                [pureber.BEROctetString(uuid_module.UUID(UUIDS[0]).bytes)]
+            ),
+        )
+    )
+    assert present.syncIdSet == {
+        "refreshDeletes": False,
+        "syncUUIDs": [UUIDS[0]],
+    }
+
+    # The message python-ldap keeps as a regression, taken off the wire from
+    # 389-ds: a syncIdSet that an earlier reading took for a refresh.
+    dumped = (
+        "a36b04526c6461706b64632e6578616d706c652e636f6d3a333839303123636e"
+        "3d6469726563746f7279206d616e616765723a64633d6578616d706c652c6463"
+        "3d636f6d3a286f626a656374436c6173733d2a2923330101ff311204108dc446"
+        "01a93611ea8aaff248c5fa5780"
+    )
+    from_the_wire = ldap.syncrepl.SyncInfoMessage(binascii.unhexlify(dumped))
+    assert from_the_wire.refreshDelete is None
+    assert from_the_wire.refreshPresent is None
+    assert from_the_wire.newcookie is None
+    assert from_the_wire.syncIdSet == {
+        "cookie": (
+            "ldapkdc.example.com:38901#cn=directory manager:"
+            "dc=example,dc=com:(objectClass=*)#3"
+        ),
+        "syncUUIDs": [UUIDS[0]],
+        "refreshDeletes": True,
+    }
+
+    with pytest.raises(ValueError, match="unknown syncrepl info message"):
+        ldap.syncrepl.SyncInfoMessage(
+            sync_info(pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x04)
+        )
+
+
+def test_the_syncrepl_controls_say_what_they_are_asked_to() -> None:
+    asked = ldap.syncrepl.SyncRequestControl(cookie="csn=1", reloadHint=True)
+    assert asked.controlType == ldap.CONTROL_SYNC
+    # The same bytes python-ldap writes, except that BER says true with
+    # every bit set where python-ldap writes it as one.
+    assert asked.encodeControlValue() == b"0\r\n\x01\x01\x04\x05csn=1\x01\x01\xff"
+    with pytest.raises(ValueError, match="unknown syncrepl mode"):
+        ldap.syncrepl.SyncRequestControl(mode="whenever").encodeControlValue()
+
+    state = ldap.syncrepl.SyncStateControl()
+    state.decodeControlValue(sync_state(3, UUIDS[0]))
+    assert (state.state, state.entryUUID, state.cookie) == ("delete", UUIDS[0], None)
+
+    done = ldap.syncrepl.SyncDoneControl()
+    done.decodeControlValue(pureber.BERSequence([]).toWire())
+    assert done.cookie is None and done.refreshDeletes is None
+
+    assert ldap.controls.KNOWN_RESPONSE_CONTROLS[ldap.CONTROL_SYNC_STATE] is (
+        ldap.syncrepl.SyncStateControl
+    )
+    assert ldap.controls.KNOWN_RESPONSE_CONTROLS[ldap.CONTROL_SYNC_DONE] is (
+        ldap.syncrepl.SyncDoneControl
+    )
+
+
+async def test_a_cancelled_operation_is_answered_rather_than_forgotten() -> None:
+    class CancellingServer(ldapserver.BaseLDAPServer):
+        """A server that answers a cancel, and the operation it stops."""
+
+        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
+            if isinstance(msg.value, pureldap.LDAPExtendedRequest):
+                assert msg.value.requestName == pureldap.LDAPCancelRequest.oid
+                await self._send_anyio_write(
+                    pureldap.LDAPMessage(
+                        pureldap.LDAPExtendedResponse(resultCode=0), id=msg.id
+                    ).toWire()
+                )
+
+    async with serving(CancellingServer) as server:
+        async with connected(server) as connection:
+            # A search nobody will answer, and then the word to stop it.
+            msgid = await connection.search_ext("dc=example,dc=com")
+            assert await connection.cancel_s(msgid) == (ldap.RES_EXTENDED, [])
+            await connection.abandon(msgid)
+
+    request = pureldap.LDAPCancelRequest(cancelID=7)
+    assert "cancelID=7" in repr(request)
+    assert request.requestValue == pureber.BERSequence(
+        [pureber.BERInteger(7)]
+    ).toWire()
+
+
+async def test_a_cancel_the_server_says_it_did_answers_with_nothing() -> None:
+    class CancelledServer(ldapserver.BaseLDAPServer):
+        """A server that answers the cancel with the code for having done it."""
+
+        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
+            if isinstance(msg.value, pureldap.LDAPExtendedRequest):
+                await self._send_anyio_write(
+                    pureldap.LDAPMessage(
+                        pureldap.LDAPExtendedResponse(resultCode=118), id=msg.id
+                    ).toWire()
+                )
+
+    async with serving(CancelledServer) as server:
+        async with connected(server) as connection:
+            msgid = await connection.search_ext("dc=example,dc=com")
+            assert await connection.cancel_s(msgid) is None
+            await connection.abandon(msgid)
+
+
+FOREIGN = (b"1.2.3", 0, b"not a sync control")
+
+
+class PersistServer(ldapserver.BaseLDAPServer):
+    """A server that says every other thing a syncrepl search can be told."""
+
+    async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
+        if not isinstance(msg.value, pureldap.LDAPSearchRequest):
+            return
+        # An entry with nothing to say about syncing at all.
+        await self.entry(msg.id, "cn=one,dc=example,dc=com", [FOREIGN])
+        # One whose sync control comes after a control this passes over,
+        # and which carries a cookie of its own.
+        await self.entry(
+            msg.id,
+            "cn=two,dc=example,dc=com",
+            [
+                FOREIGN,
+                (
+                    ldap.CONTROL_SYNC_STATE,
+                    0,
+                    sync_state(1, UUIDS[0], b"csn=entry"),
+                ),
+            ],
+        )
+        # A refresh that is not finished, and names nothing.
+        await self.info(
+            msg.id,
+            sync_info(
+                pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x01,
+                pureber.BERBoolean(0),
+            ),
+        )
+        # Then one that is, after which entries are not counted as present.
+        await self.info(
+            msg.id,
+            sync_info(
+                pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x02,
+                pureber.BERBoolean(1),
+            ),
+        )
+        await self.entry(
+            msg.id,
+            "cn=three,dc=example,dc=com",
+            [(ldap.CONTROL_SYNC_STATE, 0, sync_state(2, UUIDS[1]))],
+        )
+        # A set of entries that are all still there, with no cookie.
+        await self.info(
+            msg.id,
+            sync_info(
+                pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x03,
+                pureber.BERSet(
+                    [pureber.BEROctetString(__import__("uuid").UUID(UUIDS[0]).bytes)]
+                ),
+            ),
+        )
+        await self._send_anyio_write(
+            pureldap.LDAPMessage(
+                pureldap.LDAPSearchResultDone(resultCode=0),
+                id=msg.id,
+                controls=[
+                    FOREIGN,
+                    (ldap.CONTROL_SYNC_DONE, 0, pureber.BERSequence([]).toWire()),
+                ],
+            ).toWire()
+        )
+
+    async def entry(
+        self, msgid: int, dn: str, controls: list[pureldap.Control]
+    ) -> None:
+        await self._send_anyio_write(
+            pureldap.LDAPMessage(
+                pureldap.LDAPSearchResultEntry(objectName=dn, attributes=[]),
+                id=msgid,
+                controls=controls,
+            ).toWire()
+        )
+
+    async def info(self, msgid: int, value: bytes) -> None:
+        await self._send_anyio_write(
+            pureldap.LDAPMessage(
+                pureldap.LDAPIntermediateResponse(
+                    responseName=ldap.syncrepl.SYNC_INFO, responseValue=value
+                ),
+                id=msgid,
+            ).toWire()
+        )
+
+
+async def test_a_consumer_that_keeps_nothing_is_told_all_the_same() -> None:
+    class Bare(ldap.syncrepl.SyncreplConsumer, ldapobject.SimpleLDAPObject):
+        """The mixin as it comes, whose methods all do nothing."""
+
+    async with serving(PersistServer) as server:
+        async with Bare(server.uri) as connection:
+            msgid = await connection.syncrepl_search("dc=example,dc=com")
+            # Reading until the search finishes rather than message by
+            # message, which is what all=1 asks for.
+            assert await connection.syncrepl_poll(msgid=msgid, all=1) is False
+
+
+async def test_a_syncrepl_search_can_be_told_where_to_start_from() -> None:
+    SyncServer.asked = []
+    async with serving(SyncServer) as server:
+        async with Consumer(server.uri) as connection:
+            msgid = await connection.syncrepl_search(
+                "dc=example,dc=com", cookie="csn=given"
+            )
+            while await connection.syncrepl_poll(msgid=msgid):
+                pass
+    asked = ldap.syncrepl.SyncRequestControl(cookie="csn=given")
+    assert SyncServer.asked[0][0][2] == asked.encodeControlValue()
+
+
+async def test_the_controls_a_message_carried_come_with_it_when_asked() -> None:
+    async with serving(PersistServer) as server:
+        async with connected(server) as connection:
+            msgid = await connection.search_ext("dc=example,dc=com")
+            rtype, data, _, _, _, _ = await connection.result4(
+                msgid, all=1, add_ctrls=1, add_intermediates=1
+            )
+            assert rtype == ldap.RES_SEARCH_RESULT
+            # Each entry with the controls it carried, and no intermediate
+            # response among them: those are not what a search found.
+            assert len(data) == 3
+            dn, attrs, entry_controls = data[1]  # type: ignore[misc]
+            assert dn == "cn=two,dc=example,dc=com"
+            assert isinstance(attrs, dict)
+            assert any(
+                isinstance(control, ldap.syncrepl.SyncStateControl)
+                for control in entry_controls
+            )
+
+
+async def test_something_said_mid_search_is_passed_over_unless_asked_for() -> None:
+    async with serving(PersistServer) as server:
+        async with connected(server) as connection:
+            msgid = await connection.search_ext("dc=example,dc=com")
+            seen = []
+            while True:
+                rtype, data, _, _ = await connection.result3(msgid, all=0)
+                seen.append(rtype)
+                if rtype == ldap.RES_SEARCH_RESULT:
+                    break
+            # The entries and the result, and nothing of what the server
+            # said in between, which was not asked for.
+            assert seen == [ldap.RES_SEARCH_ENTRY] * 3 + [ldap.RES_SEARCH_RESULT]
+
+
+def test_an_intermediate_response_says_only_what_it_was_given() -> None:
+    empty = pureldap.LDAPIntermediateResponse()
+    assert empty.toWire() == b"y\x00"
+    assert repr(empty) == (
+        "LDAPIntermediateResponse(responseName=None, responseValue=None)"
+    )
+    named = pureldap.LDAPIntermediateResponse(responseName="1.2.3")
+    assert named.toWire() == b"y\x07\x80\x051.2.3"
+
+
+def test_how_long_an_operation_may_take_is_said_the_way_libldap_says_it() -> None:
+    connection = ldap.initialize("ldap://localhost")
+    # Nothing is asked for to begin with.
+    assert connection.get_option(ldap.OPT_TIMEOUT) is None
+    assert connection.get_option(ldap.OPT_NETWORK_TIMEOUT) is None
+
+    connection.set_option(ldap.OPT_TIMEOUT, 10.5)
+    assert connection.get_option(ldap.OPT_TIMEOUT) == 10.5
+    assert connection.timeout == 10.5
+    connection.set_option(ldap.OPT_TIMEOUT, 0)
+    assert connection.get_option(ldap.OPT_TIMEOUT) == 0
+
+    # Both spellings of no limit at all.
+    connection.set_option(ldap.OPT_TIMEOUT, -1)
+    assert connection.get_option(ldap.OPT_TIMEOUT) is None
+    connection.set_option(ldap.OPT_TIMEOUT, 5)
+    connection.set_option(ldap.OPT_TIMEOUT, None)
+    assert connection.get_option(ldap.OPT_TIMEOUT) is None
+
+    with pytest.raises(ValueError, match="not a length of time"):
+        connection.set_option(ldap.OPT_NETWORK_TIMEOUT, -5)
+    with pytest.raises(TypeError):
+        connection.set_option(ldap.OPT_NETWORK_TIMEOUT, object)
+    with pytest.raises(OverflowError):
+        connection.set_option(ldap.OPT_NETWORK_TIMEOUT, 10**1000)
+
+
+def test_the_server_to_open_can_be_named_again_before_anything_is_sent() -> None:
+    connection = ldap.initialize("ldap://localhost:389")
+    connection.set_option(ldap.OPT_URI, "ldapi:///path/to/socket")
+    assert connection.get_option(ldap.OPT_URI) == "ldapi:///path/to/socket"
+    assert connection.uri == "ldapi:///path/to/socket"
+    assert connection._unix is True
+    assert connection._host == "/path/to/socket"

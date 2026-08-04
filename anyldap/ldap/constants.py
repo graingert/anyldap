@@ -55,6 +55,7 @@ RES_DELETE: Final = 0x6B
 RES_MODRDN: Final = 0x6D
 RES_COMPARE: Final = 0x6F
 RES_EXTENDED: Final = 0x78
+RES_INTERMEDIATE: Final = 0x79
 
 # How much of an answer result3() waits for: one message at a time, or
 # everything the operation produces.

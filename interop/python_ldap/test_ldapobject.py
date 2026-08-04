@@ -387,3 +387,87 @@ async def test_add_object(conn: ldap.SimpleLDAPObject, slapd: Any) -> None:
     await conn.delete_s(dn)
     result = await conn.search_s(base, ldap.SCOPE_SUBTREE, "(cn=Added)", ["*"])
     assert result == []
+
+
+# ReconnectLDAPObject, from Test01_ReconnectLDAPObject: the same tests as
+# above hold for it, and these are the ones that are its own.
+
+
+async def test_reconnect_simple_bind(slapd: Any) -> None:
+    connection = ldap.ReconnectLDAPObject(slapd.ldap_uri)
+    bind_dn = "cn=user1," + slapd.suffix
+    await connection.simple_bind_s(bind_dn, "user1_pw")
+    assert await connection.whoami_s() == "dn:" + bind_dn
+    slapd.restart()
+    assert await connection.whoami_s() == "dn:" + bind_dn
+    await connection.unbind_s()
+
+
+async def test_reconnect_sasl_external(slapd: Any) -> None:
+    connection = ldap.ReconnectLDAPObject(slapd.ldapi_uri)
+    await connection.sasl_external_bind_s()
+    authz_id = await connection.whoami_s()
+    assert authz_id == "dn:" + slapd.root_dn.lower()
+    slapd.restart()
+    assert await connection.whoami_s() == authz_id
+    await connection.unbind_s()
+
+
+async def test_reconnect_get_state(slapd: Any) -> None:
+    connection = ldap.ReconnectLDAPObject(slapd.ldap_uri)
+    bind_dn = "cn=user1," + slapd.suffix
+    await connection.simple_bind_s(bind_dn, "user1_pw")
+    assert await connection.whoami_s() == "dn:" + bind_dn
+    state = connection.__getstate__()
+    # The names and shapes are python-ldap's; what is stored beside them is
+    # this client's own, and is left out here.
+    assert state["_last_bind"] == ("simple_bind_s", (bind_dn, "user1_pw"), {})
+    assert state["_options"] == []
+    assert state["_reconnects_done"] == 0
+    assert state["_retry_delay"] == 60.0
+    assert state["_retry_max"] == 1
+    assert state["_start_tls"] == 0
+    assert state["_uri"] == slapd.ldap_uri
+    assert state["timeout"] is None
+    await connection.unbind_s()
+
+
+async def test_reconnect_restore(slapd: Any) -> None:
+    import pickle
+
+    connection = ldap.ReconnectLDAPObject(slapd.ldap_uri)
+    bind_dn = "cn=user1," + slapd.suffix
+    await connection.simple_bind_s(bind_dn, "user1_pw")
+    assert await connection.whoami_s() == "dn:" + bind_dn
+    written = pickle.dumps(connection)
+    await connection.unbind_s()
+    del connection
+
+    read_back = pickle.loads(written)
+    assert await read_back.whoami_s() == "dn:" + bind_dn
+    await read_back.unbind_s()
+
+
+async def test_reconnect_after_the_server_goes_away_and_comes_back(
+    slapd: Any,
+) -> None:
+    connection = ldap.ReconnectLDAPObject(
+        slapd.ldap_uri, retry_max=2, retry_delay=1
+    )
+    bind_dn = "cn=user1," + slapd.suffix
+    await connection.simple_bind_s(bind_dn, "user1_pw")
+    assert await connection.whoami_s() == "dn:" + bind_dn
+
+    slapd.terminate()
+    slapd.wait()
+    try:
+        with pytest.raises(ldap.SERVER_DOWN):
+            await connection.whoami_s()
+    finally:
+        slapd.resume()
+
+    # The connection is used again, and binds again rather than searching
+    # as nobody at all: python-ldap's !267.
+    assert await connection.whoami_s() == "dn:" + bind_dn
+    assert await connection.search_ext_s(bind_dn, ldap.SCOPE_BASE)
+    await connection.unbind_s()

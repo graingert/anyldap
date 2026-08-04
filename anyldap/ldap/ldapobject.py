@@ -16,7 +16,7 @@ import ssl
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from types import TracebackType
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
 import anyio
@@ -68,6 +68,7 @@ from anyldap.ldap.constants import (
     RES_COMPARE,
     RES_DELETE,
     RES_EXTENDED,
+    RES_INTERMEDIATE,
     RES_MODIFY,
     RES_MODRDN,
     RES_SEARCH_ENTRY,
@@ -97,6 +98,32 @@ Entry = tuple[str, dict[str, list[bytes]]]
 Reference = tuple[None, list[str]]
 ResultData = list[Entry | Reference]
 
+# What an intermediate response says: the name of the message and its value,
+# which is what add_intermediates=1 asks to be handed.
+Intermediate = tuple[str | None, bytes | None]
+
+# The same three, each with the controls the message carried, which is what
+# add_ctrls=1 asks for.
+EntryWithControls = tuple[str, dict[str, list[bytes]], Sequence["controls.ResponseControl"]]
+ReferenceWithControls = tuple[None, list[str], Sequence["controls.ResponseControl"]]
+IntermediateWithControls = tuple[
+    str | None, bytes | None, Sequence["controls.ResponseControl"]
+]
+
+# Everything result4() can hand back, which is more than a search finds.
+Result4Data = list[
+    Entry
+    | Reference
+    | Intermediate
+    | EntryWithControls
+    | ReferenceWithControls
+    | IntermediateWithControls
+]
+
+# One thing the server sent while an operation was running: what kind of
+# message it was, what it said, and the controls it carried.
+_Answer = tuple[int, "Entry | Reference | Intermediate", Sequence["pureldap.Control"]]
+
 # Controls are given either as the objects ``anyldap.ldap.controls`` builds
 # or as the (type, criticality, value) triples that go on the wire.
 Controls = Iterable["controls.RequestControl | pureldap.Control"] | None
@@ -120,7 +147,10 @@ class _Pending:
     def __init__(self, rtype: int, response: type[pureldap.LDAPResult]) -> None:
         self.rtype = rtype
         self.response = response
-        self.data: ResultData = []
+        # What has arrived and not yet been handed out, in the order the
+        # server sent it: entries, references, and whatever the server said
+        # in between while the operation was still running.
+        self.queue: list[_Answer] = []
         self.controls: Sequence[pureldap.Control] = []
         self.name: str | None = None
         self.value: bytes | None = None
@@ -165,6 +195,41 @@ def _reference(message: pureldap.LDAPSearchResultReference) -> Reference:
         assert isinstance(uri, pureber.BEROctetString)
         uris.append(to_unicode(uri.value))
     return None, uris
+
+
+def _found(queue: Sequence[_Answer], add_ctrls: int) -> Result4Data:
+    """Everything a search found, in the order the server sent it.
+
+    An intermediate response is not one of the things a search found, so it
+    is not among them however the caller asked to be given the rest.
+    """
+    found: Result4Data = []
+    for rtype, payload, payload_controls in queue:
+        if rtype == RES_INTERMEDIATE:
+            continue
+        if add_ctrls:
+            found.append(
+                (*payload, controls.decode_controls(payload_controls))
+            )
+        else:
+            found.append(payload)
+    return found
+
+
+def _timeout(value: object) -> float | None:
+    """How long an operation may take, as an option says it.
+
+    ``None`` and ``-1`` both mean no limit, which is what libldap makes of
+    them; anything else negative is not a length of time at all.
+    """
+    if value is None:
+        return None
+    seconds = float(value)  # type: ignore[arg-type]
+    if seconds == -1:
+        return None
+    if seconds < 0:
+        raise ValueError(f"timeout {seconds!r} is not a length of time")
+    return seconds
 
 
 def _controls(value: object) -> Sequence[pureldap.Control]:
@@ -362,8 +427,8 @@ class SimpleLDAPObject:
         self.uri = uri
         self.trace_level = trace_level
         self.protocol_version = VERSION3
-        self.timeout: float = -1
-        self.network_timeout: float = -1
+        self.timeout: float | None = None
+        self.network_timeout: float | None = None
         self.deref = DEREF_NEVER
         self.sizelimit = 0
         self.timelimit = 0
@@ -434,9 +499,7 @@ class SimpleLDAPObject:
         if stream is not None:
             return stream
         try:
-            async with _deadline(
-                None if self.network_timeout < 0 else self.network_timeout
-            ):
+            async with _deadline(self.network_timeout):
                 stream = await self._connect_stream()
         except OSError as exc:
             raise errors.SERVER_DOWN(
@@ -532,10 +595,30 @@ class SimpleLDAPObject:
             response,
             (pureldap.LDAPSearchResultEntry, pureldap.LDAPSearchResultReference),
         ):
+            found: Entry | Reference
             if isinstance(response, pureldap.LDAPSearchResultEntry):
-                operation.data.append(_entry(response))
+                found = _entry(response)
             else:
-                operation.data.append(_reference(response))
+                found = _reference(response)
+            operation.queue.append(
+                (RES_SEARCH_ENTRY, found, _controls(message.controls))
+            )
+            return
+        if isinstance(response, pureldap.LDAPIntermediateResponse):
+            # Something the server says while the operation is still
+            # running, which is how syncrepl says where it has got to.
+            operation.queue.append(
+                (
+                    RES_INTERMEDIATE,
+                    (
+                        None
+                        if response.responseName is None
+                        else to_unicode(response.responseName),
+                        response.responseValue,
+                    ),
+                    _controls(message.controls),
+                )
+            )
             return
         response_controls = _controls(message.controls)
         if not isinstance(response, operation.response):
@@ -586,7 +669,7 @@ class SimpleLDAPObject:
         """
 
         def enough() -> bool:
-            return operation.done or bool(not all and operation.data)
+            return operation.done or bool(not all and operation.queue)
 
         async with _deadline(timeout):
             while not enough():
@@ -618,7 +701,9 @@ class SimpleLDAPObject:
         one python-ldap would most likely hand back.
         """
         rtype, data, rmsgid, controls, _, _ = await self.result4(msgid, all, timeout)
-        return rtype, data, rmsgid, controls
+        # Without add_ctrls or add_intermediates, what result4() hands back
+        # is what a search found and nothing else.
+        return rtype, cast(ResultData, data), rmsgid, controls
 
     async def result4(
         self,
@@ -630,7 +715,7 @@ class SimpleLDAPObject:
         add_extop: int = 0,
     ) -> tuple[
         int,
-        ResultData,
+        Result4Data,
         int,
         Sequence["controls.ResponseControl"],
         str | None,
@@ -649,12 +734,20 @@ class SimpleLDAPObject:
             )
         # One message at a time: an entry that has already arrived goes out
         # before the connection is read again, and the operation stays on
-        # the wire until its result has been asked for too.
-        if not all and operation.data:
-            return RES_SEARCH_ENTRY, [operation.data.pop(0)], msgid, [], None, None
-        await self._wait(operation, timeout, all)
-        if not all and operation.data:
-            return RES_SEARCH_ENTRY, [operation.data.pop(0)], msgid, [], None, None
+        # the wire until its result has been asked for too. What arrived and
+        # was not asked for -- an intermediate response, usually -- is passed
+        # over, and the connection read again rather than the operation
+        # reported as finished when it is not.
+        if not all:
+            while True:
+                queued = self._queued(operation, add_ctrls, add_intermediates)
+                if queued is not None:
+                    return queued[0], queued[1], msgid, [], None, None
+                if operation.done:
+                    break
+                await self._wait(operation, timeout, all)
+        else:
+            await self._wait(operation, timeout, all)
         # A timed-out wait leaves the operation to be collected later, so it
         # is only forgotten once it has actually answered. A connection that
         # was lost has already forgotten every operation on it.
@@ -663,18 +756,68 @@ class SimpleLDAPObject:
             raise operation.error
         return (
             operation.rtype,
-            operation.data,
+            _found(operation.queue, add_ctrls),
             msgid,
             controls.decode_controls(operation.controls),
             operation.name,
             operation.value,
         )
 
+    @staticmethod
+    def _queued(
+        operation: _Pending, add_ctrls: int, add_intermediates: int
+    ) -> tuple[int, Result4Data] | None:
+        """The next message the operation has to hand out, if it has one.
+
+        An intermediate response is passed over unless it was asked for,
+        which is what python-ldap does with ``add_intermediates`` unset.
+        """
+        while operation.queue:
+            rtype, payload, payload_controls = operation.queue[0]
+            if rtype == RES_INTERMEDIATE and not add_intermediates:
+                operation.queue.pop(0)
+                continue
+            operation.queue.pop(0)
+            if add_ctrls:
+                return rtype, [(*payload, controls.decode_controls(payload_controls))]
+            return rtype, [payload]
+        return None
+
     async def abandon(self, msgid: int, serverctrls: Controls = None) -> None:
         """Tell the server to stop working on an operation, and forget it."""
         if self._pending.pop(msgid, None) is None:
             return
         await self._send(pureldap.LDAPAbandonRequest(id=msgid), serverctrls)
+
+    async def cancel(
+        self,
+        cancelid: int,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+    ) -> int:
+        """Ask the server to stop working on an operation (RFC 3909).
+
+        Unlike ``abandon()`` this is answered, so the caller learns whether
+        the operation really did stop; the operation itself finishes with
+        ``CANCELLED``.
+        """
+        return await self.extop(
+            pureldap.LDAPCancelRequest(cancelID=cancelid), serverctrls, clientctrls
+        )
+
+    async def cancel_s(
+        self,
+        cancelid: int,
+        serverctrls: Controls = None,
+        clientctrls: Controls = None,
+    ) -> tuple[int, ResultData] | None:
+        msgid = await self.cancel(cancelid, serverctrls, clientctrls)
+        try:
+            return await self.result(msgid, all=1, timeout=self.timeout)
+        except (errors.CANCELLED, errors.SUCCESS):
+            # The server saying it has cancelled the operation is what was
+            # asked for, not something to report as a failure.
+            return None
 
     # Options.
 
@@ -689,11 +832,14 @@ class SimpleLDAPObject:
             assert isinstance(invalue, int)
             self.timelimit = invalue
         elif option == OPT_TIMEOUT:
-            assert isinstance(invalue, (int, float))
-            self.timeout = invalue
+            self.timeout = _timeout(invalue)
         elif option == OPT_NETWORK_TIMEOUT:
-            assert isinstance(invalue, (int, float))
-            self.network_timeout = invalue
+            self.network_timeout = _timeout(invalue)
+        elif option == OPT_URI:
+            assert isinstance(invalue, str)
+            self.uri = invalue
+            self._host, self._port, self._tls = _parse_uri(invalue)
+            self._unix = urlparse(invalue).scheme == "ldapi"
         elif option == OPT_DEREF:
             assert isinstance(invalue, int)
             self.deref = invalue
@@ -1022,7 +1168,12 @@ class SimpleLDAPObject:
         attrsonly: int = 0,
     ) -> ResultData:
         return await self.search_ext_s(
-            base, scope, filterstr, attrlist, attrsonly, timeout=self.timeout
+            base,
+            scope,
+            filterstr,
+            attrlist,
+            attrsonly,
+            timeout=-1 if self.timeout is None else self.timeout,
         )
 
     async def search_st(
@@ -1565,6 +1716,9 @@ class ReconnectLDAPObject(SimpleLDAPObject):
         the first time something is asked of it.
         """
         self.__dict__.update(state)
+        # A connection that has not been opened, rather than one that was
+        # said goodbye to: it opens itself when it is next used.
+        self._unbound = False
         self._stream = None
         self._buffer = b""
         self._pending = {}
@@ -1646,6 +1800,20 @@ class ReconnectLDAPObject(SimpleLDAPObject):
             return await method(self, *args, **kwargs)
         self._retrying = True
         try:
+            if (
+                not self._unbound
+                and self._stream is None
+                and self._last_bind is not None
+            ):
+                # Nothing is open, and this connection was bound before it
+                # was closed or written down: it is opened and bound again
+                # before the operation rather than sent as nobody at all.
+                await self.reconnect(
+                    self._uri,
+                    retry_max=self._retry_max,
+                    retry_delay=self._retry_delay,
+                    force=False,
+                )
             try:
                 return await method(self, *args, **kwargs)
             except self._reconnect_exceptions:
@@ -1720,6 +1888,9 @@ class ReconnectLDAPObject(SimpleLDAPObject):
 
     async def extop_s(self, *args: Any, **kwargs: Any) -> Any:
         return await self._apply_method_s(SimpleLDAPObject.extop_s, *args, **kwargs)
+
+    async def cancel_s(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._apply_method_s(SimpleLDAPObject.cancel_s, *args, **kwargs)
 
     async def passwd_s(self, *args: Any, **kwargs: Any) -> Any:
         return await self._apply_method_s(SimpleLDAPObject.passwd_s, *args, **kwargs)
