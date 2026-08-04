@@ -6,6 +6,11 @@ are what python-ldap checks its own behaviour with, so running them against
 ``anyldap.ldap`` is the closest thing there is to a definition of "the same
 as python-ldap".
 
+Not all of it is here. Of python-ldap's 23 test files, 19 are ported into the
+14 in this directory -- some of upstream's are merged, as the table below
+shows. Individual tests are left out of those 19 as well. What is missing and
+why is at the end of this file.
+
 Provenance
 ----------
 
@@ -25,6 +30,7 @@ This directory                  python-ldap
 ``test_options.py``             ``Tests/t_ldap_options.py``
 ``test_sasl.py``                ``Tests/t_ldap_sasl.py``
 ``test_schema_subentry.py``     ``Tests/t_ldap_schema_subentry.py``
+``test_schema_tokenizer.py``    ``Tests/t_ldap_schema_tokenizer.py``
 ``test_syncrepl.py``            ``Tests/t_ldap_syncrepl.py``
 ``test_controls.py``            ``Tests/t_ldap_controls_libldap.py``,
                                 ``Tests/t_ldap_controls_readentry.py``,
@@ -77,7 +83,11 @@ What was not ported, and why
   them, so the rest of that file is ported and this is what is left out.
 - **``t_cext.py``**, which tests python-ldap's C extension directly. There
   is no C extension here, and everything it covers through ``_ldap`` is
-  covered through the connection instead.
+  covered through the connection instead. It is 40 of upstream's 197 tests,
+  and the largest single thing left out.
+- **``t_slapdobject.py``**, which tests python-ldap's ``slapdtest`` helper
+  rather than python-ldap, and **``t_untested_mods.py``**, which is a list of
+  the modules upstream has no tests for and contains no tests itself.
 - **``t_ldap_asyncsearch.py``**, whose only test is that ``ldap.async`` is
   the deprecated spelling of ``ldap.asyncsearch``. There is no deprecated
   spelling here. What ``ldap.asyncsearch`` does is tested in

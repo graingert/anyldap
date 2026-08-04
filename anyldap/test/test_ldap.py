@@ -1035,8 +1035,9 @@ async def test_a_continuation_that_fails_where_it_points_fails_the_search() -> N
             serving(continuing_to(uri)) as server,
             connected(server) as connection,
         ):
-            with pytest.raises(ldap.NO_SUCH_OBJECT):
+            with pytest.raises(ldap.NO_SUCH_OBJECT) as missing:
                 await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
+            assert missing.value.args[0]["result"] == ldap.NO_SUCH_OBJECT.errnum
 
 
 async def test_a_followed_search_can_be_walked_one_message_at_a_time() -> None:
@@ -1123,8 +1124,10 @@ async def test_a_bind_is_never_followed_to_where_a_referral_points() -> None:
             serving(referring_to(away.uri, binds=False)) as server,
             connected(server) as connection,
         ):
-            with pytest.raises(ldap.REFERRAL):
+            with pytest.raises(ldap.REFERRAL) as refused:
                 await connection.simple_bind_s(JACK, b"secret")
+            # The referral is handed to the caller rather than followed.
+            assert refused.value.args[0]["info"] == f"Referral:\n{away.uri}"
 
 
 async def test_the_referrals_option_is_the_boolean_libldap_keeps() -> None:
