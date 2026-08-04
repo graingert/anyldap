@@ -16,7 +16,7 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
-import anyio.to_thread
+import anyio
 
 # What may be read, and nothing else: a scheme not named here is refused
 # rather than handed to something that might know how to fetch it.
@@ -48,16 +48,14 @@ def _refuse(uri: str) -> ValueError:
     )
 
 
-def _read_file(path: str) -> bytes:
-    with open(path, "rb") as source:
-        return source.read()
-
-
 def read(uri: str) -> bytes:
     """What the URL points at, read here and now."""
     scheme = urlparse(uri).scheme
     if scheme == "file":
-        return _read_file(_path(uri))
+        # The parser this is for is not a coroutine, so this cannot be
+        # anyio.Path: whoever calls it blocks for as long as the read takes.
+        with open(_path(uri), "rb") as source:
+            return source.read()
     if scheme in ("http", "https"):
         httpx2 = _httpx2()
         with httpx2.Client() as client:
@@ -72,12 +70,13 @@ def read(uri: str) -> bytes:
 async def read_async(uri: str) -> bytes:
     """The same, without stopping whichever task asked for it.
 
-    Reading a file blocks, so that is what a worker thread is handed; an
-    HTTP request does not have to block anything, so it does not.
+    A file is read through :class:`anyio.Path`, which does the blocking
+    part somewhere it does not matter; an HTTP request does not have to
+    block anything, so it is simply awaited.
     """
     scheme = urlparse(uri).scheme
     if scheme == "file":
-        return await anyio.to_thread.run_sync(_read_file, _path(uri))
+        return await anyio.Path(_path(uri)).read_bytes()
     if scheme in ("http", "https"):
         httpx2 = _httpx2()
         async with httpx2.AsyncClient() as client:

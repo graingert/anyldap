@@ -127,9 +127,9 @@ Features
   which fetches whatever scheme it happens to support, so an address meant
   to name a file can turn out to be a request and the other way about. The
   same two rules apply to the URLs ``ldap.ldif`` fetches when
-  ``process_url_schemes`` tells it to fetch any. Reading a file is handed to
-  a worker thread rather than done on the task that asked; an ``http:``
-  address is fetched with httpx2, which is not a dependency --
+  ``process_url_schemes`` tells it to fetch any. A file is read through
+  ``anyio.Path``, which does the blocking part where it does not matter; an
+  ``http:`` address is fetched with httpx2, which is not a dependency --
   ``anyldap[http]`` installs it, and it says so if it is asked for without.
 - A schema definition may name itself rather than be numbered:
   ``( nsEncryptionConfig-oid NAME ... )`` is what a 389-ds server publishes,
