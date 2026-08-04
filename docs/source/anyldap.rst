@@ -6,6 +6,7 @@ Subpackages
 
 .. toctree::
 
+    anyldap.ldap
     anyldap.protocols
     anyldap.samba
 

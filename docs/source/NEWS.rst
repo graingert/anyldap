@@ -1,6 +1,116 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+Features
+^^^^^^^^
+
+- ``anyldap.ldap`` is python-ldap's API, awaited. Every method python-ldap
+  spells synchronously is a coroutine here, taking the same arguments and
+  handing back the same values, so code ports by adding ``await``::
+
+      import anyldap.ldap as ldap
+
+      async with ldap.initialize("ldap://localhost") as connection:
+          await connection.simple_bind_s("cn=admin,dc=example,dc=com", "secret")
+          for dn, entry in await connection.search_s(
+              "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=jack)"
+          ):
+              print(dn, entry)
+
+  Like python-ldap, a connection reads its socket only while an operation is
+  being waited for, so it needs no task group and no background task: it can
+  be used from whichever task holds it.
+- The parts of python-ldap that live beside the connection are here under the
+  same names: ``ldap.dn``, ``ldap.filter``, ``ldap.modlist``, ``ldap.cidict``,
+  ``ldap.functions``, ``ldap.sasl``, ``ldap.controls``, ``ldap.schema`` and
+  ``ldap.ldapurl``, along with the error classes, the constants and the
+  ``*_s``, ``*_ext`` and ``result3()``/``result4()`` spellings of each
+  operation.
+- SASL binds are driven by the client: EXTERNAL, PLAIN, CRAM-MD5 and
+  DIGEST-MD5 answer for themselves, and ``ldapi://`` connects to a socket in
+  the filesystem, which is what EXTERNAL is usually asked over. GSSAPI is
+  there too, exchanged as RFC 4752 says, if the ``gssapi`` package is
+  installed; it is not a dependency, and the mechanism says so if it is
+  asked for without it. The ``OPT_X_SASL_*`` options supply the defaults a
+  mechanism reads and report what the bind ended up with.
+- ``ldap.asyncsearch`` reads a long search result by result rather than
+  asking for all of it at once, with python-ldap's ``List``, ``Dict``,
+  ``IndexedDict``, ``FileWriter`` and ``LDIFWriter`` handlers.
+- ``ReconnectLDAPObject`` opens the connection again when the server goes
+  away and tries the operation once more, putting back the options that were
+  set, StartTLS if it had been raised, and the last bind that was made. It
+  can be pickled, and reads back as a connection that opens and binds itself
+  when it is next used.
+- ``ldap.syncrepl`` keeps a copy of what a server holds, as RFC 4533 says:
+  the Sync Request, Sync State and Sync Done controls, the Sync Info message
+  the server sends while the search runs, and the ``SyncreplConsumer`` mixin
+  that drives them.
+- ``cancel()`` and ``cancel_s()`` stop an operation and are answered, which
+  is what RFC 3909 adds over ``abandon()``. Intermediate responses (RFC 4511
+  section 4.13) are read, and ``result4(add_intermediates=1)`` hands them
+  back; ``add_ctrls=1`` hands back each message with the controls it
+  carried.
+- ``OPT_TIMEOUT`` and ``OPT_NETWORK_TIMEOUT`` say how long an operation may
+  take the way libldap says it: ``None`` and ``-1`` both mean no limit, and
+  anything else negative is refused. ``OPT_URI`` can be set as well as read,
+  which names another server to open.
+- The controls python-ldap encodes with pyasn1 are encoded with the BER
+  library anyldap already has: paged results, pre-read and post-read,
+  server-side sorting, the password policy response, OpenLDAP's no-op search,
+  assertion and matched-values, and the valueless ones.
+- The ``OPT_X_TLS_*`` options build the ``ssl.SSLContext`` a connection is
+  raised with; a context can still be passed to ``initialize()`` instead.
+- ``ldap.extop`` is what an extended operation of your own is built out of,
+  with ``extop.dds`` for the dynamic entries of RFC 2589 and
+  ``extop.passwd`` for the password a server made up. ``extop_result()``
+  collects an operation started with ``extop()``.
+- Every kind of schema definition is read, not four of the eight: matching
+  rule uses, content rules, structure rules and name forms are there too,
+  which is why a server's own ``matchingRuleUse`` is no longer dropped.
+  ``ldap.schema.Entry`` is an entry that knows its schema, and
+  ``split_tokens()``/``extract_tokens()`` are what read a definition.
+- Every error class carries ``errnum``, the result code it stands for,
+  under the name python-ldap gives it, and ``NO_UNIQUE_ENTRY`` is a kind of
+  ``NO_SUCH_OBJECT`` as it is there.
+- ``SubSchema`` checks that a schema does not describe one thing twice, the
+  way python-ldap does: ``check_uniqueness`` decides whether the second
+  definition is kept under a name of its own, replaces the first, or is
+  refused with ``OIDNotUnique``, and a name claimed twice raises
+  ``NameNotUnique``.
+- ``extop_s()`` takes the class to read the answer into, ``result3()`` and
+  ``result4()`` take the classes that read particular controls, ``whoami_s()``
+  takes controls, and the SASL binds take ``sasl_flags`` where python-ldap
+  takes it -- before the identity, so one passed positionally lands where it
+  is meant to.
+- The names python-ldap has that were missing: ``ldap.error``, the ``REQ_*``
+  and ``TAG_*`` constants, ``OPT_NAMES_DICT`` and every ``OPT_*`` number,
+  ``abandon_ext()``, ``fileno()``, ``sasl_gssapi_bind_s()``,
+  ``ldap.filter.time_span_filter()``,
+  ``ldap.controls.GetEffectiveRightsControl`` and the re-exports
+  ``ldap.functions`` carries. Module-level ``ldap.set_option()`` says what
+  every connection opened after it starts with.
+- Setting an attribute that is an option underneath goes through
+  ``set_option()``, as ``CLASSATTR_OPTION_MAPPING`` says it should:
+  ``connection.network_timeout = -1`` says the same thing as setting
+  ``OPT_NETWORK_TIMEOUT`` to -1, and means no limit either way.
+- A schema definition writes itself back out the way python-ldap writes it,
+  and ``x_origin`` and the other ``X-`` fields a definition carries are read
+  rather than refused. ``ldap.schema.urlfetch()`` takes an LDAP URL and
+  opens a connection of its own to ask, and ``SubSchema.ldap_entry()``
+  writes a whole schema back out as the entry it was read from.
+
+Other changes
+^^^^^^^^^^^^^
+
+- python-ldap's own test suite is ported under ``interop/python_ldap/``, with
+  its licences and a note of what each file came from, and ``tox -e interop``
+  runs this client and python-ldap through the same script against one real
+  OpenLDAP server.
+
+
 0.1.0 (2026-08-02)
 ------------------
 

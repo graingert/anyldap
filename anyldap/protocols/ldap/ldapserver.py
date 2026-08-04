@@ -2,7 +2,6 @@
 
 import ssl
 from collections.abc import Callable, Iterable, Sequence
-from contextlib import AsyncExitStack
 
 import anyio
 from anyio.abc import ByteStream, Listener, SocketAttribute, TaskGroup
@@ -294,22 +293,31 @@ async def serve_stream(
     stream: ByteStream, protocol_factory: Callable[[], BaseLDAPServer]
 ) -> BaseLDAPServer:
     server = protocol_factory()
-    async with AsyncExitStack() as exit_stack:
-        task_group = await exit_stack.enter_async_context(anyio.create_task_group())
-        await server.attach_stream(stream, task_group)
-        exit_stack.push_async_callback(server.aclose)
-        await server.wait_closed()
+    # The task group is nested here rather than held in an exit stack: a
+    # stack unwound by a cancellation hands the task group's answer back as
+    # its own, and a server being cancelled then waits for a reader that is
+    # never told to stop.
+    async with anyio.create_task_group() as task_group:
+        try:
+            await server.attach_stream(stream, task_group)
+            await server.wait_closed()
+        finally:
+            await server.aclose()
     return server
 
 
 async def serve(
     listener: Listener[ByteStream], protocol_factory: Callable[[], BaseLDAPServer]
 ) -> None:
-    async with listener:
+    try:
         with suppress(anyio.ClosedResourceError):
             await listener.serve(
                 lambda stream: serve_stream(stream, protocol_factory)
             )
+    finally:
+        # A server is most often stopped by cancelling it, and a close that
+        # is itself cancelled would leave the listening socket open.
+        await anyio.aclose_forcefully(listener)
 
 
 async def listen(

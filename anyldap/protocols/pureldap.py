@@ -283,9 +283,10 @@ class LDAPBindRequest(LDAPProtocolRequest, BERSequence):
             auth_ber = BEROctetString(self.auth, tag=CLASS_CONTEXT | 0)
         else:
             assert isinstance(self.auth, tuple)
-            # since the credentails for SASL is optional must check first
-            # if credentials are None don't send them.
-            if self.auth[1]:
+            # The credentials are optional, and an empty one is not the
+            # same as none at all: SASL EXTERNAL sends an empty response to
+            # say it has nothing more to prove.
+            if self.auth[1] is not None:
                 auth_ber = BERSequence(
                     [BEROctetString(self.auth[0]), BEROctetString(self.auth[1])],
                     tag=CLASS_CONTEXT | 3,
@@ -1347,6 +1348,8 @@ class LDAPBERDecoderContext_LDAPMessage(BERDecoderContext):
     Identities = {
         LDAPControls.tag: LDAPControls,
         LDAPSearchResultReference.tag: LDAPSearchResultReference,
+        # LDAPIntermediateResponse is defined further down, and is put here
+        # once it is: a message can carry one while an operation runs.
     }
 
 
@@ -1896,6 +1899,36 @@ class LDAPPasswordModifyRequest(LDAPExtendedRequest):
         return self.__class__.__name__ + "(" + ", ".join(l) + ")"
 
 
+class LDAPCancelRequest(LDAPExtendedRequest):
+    """
+    Ask the server to stop working on an operation, and say that it has.
+    See RFC 3909 for details: unlike an abandon, this is answered.
+    """
+
+    oid = b"1.3.6.1.1.8"
+
+    def __init__(
+        self,
+        requestName: str | bytes | None = None,
+        cancelID: int | None = None,
+        tag: int | None = None,
+    ) -> None:
+        assert (
+            requestName is None or requestName == self.oid
+        ), f"{self.__class__.__name__} requestName was {requestName!r} instead of {self.oid!r}"
+        assert cancelID is not None
+        self.cancelID = cancelID
+        LDAPExtendedRequest.__init__(
+            self,
+            requestName=self.oid,
+            requestValue=BERSequence([BERInteger(cancelID)]).toWire(),
+            tag=tag,
+        )
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(cancelID={self.cancelID})"
+
+
 class LDAPBERDecoderContext_LDAPExtendedResponse(BERDecoderContext):
     Identities = {
         LDAPResponseName.tag: LDAPResponseName,
@@ -1986,6 +2019,78 @@ class LDAPExtendedResponse(LDAPResult):
         if self.response is not None:
             l.append(BEROctetString(self.response, tag=CLASS_CONTEXT | 0x0B))
         return BERSequence(l, tag=self.tag).toWire()
+
+
+class LDAPBERDecoderContext_LDAPIntermediateResponse(BERDecoderContext):
+    Identities = {
+        CLASS_CONTEXT | 0x00: LDAPOID,
+        CLASS_CONTEXT | 0x01: BEROctetString,
+    }
+
+
+class LDAPIntermediateResponse(LDAPProtocolResponse, BERSequence):
+    """
+    Something the server says while an operation is still running.
+
+    RFC 4511 section 4.13: a name saying what kind of message it is, and a
+    value whose shape that name decides. Syncrepl's Sync Info message is
+    one of these.
+    """
+
+    tag = CLASS_APPLICATION | 0x19
+
+    responseName: bytes | None
+    responseValue: bytes | None
+
+    @classmethod
+    def fromBER(
+        klass,
+        tag: int,
+        content: bytes,
+        berdecoder: BERDecoderContext | None = None,
+    ) -> Self:
+        l = berDecodeMultiple(
+            content, LDAPBERDecoderContext_LDAPIntermediateResponse(fallback=berdecoder)
+        )
+        responseName: bytes | None = None
+        responseValue: bytes | None = None
+        for obj in l:
+            assert isinstance(obj, BEROctetString)
+            if obj.tag == CLASS_CONTEXT | 0x00:
+                responseName = to_bytes(obj.value)
+            else:
+                responseValue = to_bytes(obj.value)
+        return klass(
+            responseName=responseName, responseValue=responseValue, tag=tag
+        )
+
+    def __init__(
+        self,
+        responseName: str | bytes | None = None,
+        responseValue: str | bytes | None = None,
+        tag: int | None = None,
+    ) -> None:
+        BERSequence.__init__(self, value=[], tag=tag)
+        self.responseName = None if responseName is None else to_bytes(responseName)
+        self.responseValue = None if responseValue is None else to_bytes(responseValue)
+
+    def toWire(self) -> bytes:
+        l: list[BERBase] = []
+        if self.responseName is not None:
+            l.append(LDAPOID(self.responseName, tag=CLASS_CONTEXT | 0x00))
+        if self.responseValue is not None:
+            l.append(BEROctetString(self.responseValue, tag=CLASS_CONTEXT | 0x01))
+        return BERSequence(l, tag=self.tag).toWire()
+
+    def __repr__(self) -> str:
+        return "{}(responseName={!r}, responseValue={!r})".format(
+            self.__class__.__name__, self.responseName, self.responseValue
+        )
+
+
+LDAPBERDecoderContext_LDAPMessage.Identities[LDAPIntermediateResponse.tag] = (
+    LDAPIntermediateResponse
+)
 
 
 class LDAPStartTLSRequest(LDAPExtendedRequest):

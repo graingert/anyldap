@@ -21,6 +21,7 @@ anyldap is a pure-Python, AnyIO-based library for Python 3.10 and newer that
 implements:
 
 - LDAP client and server logic
+- a client with python-ldap's API, awaited rather than blocking
 - separately-accessible LDAP and BER protocol message generation/parsing
 - ASCII-format LDAP filter generation and parsing
 - LDIF format data generation
@@ -64,6 +65,39 @@ Quick Usage Example
 
     if __name__ == "__main__":
         anyio.run(example)
+
+
+python-ldap's API, awaited
+--------------------------
+
+``anyldap.ldap`` is python-ldap's ``ldap`` module with every operation
+awaited, so code written against python-ldap ports by adding ``await``:
+
+.. code-block:: python
+
+    import anyio
+
+    from anyldap import ldap
+
+
+    async def example():
+        async with ldap.initialize("ldap://ldap.example.com") as connection:
+            await connection.simple_bind_s("bjensen@example.com", b"secret")
+            results = await connection.search_s(
+                "dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=Babs*)"
+            )
+            for dn, attributes in results:
+                print(dn, attributes)
+
+
+    if __name__ == "__main__":
+        anyio.run(example)
+
+What it does and does not cover is in the `documentation
+<https://anyldap.readthedocs.io/en/latest/anyldap.ldap.html>`_. Its answers
+are checked against python-ldap itself, running the same operations against
+one OpenLDAP server; those tests live in ``interop/`` and run with ``tox -e
+interop``.
 
 
 Installation
