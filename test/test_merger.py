@@ -26,7 +26,8 @@ from anyldap.protocols.pureldap import (
     LDAPUnbindRequest,
 )
 from anyldap.runtime import ConnectionDone
-from anyldap.test._anyio_helpers import AsyncLDAPClientDriver
+
+from ._anyio_helpers import AsyncLDAPClientDriver
 
 pytestmark = pytest.mark.anyio
 

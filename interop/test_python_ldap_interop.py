@@ -21,6 +21,7 @@ Skipped, rather than failed, when slapd or python-ldap is missing.
 import os
 import sys
 from collections.abc import Callable, Iterator
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -667,11 +668,13 @@ async def test_paged_results_walk_the_same_pages(
                     where, aldap.SCOPE_ONELEVEL, "(cn=page*)", serverctrls=[control]
                 )
                 _, data, _, ctrls = await connection.result3(msgid)
-                pages.append(sorted(dn for dn, _ in data))
+                # A paged search of entries hands back no references, so
+                # every result has a name.
+                pages.append(sorted(dn for dn, _ in data if dn is not None))
                 cookies = [
                     c.cookie
                     for c in ctrls
-                    if c.controlType == aldap.CONTROL_PAGEDRESULTS
+                    if isinstance(c, aldap.controls.SimplePagedResultsControl)
                 ]
                 if not cookies or not cookies[0]:
                     return pages
@@ -706,7 +709,8 @@ async def test_the_schema_is_read_the_same_way(slapd: Any) -> None:
     for name in ("person", "organizationalUnit", "top"):
         mine = ours.get_obj(aldap.schema.ObjectClass, name)
         theirs = their_subschema.get_obj(ldap.schema.ObjectClass, name)
-        assert mine is not None and theirs is not None
+        assert isinstance(mine, aldap.schema.ObjectClass)
+        assert theirs is not None
         assert (mine.oid, mine.names, mine.kind) == (
             theirs.oid,
             theirs.names,
@@ -718,7 +722,8 @@ async def test_the_schema_is_read_the_same_way(slapd: Any) -> None:
     for name in ("cn", "objectClass", "userPassword"):
         mine_at = ours.get_obj(aldap.schema.AttributeType, name)
         theirs_at = their_subschema.get_obj(ldap.schema.AttributeType, name)
-        assert mine_at is not None and theirs_at is not None
+        assert isinstance(mine_at, aldap.schema.AttributeType)
+        assert theirs_at is not None
         assert (mine_at.oid, mine_at.names, mine_at.syntax, mine_at.equality) == (
             theirs_at.oid,
             theirs_at.names,
@@ -767,9 +772,11 @@ def test_ldif_is_written_and_read_the_way_python_ldaps_own_module_does() -> None
         ),
     ]
 
-    def write(module: object, cols: int, base64_attrs: list[str] | None) -> str:
+    # Either module: python-ldap's has no type hints of its own, so what is
+    # said here is that both are modules and what is read off them is theirs.
+    def write(module: ModuleType, cols: int, base64_attrs: list[str] | None) -> str:
         out = io.StringIO()
-        writer = module.LDIFWriter(out, base64_attrs, cols)  # type: ignore[attr-defined]
+        writer = module.LDIFWriter(out, base64_attrs, cols)
         for dn, entry in records:
             writer.unparse(dn, entry)
         for dn, modlist in changes:
@@ -783,10 +790,10 @@ def test_ldif_is_written_and_read_the_way_python_ldaps_own_module_does() -> None
 
     written = write(their_ldif, 76, None)
 
-    def read(module: object) -> tuple[list[Any], list[Any], int | None]:
-        parser = module.LDIFRecordList(io.StringIO(written))  # type: ignore[attr-defined]
+    def read(module: ModuleType) -> tuple[list[Any], list[Any], int | None]:
+        parser = module.LDIFRecordList(io.StringIO(written))
         parser.parse_entry_records()
-        changer = module.LDIFRecordList(io.StringIO(written))  # type: ignore[attr-defined]
+        changer = module.LDIFRecordList(io.StringIO(written))
         changer.parse_change_records()
         return (
             list(parser.all_records),

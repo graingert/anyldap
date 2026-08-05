@@ -28,11 +28,11 @@ The reports are also produced in HTML at:
 * build/coverage-html/index.html
 * build/coverage-diff.html
 
-You can run a subset of the test by passing the dotted path to the test or
-test case, test module or test package::
+You can run a subset of the tests by passing pytest a node ID, a test module
+or a directory::
 
-    tox -e py312-test-dev anyldap.test.test_delta.TestModifyOp.testAsLDIF
-    tox -e py312-test-dev anyldap.test.test_usage
+    tox -e py312-test-dev test/test_delta.py::test_modify_op_survives_its_own_request
+    tox -e py312-test-dev test/test_usage.py
 
 
 Release notes

@@ -1,8 +1,8 @@
 *.pyc
 *.pyo
 _trial_temp/
-anyldap.test.*/
-anyldap/test/ldif/webtests.tmp
+test.test_*/
+test/ldif/webtests.tmp
 docs/*.png
 anyldap.egg-info
 .idea

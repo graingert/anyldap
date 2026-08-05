@@ -1,11 +1,11 @@
 from collections.abc import Iterable, Sequence
 from typing import TypeVar
 
+from anyldap.testutil import FailTest
+
+__all__ = ["FailTest", "assert_permutation", "collected"]
+
 _T = TypeVar("_T")
-
-
-class FailTest(AssertionError):
-    """Raised by test helpers when an expectation was not met."""
 
 
 def assert_permutation(first: Iterable[object], second: Iterable[object]) -> None:

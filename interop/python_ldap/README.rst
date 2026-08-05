@@ -101,7 +101,7 @@ What was not ported, and why
 - **``t_ldap_asyncsearch.py``**, whose only test is that ``ldap.async`` is
   the deprecated spelling of ``ldap.asyncsearch``. There is no deprecated
   spelling here. What ``ldap.asyncsearch`` does is tested in
-  ``anyldap/test``.
+  ``test``.
 - **The options that are the C library's** (from ``t_ldap_options.py``):
   ``OPT_API_INFO`` describes libldap, and ``OPT_CLIENT_CONTROLS`` and
   ``OPT_SERVER_CONTROLS`` are its default controls -- which upstream's own
@@ -124,7 +124,7 @@ What was not ported, and why
   python-ldap's fields is this client's own.
 - **The TLS ones** that read the peer certificate through the C library
   (``test_get_tls_peercert``, ``test_multiple_starttls``). StartTLS itself
-  is tested in ``anyldap/test/test_ldap.py``.
+  is tested in ``test/test_ldap.py``.
 - **``passwd_s(..., extract_newpw=True)``**, which decodes a
   server-generated password out of the extended response. The rest of
   ``test_passwd_s`` is ported.

@@ -7,9 +7,10 @@ import pytest
 
 from anyldap import testutil
 from anyldap.protocols import pureldap
-from anyldap.test import util
-from anyldap.test._anyio_helpers import AsyncLDAPClientDriver, MemoryByteStream
-from anyldap.test._testing import Clock, capture_logs
+
+from . import util
+from ._anyio_helpers import AsyncLDAPClientDriver, MemoryByteStream
+from ._testing import Clock, capture_logs
 
 pytestmark = pytest.mark.anyio
 

@@ -3,6 +3,7 @@
 import calendar
 import time
 from collections.abc import Callable
+from typing import TypeVar
 
 from anyldap.ldap import ldapobject
 from anyldap.ldap.dn import explode_dn as explode_dn
@@ -22,11 +23,25 @@ def strf_secs(secs: float) -> str:
 
 
 def strp_secs(dt_str: str) -> int:
-    """A generalized time, as seconds since the epoch."""
-    return int(time.mktime(time.strptime(dt_str, _GENERALIZED_TIME)) - time.timezone)
+    """A generalized time, as seconds since the epoch.
+
+    The time read is UTC, so it is turned back into seconds as UTC.
+    python-ldap goes through ``time.mktime()`` and subtracts
+    ``time.timezone``, which is an hour out wherever the local zone is on
+    summer time; this is the inverse of :func:`strf_secs` everywhere.
+    """
+    return int(calendar.timegm(time.strptime(dt_str, _GENERALIZED_TIME)))
 
 
-def escape_str(escape_func: Callable[[Value], str], val: str, *args: Value) -> str:
+# What an escaper takes. ``escape_filter_chars`` takes either text or bytes
+# and ``escape_dn_chars`` only text, so what may be escaped here is whatever
+# the escaper that was passed will take.
+_Escapable = TypeVar("_Escapable", bound=Value)
+
+
+def escape_str(
+    escape_func: Callable[[_Escapable], str], val: str, *args: _Escapable
+) -> str:
     """A template filled in with values that were escaped first.
 
     ``escape_func`` is what to escape them with: ``escape_filter_chars`` for

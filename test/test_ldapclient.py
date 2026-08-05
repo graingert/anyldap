@@ -13,7 +13,8 @@ from anyldap._async import ResultSlot
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapclient, ldaperrors, ldapserver
 from anyldap.runtime import Failure
-from anyldap.test._anyio_helpers import accept_one, local_address
+
+from ._anyio_helpers import accept_one, local_address
 
 pytestmark = pytest.mark.anyio
 

@@ -251,7 +251,11 @@ async def test_valid_attrlist_parameter_types(
     """Any iterable which only contains strings should not raise any errors."""
     valid = [{"a": "2"}, ["a", "b"], {}, set(), {"a", "b"}]
     for attrlist in valid:
-        await conn.search_ext(slapd.suffix, ldap.SCOPE_SUBTREE, attrlist=attrlist)
+        # A set is not a Sequence, which is what the signature asks for; what
+        # is being checked is what happens with one at run time.
+        await conn.search_ext(
+            slapd.suffix, ldap.SCOPE_SUBTREE, attrlist=attrlist  # type: ignore[arg-type]
+        )
 
 
 async def test_invalid_attrlist_parameter_types(
@@ -261,7 +265,10 @@ async def test_invalid_attrlist_parameter_types(
     invalid = [{1: 2}, 0, object(), "string"]
     for attrlist in invalid:
         with pytest.raises(TypeError):
-            await conn.search_ext(slapd.suffix, ldap.SCOPE_SUBTREE, attrlist=attrlist)
+            # Passing what the signature refuses is the point of the test.
+            await conn.search_ext(
+                slapd.suffix, ldap.SCOPE_SUBTREE, attrlist=attrlist  # type: ignore[arg-type]
+            )
 
 
 # Binding, and what the server says about itself.

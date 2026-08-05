@@ -7,7 +7,7 @@ from anyldap.protocols.ldap import ldapserver
 
 
 class DirectoryServer(ldapserver.LDAPServer):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.factory = ReadOnlyInMemoryLDAPEntry(
             dn="dc=example,dc=com",
@@ -15,7 +15,7 @@ class DirectoryServer(ldapserver.LDAPServer):
         )
 
 
-async def main():
+async def main() -> None:
     async with anyio.create_task_group() as task_group:
         host, port = await task_group.start(
             DirectoryServer.listen,

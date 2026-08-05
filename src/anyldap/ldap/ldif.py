@@ -214,6 +214,9 @@ class LDIFWriter:
         else:
             raise ValueError("modlist item of wrong length: %d" % (mod_len))
         self._unparseAttrTypeandValue("changetype", changetype.encode("ascii"))
+        # Which kind of record this is was decided by the length of the
+        # first item, and every item is that kind. mypy cannot get from one
+        # to the other, so the unpacking is what it is told to allow.
         for mod in modlist:
             mod_type: str
             mod_vals: Sequence[bytes] | None
