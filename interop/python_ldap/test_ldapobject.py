@@ -1,7 +1,7 @@
 """python-ldap's tests for ldap.ldapobject, run against anyldap.ldap.
 
-Ported from python-ldap 3.4.7: ``Tests/t_ldapobject.py``, with the two tests
-of ``Tests/t_bind.py`` and ``Tests/t_edit.py`` that apply. Copyright the
+Ported from python-ldap 3.4.7: ``Tests/t_ldapobject.py``, with the tests of
+``Tests/t_bind.py`` and ``Tests/t_edit.py`` that apply. Copyright the
 python-ldap authors; see LICENCE.python-ldap and LICENCE.python-ldap.MIT in
 this directory, and README.rst for what was changed and what was left out.
 
@@ -70,9 +70,28 @@ cn: Foo4
 """
 
 
-@pytest.fixture(scope="module")
-def slapd() -> Iterator[Any]:
-    """One OpenLDAP server holding python-ldap's own test entries."""
+SCHEMA_TEMPLATE = """dn: cn=mySchema,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: mySchema
+olcAttributeTypes: ( 1.3.6.1.4.1.56207.1.1.1 NAME 'myAttribute'
+    DESC 'fobar attribute'
+    EQUALITY caseExactMatch
+    ORDERING caseExactOrderingMatch
+    SUBSTR caseExactSubstringsMatch
+    SYNTAX 1.3.6.1.4.1.1466.115.121.1.15
+    SINGLE-VALUE
+    USAGE userApplications
+    X-ORIGIN 'foobar' )
+olcObjectClasses: ( 1.3.6.1.4.1.56207.1.2.2 NAME 'myClass'
+    DESC 'foobar objectclass'
+    SUP top
+    STRUCTURAL
+    MUST myAttribute
+    X-ORIGIN 'foobar' )"""
+
+
+def started() -> Any:
+    """An OpenLDAP server holding python-ldap's own test entries."""
     server = python_ldap_slapdtest.SlapdObject()
     server.start()
     try:
@@ -86,6 +105,32 @@ def slapd() -> Iterator[Any]:
                 "dc": server.suffix.split(",")[0][3:],
             }
         )
+    except Exception:
+        server.stop()
+        raise
+    return server
+
+
+@pytest.fixture(scope="module")
+def slapd() -> Iterator[Any]:
+    """One OpenLDAP server, shared by everything in this module."""
+    server = started()
+    try:
+        yield server
+    finally:
+        server.stop()
+
+
+@pytest.fixture
+def own_slapd() -> Iterator[Any]:
+    """A server for one test alone, which it may change.
+
+    The module's slapd is started once and used by both backend runs, so a
+    test that changes what the server *is* -- rather than what it holds --
+    needs one nobody else will see afterwards.
+    """
+    server = started()
+    try:
         yield server
     finally:
         server.stop()
@@ -469,3 +514,41 @@ async def test_reconnect_after_the_server_goes_away_and_comes_back(
     assert await connection.whoami_s() == "dn:" + bind_dn
     assert await connection.search_ext_s(bind_dn, ldap.SCOPE_BASE)
     await connection.unbind_s()
+
+
+async def test_slapadd(own_slapd: Any) -> None:
+    """From t_ldapobject.py: schema added to a server is used by it.
+
+    The entry cannot be added before the schema describes what it is, and
+    can be once the server has been given it and started again.
+    """
+    dn = "myAttribute=foobar,ou=Container,%s" % own_slapd.suffix
+    entry = [("objectClass", b"myClass"), ("myAttribute", b"foobar")]
+
+    async with ldap.initialize(own_slapd.ldap_uri) as connection:
+        await connection.simple_bind_s(own_slapd.root_dn, own_slapd.root_pw)
+        with pytest.raises(ldap.INVALID_DN_SYNTAX):
+            await connection.add_s(dn, entry)
+
+    own_slapd.slapadd(SCHEMA_TEMPLATE, ["-n0"])
+    own_slapd.restart()
+
+    async with ldap.initialize(own_slapd.ldap_uri) as connection:
+        await connection.simple_bind_s(own_slapd.root_dn, own_slapd.root_pw)
+        await connection.add_s(dn, entry)
+        assert await connection.read_s(dn, attrlist=["myAttribute"]) == {
+            "myAttribute": [b"foobar"]
+        }
+
+
+async def test_unicode_bind(slapd: Any) -> None:
+    """From t_bind.py: a bind takes text, for the name and the password both.
+
+    Nothing is asserted about the answer, as upstream asserts nothing: what
+    is being checked is that neither is refused for what it is.
+    """
+    unicode_val = "abc\U0001f498def"
+    async with ldap.initialize(slapd.ldap_uri) as connection:
+        assert isinstance(await connection.simple_bind("CN=" + unicode_val, "ascii"), int)
+    async with ldap.initialize(slapd.ldap_uri) as connection:
+        assert isinstance(await connection.simple_bind("CN=user", unicode_val), int)

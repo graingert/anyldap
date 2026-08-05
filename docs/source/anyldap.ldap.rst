@@ -115,6 +115,25 @@ uses the connection that is already open::
 
     dn, subschema = await ldap.schema.urlfetch("ldap://localhost")
 
+It takes the address of an LDIF file as well, and reads the schema out of
+its first record -- which is how a schema someone else published is read
+without a server to ask::
+
+    dn, subschema = await ldap.schema.urlfetch("file:///tmp/subschema.ldif")
+
+Only ``file:``, ``http:`` and ``https:`` are read, and anything else is
+refused. python-ldap hands the address to :func:`urllib.request.urlopen`,
+which fetches whatever scheme it happens to support -- so an address that
+was meant to name a file can turn out to be a request, and one that was
+meant to be a request can turn out to read a file. An ``http:`` address is
+fetched with `httpx2 <https://pypi.org/project/httpx2/>`_. The same two
+rules apply to the URLs :mod:`anyldap.ldap.ldif` fetches when it is told to
+fetch any.
+
+A definition may name itself rather than be numbered
+(``( nsEncryptionConfig-oid NAME 'nsEncryptionConfig' ... )``), which RFC
+4512 section 1.4 allows and 389-ds publishes a great many of.
+
 TLS
 ---
 
@@ -139,6 +158,61 @@ an LDAP URL taken apart into what it says, and written back out again::
 
 ``who`` and ``cred`` are the bind DN and its password, which a URL carries
 as the ``bindname`` and ``X-BINDPW`` extensions.
+
+LDIF
+----
+
+:mod:`anyldap.ldap.ldif` is python-ldap's top-level ``ldif`` module. anyldap
+has an LDIF reader of its own in :mod:`anyldap.protocols.ldap.ldifprotocol`,
+but it is a line-receiving protocol answering with the objects the rest of
+anyldap is built out of, which is not what code written against python-ldap
+asks for. Nothing in it touches the network, so nothing in it is awaited::
+
+    from anyldap.ldap import ldif
+
+    records = ldif.LDIFRecordList(open("people.ldif"))
+    records.parse()
+    for dn, entry in records.all_records:
+        await connection.add_s(dn, ldap.modlist.addModlist(entry))
+
+``LDIFWriter`` writes entry records and change records, folding long lines
+and base64-encoding whatever RFC 2849 does not allow to be written as it
+stands; ``LDIFParser`` reads them, and a class of your own overrides
+``handle()`` or ``handle_modify()``. ``LDIFRecordList`` collects them all,
+and ``LDIFCopy`` reads and writes at once. ``CreateLDIF()`` and
+``ParseLDIF()``, which python-ldap has deprecated, are not here.
+
+A value an LDIF names by URL (``jpegPhoto:< file:///…``) is fetched only
+when ``process_url_schemes`` says which schemes to fetch, and is left unread
+otherwise -- which is what python-ldap does too. Of the schemes that can be
+asked for, ``file``, ``http`` and ``https`` are the ones that are read.
+
+Following referrals
+-------------------
+
+A server that does not hold what was asked for can say where to look
+instead, and unless ``OPT_REFERRALS`` is turned off the operation is made
+again there, which is what libldap does and so what python-ldap inherits::
+
+    # On by default, and read back as -1 however it was set, as libldap
+    # keeps it.
+    connection.set_option(ldap.OPT_REFERRALS, 0)
+
+A referral is followed anonymously: it says where to look and nothing about
+whose credentials may be sent there. For the same reason a bind is never
+followed -- the referral it is answered with is raised instead. A search
+continuation is followed too, and what the other server holds is added to
+what the search found; the continuation itself stays among the results as
+``(None, [uri, ...])``, which is what python-ldap hands back whether or not
+it followed one.
+
+When no server a referral names can be reached, the referral is raised as
+:exc:`~anyldap.ldap.errors.REFERRAL`, carrying the URLs as its ``info`` and
+how far the name was recognised as its ``matched``. Referrals are followed
+five deep, after which one is called a loop and
+:exc:`~anyldap.ldap.errors.REFERRAL_LIMIT_EXCEEDED` is raised. That is
+libldap's own limit; like libldap, this does not let it be set, so asking
+for ``OPT_REFHOPLIMIT`` is an error.
 
 Reading a long search
 ---------------------
@@ -229,9 +303,9 @@ What is not here
 - **The ``OPT_X_SASL_*`` options beyond what they say**: they supply the
   defaults a mechanism reads and report what the bind ended up with, rather
   than configuring Cyrus SASL, which is not what does the exchange here.
-- **Referrals are never chased**: a search hands back the referral URLs as
-  ``(None, [uri, ...])``, which is what python-ldap does with
-  ``OPT_REFERRALS`` off.
+- **A referral that points at itself** stops rather than being followed
+  until something else gives up. libldap keeps going, and what ends it
+  there is the timeout rather than the hop limit.
 
 ``abandon()`` sends a real abandon request and forgets the operation, but
 the server may already have answered.
@@ -363,6 +437,14 @@ anyldap.ldap.ldapurl module
 ---------------------------
 
 .. automodule:: anyldap.ldap.ldapurl
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+anyldap.ldap.ldif module
+------------------------
+
+.. automodule:: anyldap.ldap.ldif
     :members:
     :undoc-members:
     :show-inheritance:

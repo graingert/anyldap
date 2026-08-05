@@ -1,9 +1,11 @@
 """``ldap.schema.subentry``: the schema a server publishes, read into objects."""
 
+import io
 from collections.abc import Iterable, Mapping, Sequence
+from typing import cast
 
 from anyldap._encoder import to_unicode
-from anyldap.ldap import cidict
+from anyldap.ldap import _fetch, cidict
 from anyldap.ldap.schema.models import (
     NOT_HUMAN_READABLE_LDAP_SYNTAXES as NOT_HUMAN_READABLE_LDAP_SYNTAXES,
 )
@@ -253,27 +255,48 @@ def _attribute_name(attribute: str) -> str:
     return to_unicode(attribute)
 
 
-async def urlfetch(uri: str, trace_level: int = 0) -> tuple[str | None, "SubSchema | None"]:
-    """The schema the server named by this LDAP URL publishes.
+def _read_ldif(read: bytes) -> tuple[str | None, Mapping[str, list[bytes]]]:
+    """The first record of some LDIF."""
+    from anyldap.ldap import ldif
 
-    python-ldap takes either an LDAP URL or the address of an LDIF file
-    here; this takes the URL. A connection is opened, bound as the URL says
-    to bind, asked where its schema is and then for the schema itself, and
-    closed again -- which is what makes this different from
-    ``read_schema_s()`` on a connection that is already open.
+    records = ldif.LDIFRecordList(io.BytesIO(read), max_entries=1)
+    records.parse()
+    dn, entry = records.all_records[0]
+    # Only a value the LDIF names by URL is ever None, and none are fetched.
+    return dn, cast(Mapping[str, list[bytes]], entry)
+
+
+async def urlfetch(uri: str, trace_level: int = 0) -> tuple[str | None, "SubSchema | None"]:
+    """The schema an LDAP URL, or an LDIF file, says a server publishes.
+
+    An ``ldap://``, ``ldaps://`` or ``ldapi://`` URL is asked: a connection
+    is opened, bound as the URL says to bind, asked where its schema is and
+    then for the schema itself, and closed again -- which is what makes this
+    different from ``read_schema_s()`` on a connection that is already open.
+    Anything else is the address of an LDIF file, and its first record is
+    the schema, which is what python-ldap makes of one too. Unlike
+    python-ldap's, which hands the address to ``urlopen``, only ``file:``,
+    ``http:`` and ``https:`` are read.
     """
     from anyldap.ldap import cidict, ldapobject
     from anyldap.ldap.ldapurl import LDAPUrl
 
-    url = LDAPUrl(uri.strip())
-    async with ldapobject.SimpleLDAPObject(url.initializeUrl(), trace_level) as conn:
-        await conn.simple_bind_s(url.who or "", url.cred or "")
-        subschemasubentry_dn = await conn.search_subschemasubentry_s(url.dn)
-        if subschemasubentry_dn is None:
-            return None, None
-        published = await conn.read_subschemasubentry_s(
-            subschemasubentry_dn, attrs=url.attrs if url.attrs else SCHEMA_ATTRS
-        )
+    uri = uri.strip()
+    published: Mapping[str, list[bytes]] | None
+    if not uri.startswith(("ldap:", "ldaps:", "ldapi:")):
+        subschemasubentry_dn, published = _read_ldif(await _fetch.read_async(uri))
+    else:
+        url = LDAPUrl(uri)
+        async with ldapobject.SimpleLDAPObject(
+            url.initializeUrl(), trace_level
+        ) as conn:
+            await conn.simple_bind_s(url.who or "", url.cred or "")
+            subschemasubentry_dn = await conn.search_subschemasubentry_s(url.dn)
+            if subschemasubentry_dn is None:
+                return None, None
+            published = await conn.read_subschemasubentry_s(
+                subschemasubentry_dn, attrs=url.attrs if url.attrs else SCHEMA_ATTRS
+            )
 
     # Work-around for mixed-cased attribute names
     entry: cidict.cidict[list[bytes]] = cidict.cidict()

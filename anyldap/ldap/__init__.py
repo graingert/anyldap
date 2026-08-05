@@ -37,6 +37,7 @@ from anyldap.ldap import extop as extop
 from anyldap.ldap import filter as filter
 from anyldap.ldap import functions as functions
 from anyldap.ldap import ldapurl as ldapurl
+from anyldap.ldap import ldif as ldif
 from anyldap.ldap import modlist as modlist
 from anyldap.ldap import sasl as sasl
 from anyldap.ldap import schema as schema

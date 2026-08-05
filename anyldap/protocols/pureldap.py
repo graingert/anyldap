@@ -320,6 +320,32 @@ class LDAPReferral(BERSequence):
     tag = CLASS_CONTEXT | 0x03
 
 
+def _referral(uris: Sequence[str | bytes] | None) -> LDAPReferral | None:
+    """The referral field of a result, out of the URLs it names."""
+    if not uris:
+        return None
+    return LDAPReferral([LDAPString(uri) for uri in uris])
+
+
+def _referral_uris(referral: BERBase) -> list[bytes]:
+    """The URLs a decoded referral field names."""
+    assert isinstance(referral, LDAPReferral)
+    uris = []
+    for uri in referral:
+        assert isinstance(uri, BEROctetString)
+        uris.append(to_bytes(uri.value))
+    return uris
+
+
+# A result's referral is [3], the same tag a bind request's SASL credentials
+# have; which one a message carries depends on what kind of message it is, so
+# results are decoded with a context that says a referral is what [3] means.
+class LDAPBERDecoderContext_LDAPResult(BERDecoderContext):
+    Identities = {
+        LDAPReferral.tag: LDAPReferral,
+    }
+
+
 class LDAPBERDecoderContext_LDAPSearchResultReference(BERDecoderContext):
     Identities = {
         BEROctetString.tag: LDAPString,
@@ -371,7 +397,7 @@ class LDAPResult(LDAPProtocolResponse, BERSequence):
         berdecoder: BERDecoderContext | None = None,
     ) -> Self:
         l = berDecodeMultiple(
-            content, LDAPBERDecoderContext_LDAPBindRequest(fallback=berdecoder)
+            content, LDAPBERDecoderContext_LDAPResult(fallback=berdecoder)
         )
 
         assert 3 <= len(l) <= 4
@@ -381,10 +407,7 @@ class LDAPResult(LDAPProtocolResponse, BERSequence):
         assert isinstance(matchedDN, BEROctetString)
         assert isinstance(errorMessage, BEROctetString)
 
-        referral = None
-        # if (l[3:] and isinstance(l[3], LDAPReferral)):
-        # TODO support referrals
-        # self.referral=self.data[0]
+        referral = _referral_uris(l[3]) if l[3:] else None
 
         r = klass(
             resultCode=resultCode.value,
@@ -400,7 +423,7 @@ class LDAPResult(LDAPProtocolResponse, BERSequence):
         resultCode: int | None = None,
         matchedDN: str | bytes | None = None,
         errorMessage: str | bytes | None = None,
-        referral: object = None,
+        referral: Sequence[str | bytes] | None = None,
         serverSaslCreds: str | bytes | None = None,
         tag: int | None = None,
     ) -> None:
@@ -418,26 +441,17 @@ class LDAPResult(LDAPProtocolResponse, BERSequence):
         self.serverSaslCreds = serverSaslCreds
 
     def toWire(self) -> bytes:
-        assert self.referral is None  # TODO
+        l: list[BERBase] = [
+            BEREnumerated(self.resultCode),
+            BEROctetString(self.matchedDN),
+            BEROctetString(self.errorMessage),
+        ]
+        referral = _referral(self.referral)
+        if referral is not None:
+            l.append(referral)
         if self.serverSaslCreds:
-            return BERSequence(
-                [
-                    BEREnumerated(self.resultCode),
-                    BEROctetString(self.matchedDN),
-                    BEROctetString(self.errorMessage),
-                    LDAPBindResponse_serverSaslCreds(self.serverSaslCreds),
-                ],
-                tag=self.tag,
-            ).toWire()
-        else:
-            return BERSequence(
-                [
-                    BEREnumerated(self.resultCode),
-                    BEROctetString(self.matchedDN),
-                    BEROctetString(self.errorMessage),
-                ],
-                tag=self.tag,
-            ).toWire()
+            l.append(LDAPBindResponse_serverSaslCreds(self.serverSaslCreds))
+        return BERSequence(l, tag=self.tag).toWire()
 
     def __repr__(self) -> str:
         l = []
@@ -469,6 +483,7 @@ class LDAPBindResponse_serverSaslCreds(BEROctetString):
 class LDAPBERDecoderContext_BindResponse(BERDecoderContext):
     Identities = {
         LDAPBindResponse_serverSaslCreds.tag: LDAPBindResponse_serverSaslCreds,
+        LDAPReferral.tag: LDAPReferral,
     }
 
 
@@ -486,21 +501,15 @@ class LDAPBindResponse(LDAPResult):
             content, LDAPBERDecoderContext_BindResponse(fallback=berdecoder)
         )
 
-        assert 3 <= len(l) <= 4
+        assert 3 <= len(l) <= 5
 
-        serverSaslCreds: str | bytes | None
-        try:
-            if isinstance(l[3], LDAPBindResponse_serverSaslCreds):
-                serverSaslCreds = l[3].value
+        serverSaslCreds: str | bytes | None = None
+        referral: list[bytes] | None = None
+        for obj in l[3:]:
+            if isinstance(obj, LDAPBindResponse_serverSaslCreds):
+                serverSaslCreds = obj.value
             else:
-                serverSaslCreds = None
-        except IndexError:
-            serverSaslCreds = None
-
-        referral = None
-        # if (l[3:] and isinstance(l[3], LDAPReferral)):
-        # TODO support referrals
-        # self.referral=self.data[0]
+                referral = _referral_uris(obj)
 
         resultCode, matchedDN, errorMessage = l[0], l[1], l[2]
         assert isinstance(resultCode, BERInteger)
@@ -522,7 +531,7 @@ class LDAPBindResponse(LDAPResult):
         resultCode: int | None = None,
         matchedDN: str | bytes | None = None,
         errorMessage: str | bytes | None = None,
-        referral: object = None,
+        referral: Sequence[str | bytes] | None = None,
         serverSaslCreds: str | bytes | None = None,
         tag: int | None = None,
     ) -> None:
@@ -1933,6 +1942,7 @@ class LDAPBERDecoderContext_LDAPExtendedResponse(BERDecoderContext):
     Identities = {
         LDAPResponseName.tag: LDAPResponseName,
         LDAPResponse.tag: LDAPResponse,
+        LDAPReferral.tag: LDAPReferral,
     }
 
 
@@ -1954,7 +1964,7 @@ class LDAPExtendedResponse(LDAPResult):
 
         assert 3 <= len(l) <= 6
 
-        referral = None
+        referral: list[bytes] | None = None
         responseName: str | bytes | None = None
         response: str | bytes | None = None
         for obj in l[3:]:
@@ -1963,9 +1973,7 @@ class LDAPExtendedResponse(LDAPResult):
             elif isinstance(obj, LDAPResponse):
                 response = obj.value
             elif isinstance(obj, LDAPReferral):
-                # TODO support referrals
-                # self.referral=self.data[0]
-                pass
+                referral = _referral_uris(obj)
             else:
                 assert False
 
@@ -1988,7 +1996,7 @@ class LDAPExtendedResponse(LDAPResult):
         resultCode: int | None = None,
         matchedDN: str | bytes | None = None,
         errorMessage: str | bytes | None = None,
-        referral: object = None,
+        referral: Sequence[str | bytes] | None = None,
         serverSaslCreds: str | bytes | None = None,
         responseName: str | bytes | None = None,
         response: str | bytes | None = None,
@@ -2007,13 +2015,14 @@ class LDAPExtendedResponse(LDAPResult):
         self.response = response
 
     def toWire(self) -> bytes:
-        assert self.referral is None  # TODO
         l: list[BERBase] = [
             BEREnumerated(self.resultCode),
             BEROctetString(self.matchedDN),
             BEROctetString(self.errorMessage),
-            # TODO referral [3] Referral OPTIONAL
         ]
+        referral = _referral(self.referral)
+        if referral is not None:
+            l.append(referral)
         if self.responseName is not None:
             l.append(LDAPOID(self.responseName, tag=CLASS_CONTEXT | 0x0A))
         if self.response is not None:
@@ -2130,7 +2139,7 @@ class LDAPStartTLSResponse(LDAPExtendedResponse):
         resultCode: int | None = None,
         matchedDN: str | bytes | None = None,
         errorMessage: str | bytes | None = None,
-        referral: object = None,
+        referral: Sequence[str | bytes] | None = None,
         serverSaslCreds: str | bytes | None = None,
         responseName: str | bytes | None = None,
         response: str | bytes | None = None,

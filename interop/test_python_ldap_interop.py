@@ -733,3 +733,167 @@ async def test_the_schema_is_read_the_same_way(slapd: Any) -> None:
         their_must, their_may = their_subschema.attribute_types(classes)
         assert sorted(my_must) == sorted(their_must)
         assert sorted(my_may) == sorted(their_may)
+
+
+def test_ldif_is_written_and_read_the_way_python_ldaps_own_module_does() -> None:
+    """The LDIF module, which needs no server: same bytes out, same records in."""
+    import io
+
+    import ldif as their_ldif
+
+    from anyldap.ldap import ldif as our_ldif
+
+    records: list[tuple[str, dict[str, list[bytes]]]] = [
+        ("cn=Michael Ströder,dc=example,dc=com", {"cn": [b"Michael Str\303\266der"]}),
+        (
+            "uid=jack,ou=People,dc=example,dc=com",
+            {
+                "objectClass": [b"inetOrgPerson", b"top"],
+                "uid": [b"jack"],
+                "description": [b"z" * 200, b" leading", b"trailing ", b"", b"a\nb"],
+                "jpegPhoto": [bytes(range(256))],
+            },
+        ),
+    ]
+    changes: list[tuple[str, list[tuple[int, str, list[bytes] | None]]]] = [
+        (
+            "uid=jack,ou=People,dc=example,dc=com",
+            [
+                (ldap.MOD_REPLACE, "description", [b"one", b"two"]),
+                (ldap.MOD_ADD, "cn", [b"Jack"]),
+                (ldap.MOD_DELETE, "seeAlso", None),
+                (ldap.MOD_INCREMENT, "uidNumber", [b"1"]),
+            ],
+        ),
+    ]
+
+    def write(module: object, cols: int, base64_attrs: list[str] | None) -> str:
+        out = io.StringIO()
+        writer = module.LDIFWriter(out, base64_attrs, cols)  # type: ignore[attr-defined]
+        for dn, entry in records:
+            writer.unparse(dn, entry)
+        for dn, modlist in changes:
+            writer.unparse(dn, modlist)
+        assert writer.records_written == len(records) + len(changes)
+        return out.getvalue()
+
+    for cols, base64_attrs in ((76, None), (20, ["description"]), (200, [])):
+        theirs = write(their_ldif, cols, base64_attrs)
+        assert write(our_ldif, cols, base64_attrs) == theirs
+
+    written = write(their_ldif, 76, None)
+
+    def read(module: object) -> tuple[list[Any], list[Any], int | None]:
+        parser = module.LDIFRecordList(io.StringIO(written))  # type: ignore[attr-defined]
+        parser.parse_entry_records()
+        changer = module.LDIFRecordList(io.StringIO(written))  # type: ignore[attr-defined]
+        changer.parse_change_records()
+        return (
+            list(parser.all_records),
+            list(changer.all_modify_changes),
+            parser.records_read,
+        )
+
+    assert read(our_ldif) == read(their_ldif)
+    # And the pieces beside the classes say the same things.
+    assert our_ldif.MOD_OP_INTEGER == their_ldif.MOD_OP_INTEGER
+    assert our_ldif.MOD_OP_STR == their_ldif.MOD_OP_STR
+    assert our_ldif.CHANGE_TYPES == their_ldif.CHANGE_TYPES
+    assert our_ldif.SAFE_STRING_PATTERN == their_ldif.SAFE_STRING_PATTERN
+    assert our_ldif.ldif_pattern == their_ldif.ldif_pattern
+    for candidate in ("", "cn=x,dc=y", "[not a dn]", "cn=x+sn=y,dc=z"):
+        assert bool(our_ldif.is_dn(candidate)) == bool(their_ldif.is_dn(candidate))
+
+
+@pytest.fixture(scope="module")
+def referring(slapd: Any) -> Iterator[Any]:
+    """A second server, and an entry on the first one referring to it.
+
+    Both hold the same suffix, so what the referral points at is there to be
+    found: a referral names a server, and the DN it does not name is the one
+    already asked for.
+    """
+    away = Slapd()
+    away.start()
+    try:
+        base = away.suffix.split(",")[0].split("=")[1]
+        away.ldapadd(
+            f"""dn: {away.suffix}
+objectClass: dcObject
+objectClass: organization
+dc: {base}
+o: {base}
+
+dn: ou=Away,{away.suffix}
+objectClass: organizationalUnit
+ou: Away
+
+dn: cn=over-there,ou=Away,{away.suffix}
+objectClass: organizationalRole
+cn: over-there
+"""
+        )
+        slapd.ldapadd(
+            f"""dn: ou=Away,{slapd.suffix}
+objectClass: referral
+objectClass: extensibleObject
+ou: Away
+ref: {away.ldap_uri}
+"""
+        )
+        yield away
+    finally:
+        away.stop()
+
+
+async def test_referrals_are_followed_the_same_way(slapd: Any, referring: Any) -> None:
+    """One server refers to another, with chasing off and then on."""
+    where = f"ou=Away,{slapd.suffix}"
+
+    def theirs(chase: int) -> object:
+        connection = ldap.initialize(slapd.ldap_uri)
+        connection.set_option(ldap.OPT_REFERRALS, chase)
+        try:
+            connection.simple_bind_s(slapd.root_dn, slapd.root_pw)
+            try:
+                return sorted(connection.search_s(where, ldap.SCOPE_SUBTREE, "(cn=*)"))
+            except ldap.LDAPError as exc:
+                return (type(exc).__name__, exc.args[0]["desc"], exc.args[0]["info"])
+        finally:
+            connection.unbind_s()
+
+    async def ours(chase: int) -> object:
+        async with aldap.initialize(slapd.ldap_uri) as connection:
+            connection.set_option(aldap.OPT_REFERRALS, chase)
+            await connection.simple_bind_s(slapd.root_dn, slapd.root_pw)
+            try:
+                return sorted(
+                    await connection.search_s(where, aldap.SCOPE_SUBTREE, "(cn=*)")
+                )
+            except aldap.LDAPError as exc:
+                return (type(exc).__name__, exc.args[0]["desc"], exc.args[0]["info"])
+
+    # The option is kept the way libldap keeps it, whichever client set it.
+    connection = ldap.initialize(slapd.ldap_uri)
+    for chase in (0, 1):
+        connection.set_option(ldap.OPT_REFERRALS, chase)
+        async with aldap.initialize(slapd.ldap_uri) as mine:
+            mine.set_option(aldap.OPT_REFERRALS, chase)
+            assert mine.get_option(aldap.OPT_REFERRALS) == connection.get_option(
+                ldap.OPT_REFERRALS
+            )
+    connection.unbind_s()
+
+    # Left alone, the referral is the answer, and it is the same answer.
+    left_alone = theirs(0)
+    assert await ours(0) == left_alone
+    assert isinstance(left_alone, tuple) and left_alone[0] == "REFERRAL"
+    # Followed, the entry over there is found, and it is the same entry.
+    followed = theirs(1)
+    assert await ours(1) == followed
+    assert followed == [
+        (
+            f"cn=over-there,{where}",
+            {"cn": [b"over-there"], "objectClass": [b"organizationalRole"]},
+        )
+    ]

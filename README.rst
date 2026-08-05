@@ -99,9 +99,9 @@ handful of things only libldap can answer are not here:
         anyio.run(example)
 
 ``ldap.controls``, ``ldap.schema``, ``ldap.sasl``, ``ldap.dn``, ``ldap.filter``,
-``ldap.modlist``, ``ldap.cidict``, ``ldap.ldapurl``, ``ldap.asyncsearch``,
-``ldap.syncrepl`` and ``ReconnectLDAPObject`` are here too. What it does and
-does not cover is in the `documentation
+``ldap.modlist``, ``ldap.cidict``, ``ldap.ldapurl``, ``ldap.ldif``,
+``ldap.asyncsearch``, ``ldap.syncrepl`` and ``ReconnectLDAPObject`` are here
+too. What it does and does not cover is in the `documentation
 <https://anyldap.readthedocs.io/en/latest/anyldap.ldap.html>`_. Most of
 python-ldap's own test suite is ported under ``interop/``, next to tests that
 run the same operations through both libraries against one OpenLDAP server and
@@ -126,5 +126,6 @@ Dependencies:
 
 - `AnyIO <https://pypi.org/project/anyio/>`_ for asynchronous networking
 - `dnspython <https://pypi.org/project/dnspython/>`_ for LDAP service discovery
+- `httpx2 <https://pypi.org/project/httpx2/>`_ for fetching a schema over HTTP
 - `pyparsing <https://pypi.org/project/pyparsing/>`_ for LDAP filters
 - `zope.interface <https://pypi.org/project/zope.interface/>`_

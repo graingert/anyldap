@@ -5,12 +5,13 @@ the python-ldap authors; see LICENCE.python-ldap and LICENCE.python-ldap.MIT
 in this directory, and README.rst for what was changed.
 
 Upstream reads its schema out of two LDIF files of about half a megabyte
-each. Those are not vendored here; the definitions each test needs are
-inline instead, taken from those files, and the tests that read a whole
-schema read it from slapd.
+each. Those are here, under ``data/``, and the tests that read a whole
+schema read them. The definitions the smaller tests need are inline as
+well, taken from the same files.
 """
 
 import os
+import pathlib
 from collections.abc import Iterator
 from typing import Any
 
@@ -30,6 +31,13 @@ if not any(
     pytest.skip("slapd is not installed", allow_module_level=True)
 
 pytestmark = pytest.mark.anyio
+
+HERE = pathlib.Path(__file__).parent
+
+TEST_SUBSCHEMA_FILES = (
+    HERE / "data" / "subschema-ipa.demo1.freeipa.org.ldif",
+    HERE / "data" / "subschema-openldap-all.ldif",
+)
 
 # From subschema-ipa.demo1.freeipa.org.ldif, which upstream reads these out of.
 KRB_HOST_SERVER = (
@@ -261,3 +269,38 @@ async def test_subschema_from_a_server(slapd: Any) -> None:
             assert attributetype.oid == oid
         for oid, attributetype in may.items():
             assert attributetype.oid == oid
+
+
+@pytest.mark.parametrize(
+    "test_file", TEST_SUBSCHEMA_FILES, ids=lambda path: path.name
+)
+def test_subschema_file(test_file: pathlib.Path) -> None:
+    """A whole schema, read out of the LDIF a real server published."""
+    with test_file.open("rb") as ldif_file:
+        ldif_parser = ldap.ldif.LDIFRecordList(ldif_file, max_entries=1)
+        ldif_parser.parse()
+    _, subschema_subentry = ldif_parser.all_records[0]
+    sub_schema = ldap.schema.SubSchema(subschema_subentry)
+
+    # Smoke-check for listall() and attribute_types()
+    for objclass in sub_schema.listall(ObjectClass):
+        must, may = sub_schema.attribute_types([objclass])
+
+        for oid, attributetype in must.items():
+            assert attributetype.oid == oid
+        for oid, attributetype in may.items():
+            assert attributetype.oid == oid
+
+
+async def test_urlfetch_file() -> None:
+    """urlfetch() takes the address of an LDIF file, as python-ldap's does."""
+    freeipa_uri = TEST_SUBSCHEMA_FILES[0].as_uri()
+    dn, schema = await ldap.schema.urlfetch(freeipa_uri)
+    assert dn == "cn=schema"
+    assert isinstance(schema, ldap.schema.subentry.SubSchema)
+    obj = schema.get_obj(ObjectClass, "2.5.6.9")
+    assert str(obj) == (
+        "( 2.5.6.9 NAME 'groupOfNames' SUP top STRUCTURAL MUST cn "
+        "MAY ( member $ businessCategory $ seeAlso $ owner $ ou $ o "
+        "$ description ) X-ORIGIN 'RFC 4519' )"
+    )

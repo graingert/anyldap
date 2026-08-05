@@ -25,10 +25,10 @@ Features
   be used from whichever task holds it.
 - The parts of python-ldap that live beside the connection are here under the
   same names: ``ldap.dn``, ``ldap.filter``, ``ldap.modlist``, ``ldap.cidict``,
-  ``ldap.functions``, ``ldap.sasl``, ``ldap.controls``, ``ldap.schema`` and
-  ``ldap.ldapurl``, along with the error classes, the constants and the
-  ``*_s``, ``*_ext`` and ``result3()``/``result4()`` spellings of each
-  operation.
+  ``ldap.functions``, ``ldap.sasl``, ``ldap.controls``, ``ldap.schema``,
+  ``ldap.ldapurl`` and ``ldap.ldif``, along with the error classes, the
+  constants and the ``*_s``, ``*_ext`` and ``result3()``/``result4()``
+  spellings of each operation.
 - SASL binds are driven by the client: EXTERNAL, PLAIN, CRAM-MD5 and
   DIGEST-MD5 answer for themselves, and ``ldapi://`` connects to a socket in
   the filesystem, which is what EXTERNAL is usually asked over. GSSAPI is
@@ -101,10 +101,46 @@ Features
   rather than refused. ``ldap.schema.urlfetch()`` takes an LDAP URL and
   opens a connection of its own to ask, and ``SubSchema.ldap_entry()``
   writes a whole schema back out as the entry it was read from.
+- ``ldap.ldif`` is python-ldap's top-level ``ldif`` module: ``LDIFWriter``,
+  ``LDIFParser``, ``LDIFRecordList`` and ``LDIFCopy``, reading and writing
+  entry records and change records as RFC 2849 spells them. anyldap's own
+  LDIF reader is a line-receiving protocol answering with anyldap's objects,
+  which is not what code written against python-ldap asks for. The
+  deprecated ``CreateLDIF()`` and ``ParseLDIF()`` are not here.
+- Referrals are followed, unless ``OPT_REFERRALS`` is turned off -- which is
+  what libldap does, and so what python-ldap inherits. A result that is
+  nothing but a referral is made again where it points, and a search
+  continuation is read from the server it names and added to what the search
+  found. Following one is anonymous, and a bind is never followed: a
+  referral says where to look and nothing about whose credentials may be
+  sent there. A referral nobody answers is raised as ``REFERRAL``, carrying
+  the URLs as its ``info``, and one that points at itself stops after five
+  hops with ``REFERRAL_LIMIT_EXCEEDED``.
+- A result carries its referral over the wire, which ``pureldap`` used to
+  leave undecoded, and an error says how far the server did recognise the
+  name as python-ldap's ``matched``. A search continuation is handed back as
+  ``RES_SEARCH_REFERENCE`` rather than as an entry.
+- ``ldap.schema.urlfetch()`` takes the address of an LDIF file as well as an
+  LDAP URL, and reads the schema out of its first record, which is what
+  python-ldap's does.
+- A URL is read only if it is one of ``file:``, ``http:`` or ``https:``, and
+  refused otherwise. A file is read with ``anyio.Path``, and an ``http:``
+  address is fetched with httpx2. python-ldap hands the address to
+  ``urlopen`` instead, which fetches whatever scheme it happens to support,
+  so an address meant to name a file can turn out to be a request and the
+  other way about -- which matters most for the URLs ``ldap.ldif`` fetches
+  when ``process_url_schemes`` tells it to fetch any, since those are named
+  by the data being parsed rather than by the caller.
+- A schema definition may name itself rather than be numbered:
+  ``( nsEncryptionConfig-oid NAME ... )`` is what a 389-ds server publishes,
+  and RFC 4512 section 1.4 allows it. It used to be refused, which meant a
+  real FreeIPA schema could not be read at all.
 
 Other changes
 ^^^^^^^^^^^^^
 
+- `httpx2 <https://pypi.org/project/httpx2/>`_ is a new dependency. It is what
+  a schema or an LDIF value named by an ``http:`` URL is fetched with.
 - python-ldap's own test suite is ported under ``interop/python_ldap/``, with
   its licences and a note of what each file came from, and ``tox -e interop``
   runs this client and python-ldap through the same script against one real
