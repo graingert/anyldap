@@ -14,9 +14,9 @@ application will recognise it, but what a scope describes is an LDAP
 *operation* rather than an HTTP request. LDAP multiplexes: a client
 numbers its requests and may have several outstanding at once, which is
 what abandon is for, so an operation is the unit an application answers.
-Each runs in its own task and its own cancel scope, and the connection
-they share is in ``scope["connection"]``, which is where per-connection
-state such as the bound user belongs.
+Each runs in its own task, and the connection they share is in
+``scope["connection"]``, which is where per-connection state such as the
+bound user belongs.
 
 A request arrives whole, so it is in the scope rather than being
 received. ``receive`` hands over what happens *after* it: the client
@@ -332,7 +332,6 @@ class _Operation:
 
     def __init__(self, name: OperationType) -> None:
         self.name = name
-        self.cancel_scope = anyio.CancelScope()
         self.abandoned = False
         # Unbuffered: an event is handed straight to an application asking
         # for one, rather than queued to be read after the moment it
@@ -368,6 +367,12 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
     can arrive -- and be acted on -- while the search it names is still
     running. StartTLS is the exception, since what follows it is framed
     differently; that one is finished before the next request is read.
+
+    Nothing here cancels an application. Giving up on an operation ends
+    the message id, the way resetting an HTTP/2 stream does, and an
+    application finds out by being refused when it next sends. When it
+    stops is its own business, and a connection is not done until all of
+    them have.
     """
 
     def __init__(self, app: LDAPApp, state: Mapping[str, object] = {}) -> None:
@@ -398,20 +403,22 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
             task_group.start_soon(operation.post, event)
 
     def abandon(self, msgid: int) -> _Operation | None:
-        """Stop the operation with this message id, if it is still running.
+        """Give up on the operation with this message id.
 
-        Its ``send`` refuses before the task is cancelled, so nothing it
-        had left to say reaches the client -- which is what RFC 4511
-        section 4.11 asks of an abandon. What stops the work is the
-        cancellation; the event says why, for an application waiting on
-        one. Answers with the operation that was stopped, if there was one.
+        Nothing is cancelled. As with a reset HTTP/2 stream, what ends is
+        the message id rather than the work: the operation is no longer
+        one this connection will write for, so its ``send`` refuses from
+        here on -- which is what RFC 4511 section 4.11 asks of an abandon
+        -- and an application waiting on ``receive`` is told why. When it
+        stops is the application's own business.
+
+        Answers with the operation that was given up on, if there was one.
         """
-        operation = self._operations.get(msgid)
+        operation = self._operations.pop(msgid, None)
         if operation is None:
             return None
         operation.abandoned = True
         self._notify(operation, {"type": "ldap.abandon"})
-        operation.cancel_scope.cancel()
         return operation
 
     async def cancel(self, msgid: int) -> int:
@@ -522,19 +529,15 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
             await self._send_event(operation, msg.id, event)
 
         try:
-            with operation.cancel_scope:
-                try:
-                    await self.app(scope, operation.receive, send)
-                except ClientDisconnected:
-                    # Answered by going away; there is nothing left to say.
-                    pass
-                except ldaperrors.LDAPException as exc:
-                    await self._fail(operation, msg.id, name, exc.message)
-                except Exception as exc:
-                    logger.exception("Application failed handling %s", name)
-                    await self._fail(
-                        operation, msg.id, name, Failure(exc).getErrorMessage()
-                    )
+            await self.app(scope, operation.receive, send)
+        except ClientDisconnected:
+            # Answered by going away; there is nothing left to say.
+            pass
+        except ldaperrors.LDAPException as exc:
+            await self._fail(operation, msg.id, name, exc.message)
+        except Exception as exc:
+            logger.exception("Application failed handling %s", name)
+            await self._fail(operation, msg.id, name, Failure(exc).getErrorMessage())
         finally:
             operation.close()
             self._operations.pop(msg.id, None)
@@ -606,15 +609,11 @@ async def lifespan(app: LDAPApp) -> AsyncIterator[Mapping[str, object]]:
     scope = LifespanScope(type="lifespan", spec_version=SPEC_VERSION, state=state)
     events_send, events_receive = anyio.create_memory_object_stream[ReceiveEvent](0)
     replies_send, replies_receive = anyio.create_memory_object_stream[SendEvent](0)
-    # An application that lingers after answering shutdown is let go of
-    # rather than waited for.
-    running = anyio.CancelScope()
     failed: LifespanFailed | None = None
 
     async def run() -> None:
         try:
-            with running:
-                await app(scope, events_receive.receive, replies_send.send)
+            await app(scope, events_receive.receive, replies_send.send)
         except Exception:
             logger.info("Application has no lifespan scope", exc_info=True)
         finally:
@@ -655,21 +654,15 @@ async def lifespan(app: LDAPApp) -> AsyncIterator[Mapping[str, object]]:
         anyio.create_task_group() as task_group,
     ):
         task_group.start_soon(run)
-        try:
-            told = await tell(
-                {"type": "lifespan.startup"}, "lifespan.startup.complete"
-            )
-            if failed is None:
-                try:
-                    yield state
-                finally:
-                    if told:
-                        await tell(
-                            {"type": "lifespan.shutdown"},
-                            "lifespan.shutdown.complete",
-                        )
-        finally:
-            running.cancel()
+        told = await tell({"type": "lifespan.startup"}, "lifespan.startup.complete")
+        if failed is None:
+            try:
+                yield state
+            finally:
+                if told:
+                    await tell(
+                        {"type": "lifespan.shutdown"}, "lifespan.shutdown.complete"
+                    )
     if failed is not None:
         raise failed
 

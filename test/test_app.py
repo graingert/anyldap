@@ -196,7 +196,7 @@ async def test_operations_run_concurrently() -> None:
         await server.aclose()
 
 
-async def test_abandon_stops_an_operation_and_silences_it() -> None:
+async def test_abandon_ends_the_message_id_and_not_the_work() -> None:
     started = anyio.Event()
     reason: list[app.ReceiveEvent] = []
     finished = anyio.Event()
@@ -207,23 +207,18 @@ async def test_abandon_stops_an_operation_and_silences_it() -> None:
         if scope["type"] != "ldap.search":
             await echo_result(scope, receive, send)
             return
-        try:
-            with anyio.CancelScope(shield=True):
-                started.set()
-                reason.append(await receive())
-            await anyio.sleep_forever()
-        finally:
-            # An abandoned operation has nowhere left to write, which
-            # saying so is how it finds out.
-            with anyio.CancelScope(shield=True):
-                with pytest.raises(app.ClientDisconnected, match="abandoned"):
-                    await send(
-                        {
-                            "type": "ldap.response",
-                            "response": pureldap.LDAPSearchResultDone(resultCode=0),
-                        }
-                    )
-            finished.set()
+        started.set()
+        # Nothing cancelled this; it runs until it is told and stops
+        # itself, which is what a reset stream leaves an application to do.
+        reason.append(await receive())
+        with pytest.raises(app.ClientDisconnected, match="abandoned"):
+            await send(
+                {
+                    "type": "ldap.response",
+                    "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                }
+            )
+        finished.set()
 
     async with anyio.create_task_group() as task_group:
         server, stream = await _attach(application, task_group)
@@ -273,20 +268,17 @@ async def test_a_cancel_stops_an_operation_and_answers_both_of_them() -> None:
     async def application(
         scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
+        running.set()
+        assert await receive() == {"type": "ldap.abandon"}
         try:
-            running.set()
-            await anyio.sleep_forever()
-        finally:
-            with anyio.CancelScope(shield=True):
-                try:
-                    await send(
-                        {
-                            "type": "ldap.response",
-                            "response": pureldap.LDAPSearchResultDone(resultCode=0),
-                        }
-                    )
-                except app.ClientDisconnected as exc:
-                    refused.append(exc)
+            await send(
+                {
+                    "type": "ldap.response",
+                    "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                }
+            )
+        except app.ClientDisconnected as exc:
+            refused.append(exc)
 
     async with anyio.create_task_group() as task_group:
         server, stream = await _attach(application, task_group)

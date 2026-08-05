@@ -46,13 +46,12 @@ Features
   outstanding at once, and the operations of one connection share
   ``scope["connection"]``, whose ``state`` is where the bound user and
   anything else per-connection belongs. Each operation runs in its own task
-  and its own cancel scope, so reading the next request does not wait for
-  the last one to be answered. Stopping an operation is the connection's
-  business rather than an application's, so neither an abandon nor a
-  cancel arrives as a scope: both stop the operation they name while it is
-  still running, and ``send`` then raises ``ClientDisconnected``, an
-  ``OSError``, the way a reset HTTP/2 stream refuses what is written to
-  it. A closed connection refuses the same way. What the client is told is
+  so reading the next request does not wait for the last one to be
+  answered. Stopping an operation is the connection's business rather than
+  an application's, so neither an abandon nor a cancel arrives as a scope.
+  Neither cancels anything either: what ends is the message id, the way
+  resetting an HTTP/2 stream does, and ``send`` raises
+  ``ClientDisconnected``, an ``OSError``, from then on. A closed connection refuses the same way. What the client is told is
   what differs -- RFC 4511 section 4.11 leaves an abandoned operation
   unanswered, while RFC 3909 has a cancel answer both itself and the
   operation it stopped, in whatever shape that one was going to be

@@ -31,9 +31,8 @@ One scope per operation
 LDAP multiplexes. A client numbers each request and may have several
 outstanding at once -- that is what abandon exists for -- so a connection
 is the wrong unit for an application to answer. Each operation gets its
-own scope, its own task and its own cancel scope, and they run
-concurrently: reading the next request does not wait for the last one to
-be answered.
+own scope and its own task, and they run concurrently: reading the next
+request does not wait for the last one to be answered.
 
 What the operations of one connection share is
 :class:`~anyldap.app.ConnectionScope`, reached through
@@ -78,8 +77,11 @@ writing: it raises :exc:`~anyldap.app.ClientDisconnected`, an
 it. A closed connection refuses the same way. An application that lets the
 error escape ends that operation and nothing else.
 
-What an application sees of it is the cancellation of its own task, and an
-``ldap.abandon`` event if it is waiting on ``receive``.
+Nothing is cancelled. As with a reset HTTP/2 stream, what ends is the
+message id rather than the work: an application finds out by being
+refused when it next sends, or by an ``ldap.abandon`` event if it is
+waiting on ``receive``, and when it stops is its own business. A
+connection is not finished until every operation on it has returned.
 
 The difference between the two is what the client is told. RFC 4511
 section 4.11 says an abandoned operation is never answered, and it is not.
