@@ -139,6 +139,11 @@ Features
 Other changes
 ^^^^^^^^^^^^^
 
+- anyldap ships a ``py.typed`` marker, so the annotations it is written with
+  are ones a type checker will read. Everything in it is annotated and checked
+  under mypy's ``strict``; until now that was of no use to anybody importing
+  it, since without the marker a checker treats an installed package as
+  having no types at all (PEP 561).
 - `httpx2 <https://pypi.org/project/httpx2/>`_ is a new dependency. It is what
   a schema or an LDIF value named by an ``http:`` URL is fetched with.
 - python-ldap's own test suite is ported under ``interop/python_ldap/``, with
