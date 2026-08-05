@@ -4,9 +4,28 @@ Changelog
 Unreleased
 ----------
 
+Backwards incompatible changes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``pureber.BERSequence`` is a read-only ``Sequence``, not a ``UserList``.
+  Reading one is unchanged -- indexing, slicing, iterating and ``len()`` all
+  work -- but ``append()``, ``extend()``, ``insert()``, ``pop()`` and item
+  assignment are gone. A sequence is built from the items it is to hold.
+- ``passlib`` is no longer a dependency. The DES and MD4 that the Samba
+  password code needed are vendored under ``anyldap.samba._passlib``, with
+  passlib's own licence beside them, so nothing has to be installed for
+  ``setPassword_Samba()`` to work.
+
 Features
 ^^^^^^^^
 
+- ``ldapconnector`` connects with TLS from the first byte, which is what
+  ``ldaps://`` is, as against StartTLS negotiating in the clear first:
+  ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()`` take
+  ``tls`` and an ``ssl_context``.
+- ``ldiftree`` lists a directory through ``anyio.Path`` rather than
+  ``os.listdir()``, so reading a tree no longer blocks the event loop while
+  it waits for the filesystem.
 - ``anyldap.ldap`` is python-ldap's API, awaited. Every method python-ldap
   spells synchronously is a coroutine here, taking the same arguments and
   handing back the same values, so code ports by adding ``await``::
@@ -139,6 +158,14 @@ Features
 Other changes
 ^^^^^^^^^^^^^
 
+- The package lives under ``src/`` and the tests beside it rather than
+  inside it, so what is imported in a test run is what was installed. The
+  distribution is unchanged: it is still ``anyldap``, with the same modules
+  in it.
+- Everything is checked under mypy's ``strict``, and not only the package:
+  the tests, the documentation's example scripts and the interop suite are
+  checked too. ``typing_extensions`` is a dependency, for the pieces of the
+  typing API that the oldest Python supported here does not have.
 - anyldap ships a ``py.typed`` marker, so the annotations it is written with
   are ones a type checker will read. Everything in it is annotated and checked
   under mypy's ``strict``; until now that was of no use to anybody importing
