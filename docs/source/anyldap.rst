@@ -13,6 +13,18 @@ Subpackages
 Submodules
 ----------
 
+anyldap.app module
+------------------
+
+.. The scopes and events are TypedDicts whose keys are described in the
+   class docstrings; documenting the keys themselves would put seven
+   targets named ``type`` in the index, which every ``type[...]``
+   annotation in the package then resolves ambiguously against.
+
+.. automodule:: anyldap.app
+    :members:
+    :show-inheritance:
+
 anyldap.attributeset module
 ---------------------------
 

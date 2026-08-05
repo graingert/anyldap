@@ -39,6 +39,19 @@ Backwards incompatible changes
 Features
 ^^^^^^^^
 
+- ``anyldap.app`` serves a directory written as an application rather than
+  as a subclass: a coroutine function of ``(scope, receive, send)``, the
+  three arguments an ASGI web application takes. What a scope describes is
+  an LDAP *operation*, since LDAP multiplexes and a client may have several
+  outstanding at once, and the operations of one connection share
+  ``scope["connection"]``, whose ``state`` is where the bound user and
+  anything else per-connection belongs. Each operation runs in its own task
+  and its own cancel scope, so reading the next request does not wait for
+  the last one to be answered, and an abandon cancels the operation it
+  names while it is still running -- which, as RFC 4511 section 4.11 says,
+  is then not answered at all. ``app.listen()`` and ``app.serve()`` run one
+  the way ``ldapserver.listen()`` and ``ldapserver.serve()`` run a
+  protocol.
 - ``ldapconnector`` can connect with TLS already up, which is what an
   ``ldaps://`` server expects, rather than only raising it afterwards with
   StartTLS. ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()``
