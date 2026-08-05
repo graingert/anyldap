@@ -23,6 +23,7 @@ from anyldap.protocols.ldap import (
 from anyldap.protocols.ldap.proxybase import Controls
 from anyldap.runtime import ConnectionDone, Failure
 
+from . import util
 from ._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
@@ -57,7 +58,7 @@ async def test_starttls_upgrades_real_socket_stream() -> None:
         ) -> None:
             assert request.requestName == pureldap.LDAPStartTLSRequest.oid
             self.start_tls(server_context)
-            reply(pureldap.LDAPStartTLSResponse(resultCode=0))
+            await reply(pureldap.LDAPStartTLSResponse(resultCode=0))
 
         async def handle_LDAPBindRequest(
             self,
@@ -327,13 +328,13 @@ async def test_proxy_queues_until_real_upstream_client_is_ready() -> None:
 
 async def test_proxy_public_interception_hook_can_answer_without_forwarding() -> None:
     class InterceptingProxy(proxybase.ProxyBase):
-        def handleBeforeForwardRequest(
+        async def handleBeforeForwardRequest(
             self,
             request: pureldap.LDAPProtocolRequest,
             controls: Controls,
             reply: ldapserver.Reply,
         ) -> None:
-            reply(pureldap.LDAPBindResponse(resultCode=0))
+            await reply(pureldap.LDAPBindResponse(resultCode=0))
             return None
 
     client = ldapclient.LDAPClient()
@@ -480,7 +481,7 @@ async def test_merged_server_sends_unbind_through_real_async_client() -> None:
         upstream = await anyio.connect_tcp(host, port)
         await client.attach_stream(upstream, task_group)
         await server._clientQueue_async(
-            pureldap.LDAPUnbindRequest(), None, lambda response: None
+            pureldap.LDAPUnbindRequest(), None, util.discard
         )
         await server_stopped.wait()
         assert isinstance(received[0].value, pureldap.LDAPUnbindRequest)
@@ -662,12 +663,13 @@ async def test_serve_stream_runs_until_eof() -> None:
 async def test_proxybase_failure_and_starttls_response_paths() -> None:
     replies: list[pureber.BERBase] = []
     server = proxybase.ProxyBase()
+    reply = util.appender(replies)
     server.queuedRequests = [
-        (pureldap.LDAPBindRequest(), None, replies.append),
-        (pureldap.LDAPStartTLSRequest(), None, replies.append),
-        (pureldap.LDAPUnbindRequest(), None, replies.append),
+        (pureldap.LDAPBindRequest(), None, reply),
+        (pureldap.LDAPStartTLSRequest(), None, reply),
+        (pureldap.LDAPUnbindRequest(), None, reply),
     ]
-    server._failedToConnectToProxiedServer(Failure(OSError("unreachable")))
+    await server._failedToConnectToProxiedServer(Failure(OSError("unreachable")))
     assert [type(response) for response in replies] == [
         pureldap.LDAPBindResponse,
         pureldap.LDAPStartTLSResponse,
@@ -680,8 +682,8 @@ async def test_proxybase_failure_and_starttls_response_paths() -> None:
 
     unavailable = proxybase.ProxyBase()
     unavailable.factory = object()
-    refused = unavailable.handleStartTLSRequest(
-        pureldap.LDAPStartTLSRequest(), None, replies.append
+    refused = await unavailable.handleStartTLSRequest(
+        pureldap.LDAPStartTLSRequest(), None, reply
     )
     assert refused is not None
     assert refused.resultCode == ldaperrors.LDAPUnavailable.resultCode
@@ -693,11 +695,11 @@ async def test_proxybase_failure_and_starttls_response_paths() -> None:
     tls_server.debug = True
     tls_server.factory = Factory()
     assert await tls_server.handle_LDAPExtendedRequest(
-        pureldap.LDAPStartTLSRequest(), None, replies.append
+        pureldap.LDAPStartTLSRequest(), None, reply
     ) is None
     assert tls_server.startTLS_initiated
-    again = tls_server.handleStartTLSRequest(
-        pureldap.LDAPStartTLSRequest(), None, replies.append
+    again = await tls_server.handleStartTLSRequest(
+        pureldap.LDAPStartTLSRequest(), None, reply
     )
     assert again is not None
     assert again.resultCode == ldaperrors.LDAPOperationsError.resultCode
@@ -721,9 +723,10 @@ async def test_proxybase_connection_tls_disconnect_and_backlog_paths(
     server.use_tls = True
     server.clientConnector = lambda: client
     replies: list[pureber.BERBase] = []
+    reply = util.appender(replies)
     server.queuedRequests = [
-        (pureldap.LDAPBindRequest(), None, replies.append),
-        (pureldap.LDAPUnbindRequest(), None, replies.append),
+        (pureldap.LDAPBindRequest(), None, reply),
+        (pureldap.LDAPUnbindRequest(), None, reply),
     ]
     await server.connectionMade_async()
     assert isinstance(replies[0], pureldap.LDAPResult)
@@ -740,7 +743,7 @@ async def test_proxybase_connection_tls_disconnect_and_backlog_paths(
 
     disconnected_server.clientConnector = disconnect_during_connect
     disconnected_server.queuedRequests.append(
-        (pureldap.LDAPBindRequest(), None, replies.append)
+        (pureldap.LDAPBindRequest(), None, reply)
     )
     await disconnected_server.connectionMade_async()
     assert not disconnected_client.connected
@@ -760,17 +763,18 @@ async def test_proxybase_forwarding_and_example_response_paths() -> None:
     server = proxybase.ProxyBase()
     server.client = client
     replies: list[pureber.BERBase] = []
-    await server.handleUnknown(pureldap.LDAPSearchRequest(), None, replies.append)
+    reply = util.appender(replies)
+    await server.handleUnknown(pureldap.LDAPSearchRequest(), None, reply)
     await server.handle_LDAPExtendedRequest(
-        pureldap.LDAPExtendedRequest(requestName=b"1.2.3"), None, replies.append
+        pureldap.LDAPExtendedRequest(requestName=b"1.2.3"), None, reply
     )
     assert [type(response) for response in replies] == [
         pureldap.LDAPSearchResultEntry,
         pureldap.LDAPSearchResultDone,
     ]
-    assert server._gotResponseFromProxiedServer(
+    assert await server._gotResponseFromProxiedServer(
         pureldap.LDAPBindResponse(resultCode=0),
-        replies.append,
+        reply,
         pureldap.LDAPBindRequest(),
         None,
     )
@@ -786,8 +790,9 @@ async def test_proxybase_queues_requests_until_connected() -> None:
     server = proxybase.ProxyBase()
     request = pureldap.LDAPSearchRequest()
     replies: list[pureber.BERBase] = []
-    await server.handleUnknown(request, None, replies.append)
-    assert server.queuedRequests == [(request, None, replies.append)]
+    reply = util.appender(replies)
+    await server.handleUnknown(request, None, reply)
+    assert server.queuedRequests == [(request, None, reply)]
 
 
 async def test_proxybase_replies_in_response_order() -> None:
@@ -801,7 +806,7 @@ async def test_proxybase_replies_in_response_order() -> None:
             self.original = original
 
     class RewritingProxy(proxybase.ProxyBase):
-        def handleProxiedResponse(
+        async def handleProxiedResponse(
             self,
             response: pureldap.LDAPProtocolResponse,
             request: pureldap.LDAPProtocolRequest,
@@ -813,10 +818,11 @@ async def test_proxybase_replies_in_response_order() -> None:
     entry = pureldap.LDAPSearchResultEntry("cn=entry", [])
     done = pureldap.LDAPSearchResultDone(resultCode=0)
     # Only a search-done or bind response ends the exchange.
-    assert not server._gotResponseFromProxiedServer(
-        entry, replies.append, request, None
+    reply = util.appender(replies)
+    assert not await server._gotResponseFromProxiedServer(
+        entry, reply, request, None
     )
-    assert server._gotResponseFromProxiedServer(done, replies.append, request, None)
+    assert await server._gotResponseFromProxiedServer(done, reply, request, None)
     rewritten = [reply for reply in replies if isinstance(reply, Rewritten)]
     assert [reply.original for reply in rewritten] == [entry, done]
 
@@ -844,8 +850,8 @@ async def test_proxybase_connection_close_and_quiet_starttls_paths() -> None:
     server.factory = Factory()
     replies: list[pureber.BERBase] = []
     assert (
-        server.handleStartTLSRequest(
-            pureldap.LDAPStartTLSRequest(), None, replies.append
+        await server.handleStartTLSRequest(
+            pureldap.LDAPStartTLSRequest(), None, util.appender(replies)
         )
         is None
     )

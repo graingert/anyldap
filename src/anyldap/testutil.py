@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, NoReturn
 import anyio
 from anyio.abc import ByteStream, SocketAttribute, SocketListener, TaskGroup
 
+from anyldap._async import await_result
 from anyldap._encoder import SupportsToWire, to_bytes
 from anyldap.runtime import Failure
 
@@ -128,9 +129,11 @@ class LDAPClientTestDriver:
                 r.raiseException()
             assert handler is not None
             if return_controls:
-                ret = handler(r, response_controls, *args, **kwargs)
+                ret = await await_result(
+                    handler(r, response_controls, *args, **kwargs)
+                )
             else:
-                ret = handler(r, *args, **kwargs)
+                ret = await await_result(handler(r, *args, **kwargs))
             if responses:
                 msg = (
                     "got %d responses still to give, "

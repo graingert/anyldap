@@ -4,6 +4,7 @@ import anyio
 import pytest
 
 from anyldap import config, testutil
+from anyldap.protocols import pureber
 from anyldap.protocols.ldap import ldapclient, ldaperrors
 from anyldap.protocols.ldap.merger import MergedLDAPServer
 from anyldap.protocols.pureldap import (
@@ -27,20 +28,23 @@ from anyldap.protocols.pureldap import (
 )
 from anyldap.runtime import ConnectionDone
 
+from . import util
 from ._anyio_helpers import AsyncLDAPClientDriver
 
 pytestmark = pytest.mark.anyio
 
 
-def _entries(*dns: str) -> bytes:
-    """Wire bytes for the search result entries one upstream server returns."""
-    attributes = {"cn=bar,dc=example,dc=com": ("b", ["c"]), "cn=bar2,dc=example,dc=com": ("b", ["c"])}
-    return b"".join(
-        LDAPMessage(
-            LDAPSearchResultEntry(dn, [attributes.get(dn, ("a", ["b"]))]), id=3
-        ).toWire()
-        for dn in dns
-    )
+def _messages(wire_bytes: bytes) -> list[LDAPMessage]:
+    """The messages a server wrote, in the order it wrote them."""
+    messages = []
+    while wire_bytes:
+        message, consumed = pureber.berDecodeObject(
+            MergedLDAPServer.berdecoder, wire_bytes
+        )
+        assert isinstance(message, LDAPMessage)
+        messages.append(message)
+        wire_bytes = wire_bytes[consumed:]
+    return messages
 
 
 async def test_waiting_request_runs_when_real_client_connects() -> None:
@@ -63,9 +67,9 @@ async def test_async_client_queue_uses_async_client_interface() -> None:
     client.connectionMade()
     server = MergedLDAPServer([], [])
     server.clients = [client]
-    replies: list[object] = []
-    await server._clientQueue_async(LDAPBindRequest(), None, replies.append)
-    await server._clientQueue_async(LDAPUnbindRequest(), None, replies.append)
+    replies: list[pureber.BERBase] = []
+    await server._clientQueue_async(LDAPBindRequest(), None, util.appender(replies))
+    await server._clientQueue_async(LDAPUnbindRequest(), None, util.appender(replies))
     assert replies == [LDAPBindResponse(resultCode=0)]
     client.assertSent(LDAPBindRequest(), LDAPUnbindRequest())
 
@@ -217,15 +221,26 @@ class TestMergedLDAPServerTest:
             response = await testutil.exchange_async(
                 server, LDAPMessage(LDAPSearchRequest(), id=3).toWire()
             )
-            # The two upstream searches run concurrently, so which server's
-            # entries land first is up to the scheduler; only the grouping and
-            # the trailing result-done are guaranteed.
-            first = _entries("cn=foo,dc=example,dc=com", "cn=bar,dc=example,dc=com")
-            second = _entries("cn=foo,dc=example,dc=com", "cn=bar2,dc=example,dc=com")
-            done = LDAPMessage(
+            # The two upstream searches run concurrently and each entry is
+            # written as it arrives, so the order the entries interleave in is
+            # up to the scheduler; only the set of them, and the result-done
+            # coming last, are guaranteed.
+            *entries, done = _messages(response)
+            assert done == LDAPMessage(
                 LDAPSearchResultDone(ldaperrors.Success.resultCode), id=3
-            ).toWire()
-            assert response in (first + second + done, second + first + done)
+            )
+            util.assert_permutation(
+                entries,
+                [
+                    LDAPMessage(LDAPSearchResultEntry(dn, [attributes]), id=3)
+                    for dn, attributes in (
+                        ("cn=foo,dc=example,dc=com", ("a", ["b"])),
+                        ("cn=bar,dc=example,dc=com", ("b", ["c"])),
+                        ("cn=foo,dc=example,dc=com", ("a", ["b"])),
+                        ("cn=bar2,dc=example,dc=com", ("b", ["c"])),
+                    )
+                ],
+            )
 
         await test_f(server)
 

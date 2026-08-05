@@ -4,7 +4,6 @@ Manage LDAP data as a tree of LDIF files.
 import errno
 import os
 import uuid
-from collections.abc import Callable
 
 import anyio
 from zope.interface import implementer
@@ -223,13 +222,13 @@ class LDIFTreeEntry(
 
     async def children(
         self,
-        callback: Callable[[interfaces.IWalkableLDAPEntry], object] | None = None,
+        callback: entryhelpers.EntryCallback | None = None,
     ) -> list[interfaces.IWalkableLDAPEntry] | None:
         children = await self._child_entries()
         if callback is None:
             return list(children)
         for c in children:
-            callback(c)
+            await callback(c)
         return None
 
     children_async = children

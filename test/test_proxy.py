@@ -1,6 +1,6 @@
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from unittest import mock
 
 import anyio
@@ -11,6 +11,7 @@ from anyldap import config
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldaperrors, proxy
 
+from . import util
 from ._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
@@ -30,7 +31,7 @@ class StubClient:
     async def send_multiResponse_async(
         self,
         op: pureldap.LDAPProtocolRequest,
-        handler: Callable[..., bool],
+        handler: Callable[..., bool | Awaitable[bool]],
         *args: object,
         **kwargs: object,
     ) -> None:
@@ -87,8 +88,8 @@ async def test_waits_for_connection_and_forwards_failure() -> None:
 async def test_async_queue_uses_client_async_interface() -> None:
     client = StubClient()
     server = _legacy_server(client)
-    await server._clientQueue_async(pureldap.LDAPBindRequest(), None, lambda response: None)
-    await server._clientQueue_async(pureldap.LDAPUnbindRequest(), None, lambda response: None)
+    await server._clientQueue_async(pureldap.LDAPBindRequest(), None, util.discard)
+    await server._clientQueue_async(pureldap.LDAPUnbindRequest(), None, util.discard)
     assert [call[0] for call in client.calls] == ["multi", "none"]
 
 
@@ -105,7 +106,7 @@ async def test_async_queue_uses_async_client_methods() -> None:
         async def send_multiResponse_async(
             self,
             op: pureldap.LDAPProtocolRequest,
-            handler: Callable[..., bool],
+            handler: Callable[..., bool | Awaitable[bool]],
             *args: object,
             **kwargs: object,
         ) -> None:
@@ -118,8 +119,8 @@ async def test_async_queue_uses_async_client_methods() -> None:
 
     client = AsyncClient()
     server = _legacy_server(client)
-    await server._clientQueue_async(pureldap.LDAPBindRequest(), None, lambda response: None)
-    await server._clientQueue_async(pureldap.LDAPUnbindRequest(), None, lambda response: None)
+    await server._clientQueue_async(pureldap.LDAPBindRequest(), None, util.discard)
+    await server._clientQueue_async(pureldap.LDAPUnbindRequest(), None, util.discard)
     assert [call[0] for call in client.calls] == ["multi", "none"]
     AsyncClient.aclose.assert_not_called()
 
@@ -128,7 +129,7 @@ async def test_async_unknown_handler_waits_for_connection() -> None:
     client = StubClient()
     server = _legacy_server(client)
     await server._handleUnknown_async(
-        pureldap.LDAPBindRequest(), None, lambda response: None
+        pureldap.LDAPBindRequest(), None, util.discard
     )
     assert client.calls[0][0] == "multi"
 

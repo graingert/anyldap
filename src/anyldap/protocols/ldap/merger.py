@@ -99,7 +99,7 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
     ) -> None:
         final_responses: list[pureldap.LDAPResult] = []
 
-        def got_response(response: pureldap.LDAPProtocolResponse) -> bool:
+        async def got_response(response: pureldap.LDAPProtocolResponse) -> bool:
             final = isinstance(
                 response,
                 (pureldap.LDAPSearchResultDone, pureldap.LDAPBindResponse),
@@ -113,9 +113,9 @@ class MergedLDAPServer(ldapserver.BaseLDAPServer):
                         for item in final_responses
                         if item.resultCode == ldaperrors.Success.resultCode
                     ]
-                    reply(successes[-1] if successes else final_responses[-1])
+                    await reply(successes[-1] if successes else final_responses[-1])
             else:
-                reply(response)
+                await reply(response)
             return final
 
         async def send(client: ldapclient.LDAPClientLike) -> None:

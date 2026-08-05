@@ -7,6 +7,7 @@ from anyio.abc import ByteStream, SocketAttribute, SocketListener, SocketStream
 from anyio.streams.stapled import MultiListener
 
 from anyldap import testutil
+from anyldap._async import await_result
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
 
@@ -118,7 +119,7 @@ class AsyncLDAPClientDriver:
     ) -> None:
         self.sent.append(op)
         for response in self._response():
-            handler(response, *args, **kwargs)
+            await await_result(handler(response, *args, **kwargs))
 
     send_multiResponse_async = send_multiResponse
 
@@ -133,7 +134,7 @@ class AsyncLDAPClientDriver:
         self.sent.append(op)
         assert handler is not None
         for response in self._response():
-            handler(response, None, *args, **kwargs)
+            await await_result(handler(response, None, *args, **kwargs))
 
     send_multiResponse_ex_async = send_multiResponse_ex
 

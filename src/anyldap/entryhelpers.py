@@ -13,6 +13,11 @@ AttributeText = str | bytes
 Entry = interfaces.IWalkableLDAPEntry
 
 
+# What a walk hands each entry to. It is awaited, so a walk can be written
+# out as it goes rather than collected first.
+EntryCallback = Callable[[Entry], Awaitable[None]]
+
+
 class Readable(Protocol):
     """What the matching mixin needs of the entry it is mixed into."""
 
@@ -39,11 +44,11 @@ class Walkable(Protocol):
     def diff(self, other: Any) -> delta.ModifyOp | None: ...
 
     async def children(
-        self, callback: Callable[[Entry], object] | None = None
+        self, callback: EntryCallback | None = None
     ) -> list[Entry] | None: ...
 
     async def subtree(
-        self, callback: Callable[[Entry], object] | None = None
+        self, callback: EntryCallback | None = None
     ) -> list[Entry] | None: ...
 
     async def diffTree(
@@ -184,17 +189,21 @@ class DiffTreeMixin:
 
 class SubtreeFromChildrenMixin:
     async def subtree(
-        self: Walkable, callback: Callable[[Entry], object] | None = None
+        self: Walkable, callback: EntryCallback | None = None
     ) -> list[Entry] | None:
         if callback is None:
             result: list[Entry] = []
-            await self.subtree(callback=result.append)
+
+            async def collect(entry: Entry) -> None:
+                result.append(entry)
+
+            await self.subtree(callback=collect)
             return result
 
         # self is the entry the mixin was mixed into; the callback is handed
         # entries, so say that the host is one.
         assert interfaces.IWalkableLDAPEntry.providedBy(self)
-        callback(self)
+        await callback(self)
         children = await self.children()
         assert children is not None
         while children:
@@ -318,7 +327,7 @@ class SearchByTreeWalkingMixin:
         sizeLimit: int = 0,
         timeLimit: int = 0,
         typesOnly: int = 0,
-        callback: Callable[[Entry], object] | None = None,
+        callback: EntryCallback | None = None,
     ) -> list[Entry] | None:
         if filterObject is None and filterText is None:
             filterObject = pureldap.LDAPFilterMatchAll
@@ -346,10 +355,10 @@ class SearchByTreeWalkingMixin:
         elif scope == pureldap.LDAP_SCOPE_baseObject:
 
             async def iterateSelf(
-                callback: Callable[[Entry], object],
+                callback: EntryCallback,
             ) -> list[Entry] | None:
                 assert interfaces.IWalkableLDAPEntry.providedBy(self)
-                callback(self)
+                await callback(self)
                 return None
 
             iterator = iterateSelf
@@ -357,17 +366,21 @@ class SearchByTreeWalkingMixin:
             raise ldaperrors.LDAPProtocolError("unknown search scope: %r" % scope)
 
         results: list[Entry] = []
-        matchCallback: Callable[[Entry], object]
+        matchCallback: EntryCallback
         if callback is None:
-            matchCallback = results.append
+
+            async def collect(entry: Entry) -> None:
+                results.append(entry)
+
+            matchCallback = collect
         else:
             matchCallback = callback
 
         # gather results, send them
-        def _tryMatch(entry: Entry) -> None:
+        async def _tryMatch(entry: Entry) -> None:
             assert filterObject is not None
             if entry.match(filterObject):
-                matchCallback(entry)
+                await matchCallback(entry)
 
         await iterator(callback=_tryMatch)
 
