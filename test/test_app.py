@@ -66,7 +66,6 @@ async def test_operation_type_names_each_request() -> None:
         ): "ldap.compare",
         pureldap.LDAPAbandonRequest(value=1): "ldap.abandon",
         pureldap.LDAPStartTLSRequest(): "ldap.starttls",
-        pureldap.LDAPCancelRequest(cancelID=3): "ldap.cancel",
         pureldap.LDAPPasswordModifyRequest(userIdentity="cn=x"): "ldap.passwordmodify",
         pureldap.LDAPExtendedRequest(requestName=b"1.2.3"): "ldap.extended",
     }
@@ -80,7 +79,7 @@ async def test_operation_type_names_each_request() -> None:
     assert app.operation_type(Homegrown()) == "ldap.unknown"
 
 
-async def test_failure_response_matches_the_operation() -> None:
+async def test_a_result_matches_the_operation_it_answers() -> None:
     for operation, response_type in (
         ("ldap.bind", pureldap.LDAPBindResponse),
         ("ldap.search", pureldap.LDAPSearchResultDone),
@@ -90,14 +89,17 @@ async def test_failure_response_matches_the_operation() -> None:
         ("ldap.modifydn", pureldap.LDAPModifyDNResponse),
         ("ldap.compare", pureldap.LDAPCompareResponse),
     ):
-        response = app.failure_response(operation, "no")
+        response = app.result_response(
+            operation, ldaperrors.LDAPProtocolError.resultCode, "no"
+        )
         assert isinstance(response, response_type)
         assert response.resultCode == ldaperrors.LDAPProtocolError.resultCode
 
     # Anything else is answered the way an unknown extended request is.
-    extended = app.failure_response("ldap.extended", "no")
+    extended = app.result_response("ldap.extended", app.CANCELED)
     assert isinstance(extended, pureldap.LDAPExtendedResponse)
     assert extended.responseName == "1.3.6.1.4.1.1466.20036"
+    assert extended.resultCode == app.CANCELED
 
 
 async def _attach(
@@ -263,33 +265,28 @@ async def test_abandoning_an_operation_that_has_finished_does_nothing() -> None:
         await server.aclose()
 
 
-async def test_cancel_is_answered_by_abandoning_through_the_connection() -> None:
+async def test_a_cancel_stops_an_operation_and_answers_both_of_them() -> None:
     """RFC 3909: unlike an abandon, a cancel says that it worked."""
     running = anyio.Event()
-    stopped = anyio.Event()
+    refused: list[Exception] = []
 
     async def application(
         scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
-        if scope["type"] == "ldap.cancel":
-            request = operation(scope)["request"]
-            assert isinstance(request, pureldap.LDAPExtendedRequest)
-            operation(scope)["connection"]["abandon"](app.cancel_id(request))
-            await send(
-                {
-                    "type": "ldap.response",
-                    "response": pureldap.LDAPExtendedResponse(
-                        # canceled, which RFC 3909 adds for this
-                        resultCode=118
-                    ),
-                }
-            )
-            return
         try:
             running.set()
             await anyio.sleep_forever()
         finally:
-            stopped.set()
+            with anyio.CancelScope(shield=True):
+                try:
+                    await send(
+                        {
+                            "type": "ldap.response",
+                            "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                        }
+                    )
+                except app.ClientDisconnected as exc:
+                    refused.append(exc)
 
     async with anyio.create_task_group() as task_group:
         server, stream = await _attach(application, task_group)
@@ -300,28 +297,68 @@ async def test_cancel_is_answered_by_abandoning_through_the_connection() -> None
         await stream.feed(
             pureldap.LDAPMessage(pureldap.LDAPCancelRequest(cancelID=1), id=2).toWire()
         )
+        # The operation that was stopped is answered in its own shape,
+        # which is what tells a client waiting on it to stop waiting.
+        stopped = decode_message(await stream.next_write())
+        assert stopped.id == 1
+        assert isinstance(stopped.value, pureldap.LDAPSearchResultDone)
+        assert stopped.value.resultCode == app.CANCELED
+
         answer = decode_message(await stream.next_write())
         assert answer.id == 2
         assert isinstance(answer.value, pureldap.LDAPResult)
-        assert answer.value.resultCode == 118
-        await stopped.wait()
+        assert answer.value.resultCode == app.CANCELED
         assert server._operations == {}
         await server.aclose()
 
+    # The application's own answer had nowhere to go, and said so.
+    assert [isinstance(exc, OSError) for exc in refused] == [True]
 
-async def test_cancel_id_reads_the_operation_out_of_the_request() -> None:
-    wire = pureldap.LDAPCancelRequest(cancelID=9).toWire()
-    decoded, _ = pureber.berDecodeObject(
-        ldapserver.BaseLDAPServer.berdecoder,
-        pureldap.LDAPMessage(pureldap.LDAPCancelRequest(cancelID=9), id=1).toWire(),
+
+async def test_a_cancel_for_an_operation_that_is_over_says_so() -> None:
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(echo_result, task_group)
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+        )
+        assert decode_message(await stream.next_write()).id == 1
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPCancelRequest(cancelID=1), id=2).toWire()
+        )
+        answer = decode_message(await stream.next_write())
+        assert isinstance(answer.value, pureldap.LDAPResult)
+        assert answer.value.resultCode == app.NO_SUCH_OPERATION
+        await server.aclose()
+
+
+async def test_a_cancel_that_names_nothing_is_a_protocol_error() -> None:
+    # Nothing at all, bytes that are not a BER object, bytes that stop
+    # part-way through one, and a sequence holding no message id.
+    for value in (None, b"\x00\x00", b"\x30", pureber.BERSequence([]).toWire()):
+        async with anyio.create_task_group() as task_group:
+            server, stream = await _attach(echo_result, task_group)
+            await stream.feed(
+                pureldap.LDAPMessage(
+                    pureldap.LDAPExtendedRequest(
+                        requestName=pureldap.LDAPCancelRequest.oid, requestValue=value
+                    ),
+                    id=1,
+                ).toWire()
+            )
+            answer = decode_message(await stream.next_write())
+            assert isinstance(answer.value, pureldap.LDAPResult)
+            assert answer.value.resultCode == (
+                ldaperrors.LDAPProtocolError.resultCode
+            )
+            await server.aclose()
+
+    # A sequence holding something that is not a message id says nothing
+    # either.
+    said = pureber.BERSequence([pureber.BEROctetString(b"one")]).toWire()
+    request = pureldap.LDAPExtendedRequest(
+        requestName=pureldap.LDAPCancelRequest.oid, requestValue=said
     )
-    assert isinstance(decoded, pureldap.LDAPMessage)
-    request = decoded.value
-    # It arrives as a plain extended request, so the id has to be decoded.
-    assert isinstance(request, pureldap.LDAPExtendedRequest)
-    assert not isinstance(request, pureldap.LDAPCancelRequest)
-    assert app.cancel_id(request) == 9
-    assert wire
+    assert app._cancel_id(request) is None
 
 
 async def test_an_application_that_fails_still_answers() -> None:
@@ -443,7 +480,7 @@ async def test_an_event_waits_for_an_application_that_is_not_yet_reading() -> No
 
 async def test_an_event_with_no_task_group_to_carry_it_is_not_delivered() -> None:
     server = app.ApplicationServer(echo_result)
-    operation = app._Operation()
+    operation = app._Operation("ldap.search")
     server._operations[1] = operation
     # No connection was ever attached, so there is nothing to deliver on.
     server.connectionLost(ConnectionError("gone"))

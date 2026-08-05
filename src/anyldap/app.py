@@ -50,12 +50,13 @@ from anyldap.runtime import Failure, Protocol, logger
 SPEC_VERSION = "0.1"
 
 
-class ClientDisconnected(Exception):
+class ClientDisconnected(OSError):
     """Raised by ``send`` when there is no longer anywhere to write.
 
     The client abandoned or cancelled this operation, or the connection
     itself went away. Either way the rest of the answer is not wanted,
-    which is what a reset stream means to an HTTP/2 application.
+    which is what a reset stream means to an HTTP/2 application. It is an
+    `OSError`, since a write that cannot happen is what it is.
     """
 
 
@@ -77,7 +78,6 @@ OperationType = Literal[
     "ldap.abandon",
     "ldap.extended",
     "ldap.starttls",
-    "ldap.cancel",
     "ldap.passwordmodify",
     "ldap.unknown",
 ]
@@ -88,9 +88,8 @@ class ConnectionScope(TypedDict):
 
     ``state`` is a plain dict an application may keep whatever it likes
     in; it is what holds the bound user, since a bind on one operation is
-    meant to be seen by the next. ``abandon`` stops another operation on
-    this connection, which is what answering a Cancel request (RFC 3909)
-    needs.
+    meant to be seen by the next. Every connection starts from a copy of
+    what the lifespan scope left behind.
     """
 
     type: Literal["ldap.connection"]
@@ -99,7 +98,6 @@ class ConnectionScope(TypedDict):
     client: tuple[str, int] | None
     tls: bool
     state: dict[str, object]
-    abandon: Callable[[int], None]
 
 
 class OperationScope(TypedDict):
@@ -233,7 +231,6 @@ LDAPApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 # for, so which one it is is read from the OID and not from its class.
 _EXTENDED_TYPES: dict[bytes, OperationType] = {
     pureldap.LDAPStartTLSRequest.oid: "ldap.starttls",
-    pureldap.LDAPCancelRequest.oid: "ldap.cancel",
     pureldap.LDAPPasswordModifyRequest.oid: "ldap.passwordmodify",
 }
 
@@ -249,9 +246,9 @@ _REQUEST_TYPES: tuple[tuple[type[pureldap.LDAPProtocolRequest], OperationType], 
     (pureldap.LDAPAbandonRequest, "ldap.abandon"),
 )
 
-# What to answer with when an application fails, chosen so that a client
-# waiting on the operation is answered in the shape it expects.
-_FAILURE_RESPONSES: dict[str, type[pureldap.LDAPResult]] = {
+# What each operation is answered with, so that a client waiting on one is
+# answered in the shape it expects.
+_RESULT_TYPES: dict[str, type[pureldap.LDAPResult]] = {
     "ldap.bind": pureldap.LDAPBindResponse,
     "ldap.search": pureldap.LDAPSearchResultDone,
     "ldap.modify": pureldap.LDAPModifyResponse,
@@ -263,8 +260,13 @@ _FAILURE_RESPONSES: dict[str, type[pureldap.LDAPResult]] = {
 
 # An unbind is not answered, so a failure in one has nothing to report.
 # An abandon is not answered either, but it never reaches an application:
-# the connection acts on it itself.
+# the connection acts on it itself, as it does on a cancel.
 _UNANSWERED = frozenset({"ldap.unbind"})
+
+# What RFC 3909 answers a Cancel with. Unlike an abandon, a cancel says
+# whether it worked, and the operation it stopped is told as well.
+CANCELED = 118
+NO_SUCH_OPERATION = 119
 
 
 def operation_type(request: pureldap.LDAPProtocolRequest) -> OperationType:
@@ -283,48 +285,53 @@ def operation_type(request: pureldap.LDAPProtocolRequest) -> OperationType:
     return "ldap.unknown"
 
 
-def cancel_id(request: pureldap.LDAPExtendedRequest) -> int:
-    """Which operation a Cancel request names.
+def _cancel_id(request: pureldap.LDAPExtendedRequest) -> int | None:
+    """Which operation a Cancel request names, or nothing if it says.
 
     RFC 3909 carries the message id in the request value rather than in
-    the request itself, so it has to be decoded before it can be used.
+    the request itself, so it has to be decoded before it can be used, and
+    a client is free to send something that is not one.
     """
-    assert request.requestValue is not None
-    sequence, _ = pureber.berDecodeObject(
-        pureber.BERDecoderContext(), to_bytes(request.requestValue)
-    )
-    assert isinstance(sequence, pureber.BERSequence)
-    (cancelID,) = sequence
-    assert isinstance(cancelID, pureber.BERInteger)
-    return cancelID.value
+    value = request.requestValue
+    if value is None:
+        return None
+    try:
+        sequence, _ = pureber.berDecodeObject(
+            pureber.BERDecoderContext(), to_bytes(value)
+        )
+    except (pureber.BERException, pureber.BERExceptionInsufficientData):
+        return None
+    if not isinstance(sequence, pureber.BERSequence) or len(sequence) != 1:
+        return None
+    cancelID = sequence[0]
+    return cancelID.value if isinstance(cancelID, pureber.BERInteger) else None
 
 
-def failure_response(
-    operation: str, errorMessage: str | bytes | None
+def result_response(
+    operation: str, resultCode: int, errorMessage: str | bytes | None = None
 ) -> pureldap.LDAPResult:
-    """The result to answer a failed operation with.
+    """A result of the type that operation is answered with.
 
-    An application that raises would otherwise leave a client waiting, so
-    something final is sent in its place, of the type that operation is
-    answered with.
+    An application that raises, or an operation that was cancelled, would
+    otherwise leave a client waiting, so something final is sent in its
+    place -- and it has to be of the right shape, since that is what the
+    client is reading for.
     """
-    response = _FAILURE_RESPONSES.get(operation)
+    response = _RESULT_TYPES.get(operation)
     if response is None:
         return pureldap.LDAPExtendedResponse(
-            resultCode=ldaperrors.LDAPProtocolError.resultCode,
+            resultCode=resultCode,
             responseName="1.3.6.1.4.1.1466.20036",
             errorMessage=errorMessage,
         )
-    return response(
-        resultCode=ldaperrors.LDAPProtocolError.resultCode,
-        errorMessage=errorMessage,
-    )
+    return response(resultCode=resultCode, errorMessage=errorMessage)
 
 
 class _Operation:
     """One operation in flight, and the means to stop it."""
 
-    def __init__(self) -> None:
+    def __init__(self, name: OperationType) -> None:
+        self.name = name
         self.cancel_scope = anyio.CancelScope()
         self.abandoned = False
         # Unbuffered: an event is handed straight to an application asking
@@ -390,20 +397,36 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
         if task_group is not None:
             task_group.start_soon(operation.post, event)
 
-    def abandon(self, msgid: int) -> None:
+    def abandon(self, msgid: int) -> _Operation | None:
         """Stop the operation with this message id, if it is still running.
 
-        RFC 4511 section 4.11 says an abandoned operation is not answered,
-        so its ``send`` stops writing before the task is cancelled. What
-        stops the work is the cancellation; the event says why, for an
-        application waiting on one.
+        Its ``send`` refuses before the task is cancelled, so nothing it
+        had left to say reaches the client -- which is what RFC 4511
+        section 4.11 asks of an abandon. What stops the work is the
+        cancellation; the event says why, for an application waiting on
+        one. Answers with the operation that was stopped, if there was one.
         """
         operation = self._operations.get(msgid)
         if operation is None:
-            return
+            return None
         operation.abandoned = True
         self._notify(operation, {"type": "ldap.abandon"})
         operation.cancel_scope.cancel()
+        return operation
+
+    async def cancel(self, msgid: int) -> int:
+        """Stop an operation the way RFC 3909 says a Cancel does.
+
+        Unlike an abandon, the operation that was stopped is answered --
+        with ``canceled``, in whatever shape it was going to be answered
+        in -- and so is the Cancel itself. What comes back is the result
+        code to answer the Cancel with.
+        """
+        operation = self.abandon(msgid)
+        if operation is None:
+            return NO_SUCH_OPERATION
+        await self._respond(msgid, result_response(operation.name, CANCELED))
+        return CANCELED
 
     @staticmethod
     def _address(address: tuple[str, int] | str | None) -> tuple[str, int] | None:
@@ -430,7 +453,6 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
             client=self._address(stream.extra(SocketAttribute.remote_address, None)),
             tls=isinstance(stream, TLSStream),
             state=dict(self.state),
-            abandon=self.abandon,
         )
 
     async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
@@ -451,11 +473,29 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
         if task_group is None:
             raise ldapserver.LDAPServerConnectionLostException()
 
-        operation = _Operation()
+        if (
+            isinstance(msg.value, pureldap.LDAPExtendedRequest)
+            and to_bytes(msg.value.requestName or b"") == pureldap.LDAPCancelRequest.oid
+        ):
+            # Stopping an operation is the connection's business, not an
+            # application's, so a Cancel gets no scope of its own either.
+            target = _cancel_id(msg.value)
+            code = (
+                ldaperrors.LDAPProtocolError.resultCode
+                if target is None
+                else await self.cancel(target)
+            )
+            await self._respond(
+                msg.id, pureldap.LDAPExtendedResponse(resultCode=code)
+            )
+            return
+
+        name = operation_type(msg.value)
+        operation = _Operation(name)
         # Registered before the task runs, so an abandon that arrives
         # first still finds it.
         self._operations[msg.id] = operation
-        if operation_type(msg.value) == "ldap.starttls":
+        if name == "ldap.starttls":
             # Everything after the answer is framed by TLS, so this one is
             # finished before the reader goes back for more.
             await self._run_operation(msg, operation)
@@ -468,7 +508,7 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
         assert isinstance(msg.value, pureldap.LDAPProtocolRequest)
         connection = self._connection_scope
         assert connection is not None
-        name = operation_type(msg.value)
+        name = operation.name
         scope = OperationScope(
             type=name,
             spec_version=SPEC_VERSION,
@@ -512,7 +552,12 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
         await self._send_event(
             operation,
             msgid,
-            {"type": "ldap.response", "response": failure_response(name, errorMessage)},
+            {
+                "type": "ldap.response",
+                "response": result_response(
+                    name, ldaperrors.LDAPProtocolError.resultCode, errorMessage
+                ),
+            },
         )
 
     async def _send_event(

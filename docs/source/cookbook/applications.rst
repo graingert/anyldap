@@ -43,8 +43,8 @@ on one operation is meant to be seen by the next.
 
 ``scope["type"]`` names the operation: ``"ldap.bind"``, ``"ldap.search"``,
 ``"ldap.modify"`` and so on. An extended request is named by its OID, so
-StartTLS arrives as ``"ldap.starttls"`` and a cancel as ``"ldap.cancel"``,
-rather than as one undifferentiated ``"ldap.extended"``.
+StartTLS arrives as ``"ldap.starttls"`` rather than as one
+undifferentiated ``"ldap.extended"``.
 
 
 """""""""""""""""""""
@@ -70,20 +70,25 @@ away.
 Abandon and cancel
 """"""""""""""""""
 
-An abandon cancels the operation it names. RFC 4511 section 4.11 says an
-abandoned operation is never answered, so ``send`` refuses rather than
-writing: it raises :exc:`~anyldap.app.ClientDisconnected`, the way a reset
-HTTP/2 stream refuses what is written to it. A closed connection refuses
-the same way. An application that lets the error escape ends that
-operation and nothing else.
+Stopping an operation is the connection's business rather than an
+application's, so neither an abandon nor a cancel arrives as a scope.
+Both cancel the operation they name, and ``send`` then refuses rather than
+writing: it raises :exc:`~anyldap.app.ClientDisconnected`, an
+:exc:`OSError`, the way a reset HTTP/2 stream refuses what is written to
+it. A closed connection refuses the same way. An application that lets the
+error escape ends that operation and nothing else.
 
-A cancel (RFC 3909) is an operation of its own and *is* answered, so an
-application handles it by stopping the operation it names and then saying
-so::
+What an application sees of it is the cancellation of its own task, and an
+``ldap.abandon`` event if it is waiting on ``receive``.
 
-   if scope["type"] == "ldap.cancel":
-       scope["connection"]["abandon"](app.cancel_id(scope["request"]))
-       await send({"type": "ldap.response", "response": canceled})
+The difference between the two is what the client is told. RFC 4511
+section 4.11 says an abandoned operation is never answered, and it is not.
+RFC 3909 says a cancel *is* answered, so the connection answers both the
+Cancel itself, with ``canceled``, and the operation it stopped, in
+whatever shape that operation was going to be answered in -- a search with
+a search-done, a modify with a modify response -- so that a client waiting
+on it stops waiting. A Cancel naming an operation that is not running is
+answered with ``noSuchOperation``.
 
 
 """"""""""""""""""""""""

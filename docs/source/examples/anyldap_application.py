@@ -68,7 +68,9 @@ async def directory(
         await send(
             {
                 "type": "ldap.response",
-                "response": app.failure_response(scope["type"], "not implemented"),
+                "response": app.result_response(
+                    scope["type"], ldaperrors.LDAPProtocolError.resultCode
+                ),
             }
         )
 

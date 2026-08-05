@@ -3491,20 +3491,26 @@ def test_the_syncrepl_controls_say_what_they_are_asked_to() -> None:
     )
 
 
-async def test_a_cancelled_operation_is_answered_rather_than_forgotten() -> None:
-    async def cancelling(
-        scope: app.Scope, receive: app.Receive, send: app.Send
-    ) -> None:
-        """Answer a cancel, and leave the operation it names unanswered."""
-        if unanswered(scope)["type"] == "ldap.cancel":
-            await respond(send, pureldap.LDAPExtendedResponse(resultCode=0))
+async def never_answers(
+    scope: app.Scope, receive: app.Receive, send: app.Send
+) -> None:
+    """A server that leaves whatever it is asked to do running."""
+    await anyio.sleep_forever()
 
-    async with serving_app(cancelling) as server:
+
+async def test_a_cancelled_operation_is_answered_rather_than_forgotten() -> None:
+    async with serving_app(never_answers) as server:
         async with connected(server) as connection:
             # A search nobody will answer, and then the word to stop it.
             msgid = await connection.search_ext("dc=example,dc=com")
-            assert await connection.cancel_s(msgid) == (ldap.RES_EXTENDED, [])
-            await connection.abandon(msgid)
+            # RFC 3909 answers a cancel it carried out with canceled, which
+            # the client reads as nothing to hand back.
+            assert await connection.cancel_s(msgid) is None
+            # And the search it stopped is answered rather than left
+            # waiting, which is what a cancel does and an abandon does not.
+            with pytest.raises(ldap.LDAPError) as stopped:
+                await connection.result3(msgid)
+            assert stopped.value.args[0]["result"] == 118
 
     request = pureldap.LDAPCancelRequest(cancelID=7)
     assert "cancelID=7" in repr(request)
@@ -3513,18 +3519,18 @@ async def test_a_cancelled_operation_is_answered_rather_than_forgotten() -> None
     ).toWire()
 
 
-async def test_a_cancel_the_server_says_it_did_answers_with_nothing() -> None:
-    async def cancelled(
-        scope: app.Scope, receive: app.Receive, send: app.Send
-    ) -> None:
-        """Answer the cancel with the code for having done it."""
-        if unanswered(scope)["type"] == "ldap.cancel":
-            await respond(send, pureldap.LDAPExtendedResponse(resultCode=118))
+async def test_a_cancel_a_server_answers_plainly_is_handed_back() -> None:
+    class Obliging(app.ApplicationServer):
+        """A server that answers a cancel without a code of its own."""
 
-    async with serving_app(cancelled) as server:
+        async def cancel(self, msgid: int) -> int:
+            await super().cancel(msgid)
+            return 0
+
+    async with serving(lambda: Obliging(never_answers)) as server:
         async with connected(server) as connection:
             msgid = await connection.search_ext("dc=example,dc=com")
-            assert await connection.cancel_s(msgid) is None
+            assert await connection.cancel_s(msgid) == (ldap.RES_EXTENDED, [])
             await connection.abandon(msgid)
 
 
