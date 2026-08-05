@@ -216,13 +216,18 @@ class BaseLDAPServer(Protocol):
             assert isinstance(result, pureber.BERBase)
             await reply(result)
 
-    async def _respond(self, msgid: int, response: pureber.BERBase) -> None:
+    async def _respond(
+        self,
+        msgid: int,
+        response: pureber.BERBase,
+        controls: Iterable[pureldap.Control] | None = None,
+    ) -> None:
         """One response, written now.
 
         StartTLS is answered in the clear and the stream raised behind the
         answer, so a pending upgrade is what says which way to write.
         """
-        message = pureldap.LDAPMessage(response, id=msgid)
+        message = pureldap.LDAPMessage(response, id=msgid, controls=controls)
         if self.debug:
             logger.debug("S->C %s", repr(message))
         tls_upgrade = self._tls_upgrade

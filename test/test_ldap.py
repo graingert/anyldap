@@ -8,6 +8,7 @@ import io
 import pathlib
 import re
 import ssl
+import uuid
 from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from urllib.parse import quote
@@ -17,7 +18,7 @@ import anyio.streams.tls
 import pytest
 import trustme
 
-from anyldap import inmemory, ldap
+from anyldap import app, inmemory, ldap
 from anyldap._encoder import to_unicode
 from anyldap.ldap import ldapobject
 from anyldap.ldap.controls import openldap
@@ -101,6 +102,28 @@ async def serving(
             # However the body ends, the server stops with it: a test that
             # fails has to fail rather than wait for a server nobody stopped.
             task_group.cancel_scope.cancel()
+
+
+def serving_app(
+    application: app.LDAPApp, ssl_context: ssl.SSLContext | None = None
+) -> AbstractAsyncContextManager[Serving]:
+    """A server written as an application, listening for the body's sake."""
+    return serving(app.app_factory(application), ssl_context)
+
+
+def unanswered(scope: app.Scope) -> app.OperationScope:
+    """The scope, once it is known not to be the lifespan one.
+
+    These applications have nothing to set up, so none of them takes a
+    lifespan scope.
+    """
+    assert scope["type"] != "lifespan"
+    return scope
+
+
+async def respond(send: app.Send, response: pureber.BERBase) -> None:
+    """One response, which is most of what these applications do."""
+    await send({"type": "ldap.response", "response": response})
 
 
 def serving_tree() -> AbstractAsyncContextManager[Serving]:
@@ -486,23 +509,20 @@ async def test_a_search_can_be_walked_one_entry_at_a_time() -> None:
 async def test_walking_one_entry_at_a_time_waits_for_each() -> None:
     """An entry the server has not sent yet is waited for, not skipped."""
 
-    class SlowServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPSearchResultDone:
-            for name in ("uid=one", "uid=two"):
-                await reply(
-                    pureldap.LDAPSearchResultEntry(
-                        objectName=f"{name},dc=example,dc=com", attributes=[]
-                    )
-                )
-                await anyio.sleep(0)
-            return pureldap.LDAPSearchResultDone(resultCode=0)
+    async def slow(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        for name in ("uid=one", "uid=two"):
+            await respond(
+                send,
+                pureldap.LDAPSearchResultEntry(
+                    objectName=f"{name},dc=example,dc=com", attributes=[]
+                ),
+            )
+            await anyio.sleep(0)
+        await respond(send, pureldap.LDAPSearchResultDone(resultCode=0))
 
-    async with serving(SlowServer) as server, connected(server) as connection:
+    async with serving_app(slow) as server, connected(server) as connection:
         msgid = await connection.search("dc=example,dc=com", ldap.SCOPE_SUBTREE)
         first = await connection.result(msgid, all=ldap.MSG_ONE)
         assert first[0] == ldap.RES_SEARCH_ENTRY
@@ -722,18 +742,14 @@ async def test_starttls_on_a_connection_that_is_gone_reports_the_server_as_down(
 
 
 async def test_starttls_answered_about_something_else_is_refused() -> None:
-    class ImpostorServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPExtendedRequest(
-            self,
-            request: pureldap.LDAPExtendedRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPExtendedResponse:
-            return pureldap.LDAPExtendedResponse(
-                resultCode=0, responseName=b"1.2.3.4"
-            )
+    async def impostor(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await respond(
+            send, pureldap.LDAPExtendedResponse(resultCode=0, responseName=b"1.2.3.4")
+        )
 
-    async with serving(ImpostorServer) as server, connected(server) as connection:
+    async with serving_app(impostor) as server, connected(server) as connection:
         with pytest.raises(ldap.PROTOCOL_ERROR, match="StartTLS answered to"):
             await connection.start_tls_s()
 
@@ -779,21 +795,18 @@ async def test_an_ldaps_url_connects_with_tls_from_the_start() -> None:
 
 
 async def test_a_search_reference_is_handed_back_as_python_ldap_does() -> None:
-    class ReferringServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPSearchResultDone:
-            await reply(
-                pureldap.LDAPSearchResultReference(
-                    uris=[pureber.BEROctetString(b"ldap://elsewhere.example.com/dc=x")]
-                )
-            )
-            return pureldap.LDAPSearchResultDone(resultCode=0)
+    async def referring(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await respond(
+            send,
+            pureldap.LDAPSearchResultReference(
+                uris=[pureber.BEROctetString(b"ldap://elsewhere.example.com/dc=x")]
+            ),
+        )
+        await respond(send, pureldap.LDAPSearchResultDone(resultCode=0))
 
-    async with serving(ReferringServer) as server, connected(server) as connection:
+    async with serving_app(referring) as server, connected(server) as connection:
         connection.referrals = 0
         results = await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
         assert results == [(None, ["ldap://elsewhere.example.com/dc=x"])]
@@ -806,46 +819,35 @@ async def test_a_search_reference_is_handed_back_as_python_ldap_does() -> None:
 
 
 async def test_a_search_answered_with_the_wrong_message_is_a_protocol_error() -> None:
-    class ConfusedServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPBindResponse:
-            return pureldap.LDAPBindResponse(resultCode=0)
+    async def confused(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await respond(send, pureldap.LDAPBindResponse(resultCode=0))
 
-    async with serving(ConfusedServer) as server, connected(server) as connection:
+    async with serving_app(confused) as server, connected(server) as connection:
         with pytest.raises(ldap.PROTOCOL_ERROR, match="unexpected response"):
             await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
 
 
 async def test_a_compare_that_answers_neither_way_is_a_protocol_error() -> None:
-    class AgreeableServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPCompareRequest(
-            self,
-            request: pureldap.LDAPCompareRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPCompareResponse:
-            return pureldap.LDAPCompareResponse(resultCode=0)
+    async def agreeable(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await respond(send, pureldap.LDAPCompareResponse(resultCode=0))
 
-    async with serving(AgreeableServer) as server, connected(server) as connection:
+    async with serving_app(agreeable) as server, connected(server) as connection:
         with pytest.raises(ldap.PROTOCOL_ERROR, match="neither true nor false"):
             await connection.compare_s("dc=example,dc=com", "uid", b"jack")
 
 
 async def test_a_server_that_goes_away_mid_operation_reports_itself_down() -> None:
-    class SilentServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> None:
-            self._start_anyio_close()
+    async def silent(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        # Answered by going away rather than by saying anything.
+        await send({"type": "ldap.close"})
 
-    async with serving(SilentServer) as server, connected(server) as connection:
+    async with serving_app(silent) as server, connected(server) as connection:
         # Tracing logs each operation as it is run, which is all it does.
         connection.trace_level = 1
         with pytest.raises(ldap.SERVER_DOWN):
@@ -876,7 +878,7 @@ async def test_a_lost_connection_fails_the_operation_waiting_on_it() -> None:
 
 def referring_to(
     uri: str, *, matched: str = "dc=example,dc=com", binds: bool = True
-) -> ServerFactory:
+) -> app.LDAPApp:
     """A server that answers every operation with a referral somewhere else.
 
     Nothing is looked up: whatever is asked for, the answer is that it is
@@ -886,41 +888,35 @@ def referring_to(
     """
     referral = [uri]
 
-    class ReferralServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPSearchResultDone:
-            return pureldap.LDAPSearchResultDone(
-                resultCode=10, matchedDN=matched, referral=referral
-            )
-
-        async def handle_LDAPCompareRequest(
-            self,
-            request: pureldap.LDAPCompareRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPCompareResponse:
-            return pureldap.LDAPCompareResponse(
-                resultCode=10, matchedDN=matched, referral=referral
-            )
-
-        async def handle_LDAPBindRequest(
-            self,
-            request: pureldap.LDAPBindRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPBindResponse:
+    async def referring(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        if unanswered(scope)["type"] == "ldap.bind":
             if binds:
-                return pureldap.LDAPBindResponse(resultCode=0)
-            return pureldap.LDAPBindResponse(resultCode=10, referral=referral)
+                await respond(send, pureldap.LDAPBindResponse(resultCode=0))
+            else:
+                await respond(
+                    send, pureldap.LDAPBindResponse(resultCode=10, referral=referral)
+                )
+        elif scope["type"] == "ldap.compare":
+            await respond(
+                send,
+                pureldap.LDAPCompareResponse(
+                    resultCode=10, matchedDN=matched, referral=referral
+                ),
+            )
+        else:
+            await respond(
+                send,
+                pureldap.LDAPSearchResultDone(
+                    resultCode=10, matchedDN=matched, referral=referral
+                ),
+            )
 
-    return ReferralServer
+    return referring
 
 
-def continuing_to(*uris: str) -> ServerFactory:
+def continuing_to(*uris: str) -> app.LDAPApp:
     """A server holding one entry, and a continuation for the rest.
 
     One continuation can name several servers holding the same thing, which
@@ -928,27 +924,25 @@ def continuing_to(*uris: str) -> ServerFactory:
     first that answers.
     """
 
-    class ContinuingServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPSearchResultDone:
-            await reply(
-                pureldap.LDAPSearchResultEntry(
-                    objectName=b"cn=here,dc=example,dc=com",
-                    attributes=[(b"cn", [b"here"])],
-                )
-            )
-            await reply(
-                pureldap.LDAPSearchResultReference(
-                    uris=[pureber.BEROctetString(uri.encode()) for uri in uris]
-                )
-            )
-            return pureldap.LDAPSearchResultDone(resultCode=0)
+    async def continuing(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await respond(
+            send,
+            pureldap.LDAPSearchResultEntry(
+                objectName=b"cn=here,dc=example,dc=com",
+                attributes=[(b"cn", [b"here"])],
+            ),
+        )
+        await respond(
+            send,
+            pureldap.LDAPSearchResultReference(
+                uris=[pureber.BEROctetString(uri.encode()) for uri in uris]
+            ),
+        )
+        await respond(send, pureldap.LDAPSearchResultDone(resultCode=0))
 
-    return ContinuingServer
+    return continuing
 
 
 async def test_a_search_continuation_is_followed_when_referrals_are_on() -> None:
@@ -956,7 +950,7 @@ async def test_a_search_continuation_is_followed_when_referrals_are_on() -> None
     async with serving_tree() as away:
         uri = f"{away.uri}/ou=People,dc=example,dc=com??sub"
         async with (
-            serving(continuing_to(uri)) as server,
+            serving_app(continuing_to(uri)) as server,
             connected(server) as connection,
         ):
             found = await connection.search_s(
@@ -975,7 +969,7 @@ async def test_a_search_continuation_is_left_alone_when_referrals_are_off() -> N
     async with serving_tree() as away:
         uri = f"{away.uri}/ou=People,dc=example,dc=com??sub"
         async with (
-            serving(continuing_to(uri)) as server,
+            serving_app(continuing_to(uri)) as server,
             connected(server) as connection,
         ):
             connection.referrals = 0
@@ -987,7 +981,7 @@ async def test_a_result_that_is_only_a_referral_is_made_again_where_it_points() 
     """A search answered with a referral is run at the server it names."""
     async with serving_tree() as away:
         async with (
-            serving(referring_to(f"{away.uri}/{JACK}")) as server,
+            serving_app(referring_to(f"{away.uri}/{JACK}")) as server,
             connected(server) as connection,
         ):
             found = await connection.search_s(
@@ -1000,7 +994,7 @@ async def test_a_referral_that_names_a_dn_asks_about_that_one() -> None:
     """A referral to another entry moves the operation to it, not just the server."""
     async with serving_tree() as away:
         async with (
-            serving(referring_to(f"{away.uri}/{JACK}")) as server,
+            serving_app(referring_to(f"{away.uri}/{JACK}")) as server,
             connected(server) as connection,
         ):
             assert await connection.compare_s("dc=nowhere,dc=com", "uid", b"jack")
@@ -1012,7 +1006,7 @@ async def test_a_continuation_takes_the_first_server_that_answers() -> None:
         dead = "ldap://127.0.0.1:1/dc=example,dc=com??sub"
         alive = f"{away.uri}/ou=People,dc=example,dc=com??sub"
         async with (
-            serving(continuing_to(dead, alive)) as server,
+            serving_app(continuing_to(dead, alive)) as server,
             connected(server) as connection,
         ):
             found = await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
@@ -1021,7 +1015,7 @@ async def test_a_continuation_takes_the_first_server_that_answers() -> None:
 
 async def test_a_continuation_nobody_answers_leaves_the_search_as_it_was() -> None:
     async with (
-        serving(continuing_to("ldap://127.0.0.1:1/dc=example,dc=com??sub")) as server,
+        serving_app(continuing_to("ldap://127.0.0.1:1/dc=example,dc=com??sub")) as server,
         connected(server) as connection,
     ):
         found = await connection.search_s("dc=example,dc=com", ldap.SCOPE_SUBTREE)
@@ -1033,7 +1027,7 @@ async def test_a_continuation_that_fails_where_it_points_fails_the_search() -> N
     async with serving_tree() as away:
         uri = f"{away.uri}/dc=nowhere,dc=com??sub"
         async with (
-            serving(continuing_to(uri)) as server,
+            serving_app(continuing_to(uri)) as server,
             connected(server) as connection,
         ):
             with pytest.raises(ldap.NO_SUCH_OBJECT) as missing:
@@ -1046,7 +1040,7 @@ async def test_a_followed_search_can_be_walked_one_message_at_a_time() -> None:
     async with serving_tree() as away:
         uri = f"{away.uri}/ou=People,dc=example,dc=com??sub"
         async with (
-            serving(continuing_to(uri)) as server,
+            serving_app(continuing_to(uri)) as server,
             connected(server) as connection,
         ):
             msgid = await connection.search("dc=example,dc=com", ldap.SCOPE_SUBTREE)
@@ -1067,7 +1061,7 @@ async def test_a_referral_that_names_no_dn_asks_about_the_same_entry() -> None:
     """RFC 4511 section 4.1.10: an absent DN means the one already asked for."""
     async with serving_tree() as away:
         async with (
-            serving(referring_to(away.uri)) as server,
+            serving_app(referring_to(away.uri)) as server,
             connected(server) as connection,
         ):
             assert await connection.compare_s(JACK, "uid", b"jack")
@@ -1079,7 +1073,7 @@ async def test_a_referral_is_handed_to_the_caller_when_it_cannot_be_reached() ->
     async with serving_tree() as away:
         uri = away.uri
     async with (
-        serving(referring_to(uri, matched="dc=com")) as server,
+        serving_app(referring_to(uri, matched="dc=com")) as server,
         connected(server) as connection,
     ):
         with pytest.raises(ldap.REFERRAL) as caught:
@@ -1091,7 +1085,7 @@ async def test_a_referral_is_handed_to_the_caller_when_it_cannot_be_reached() ->
 
 async def test_a_referral_is_left_alone_when_referrals_are_off() -> None:
     async with (
-        serving(referring_to("ldap://elsewhere.example.com")) as server,
+        serving_app(referring_to("ldap://elsewhere.example.com")) as server,
         connected(server) as connection,
     ):
         connection.referrals = 0
@@ -1107,9 +1101,9 @@ async def test_a_referral_that_points_back_at_itself_stops() -> None:
     """
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
-    factory = referring_to(f"ldap://{host}:{port}")
+    application = referring_to(f"ldap://{host}:{port}")
     async with anyio.create_task_group() as task_group:
-        task_group.start_soon(ldapserver.serve, listener, factory)
+        task_group.start_soon(app.serve, listener, application)
         try:
             async with connected(Serving(host, port)) as connection:
                 with pytest.raises(ldap.REFERRAL_LIMIT_EXCEEDED, match="stopped after"):
@@ -1122,7 +1116,7 @@ async def test_a_bind_is_never_followed_to_where_a_referral_points() -> None:
     """A referral says where to look, not whose password may be sent there."""
     async with serving_tree() as away:
         async with (
-            serving(referring_to(away.uri, binds=False)) as server,
+            serving_app(referring_to(away.uri, binds=False)) as server,
             connected(server) as connection,
         ):
             with pytest.raises(ldap.REFERRAL) as refused:
@@ -1151,63 +1145,61 @@ async def test_the_referrals_option_is_the_boolean_libldap_keeps() -> None:
 # Binding with SASL.
 
 
-class SaslServer(ldapserver.BaseLDAPServer):
-    """A server that answers a two-step SASL exchange, as a real one does."""
+SASL_CHALLENGE = b"<12345.67890@example.com>"
 
-    challenge = b"<12345.67890@example.com>"
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.seen: list[tuple[bytes, bytes | None]] = []
+def sasl_server(seen: list[tuple[bytes, bytes | None]] | None = None) -> app.LDAPApp:
+    """A server that walks a SASL bind through its steps.
 
-    async def handle_LDAPBindRequest(
-        self,
-        request: pureldap.LDAPBindRequest,
-        controls: Iterable[pureldap.Control] | None,
-        reply: ldapserver.Reply,
-    ) -> pureldap.LDAPBindResponse:
+    What the client offered is appended to ``seen``, for a test that wants
+    to check it.
+    """
+    steps = [] if seen is None else seen
+
+    async def sasl(scope: app.Scope, receive: app.Receive, send: app.Send) -> None:
+        request = unanswered(scope)["request"]
+        assert isinstance(request, pureldap.LDAPBindRequest)
         assert isinstance(request.auth, tuple)
         mechanism, credentials = request.auth
         assert isinstance(mechanism, bytes)
         assert credentials is None or isinstance(credentials, bytes)
-        self.seen.append((mechanism, credentials))
+        steps.append((mechanism, credentials))
+        response: pureldap.LDAPBindResponse
         if mechanism == b"EXTERNAL":
-            return pureldap.LDAPBindResponse(resultCode=0)
-        if credentials is None:
+            response = pureldap.LDAPBindResponse(resultCode=0)
+        elif credentials is None:
             # Ask for the next step, with the challenge to answer.
-            return pureldap.LDAPBindResponse(
-                resultCode=14, serverSaslCreds=self.challenge
+            response = pureldap.LDAPBindResponse(
+                resultCode=14, serverSaslCreds=SASL_CHALLENGE
             )
-        if credentials.startswith(b"jack "):
-            return pureldap.LDAPBindResponse(resultCode=0)
-        return pureldap.LDAPBindResponse(resultCode=49)
+        elif credentials.startswith(b"jack "):
+            response = pureldap.LDAPBindResponse(resultCode=0)
+        else:
+            response = pureldap.LDAPBindResponse(resultCode=49)
+        await respond(send, response)
+
+    return sasl
 
 
 async def test_a_sasl_bind_answers_the_server_until_it_is_done() -> None:
-    servers: list[SaslServer] = []
-
-    def factory() -> ldapserver.BaseLDAPServer:
-        server = SaslServer()
-        servers.append(server)
-        return server
-
-    async with serving(factory) as server, connected(server) as connection:
+    seen: list[tuple[bytes, bytes | None]] = []
+    async with (
+        serving_app(sasl_server(seen)) as server,
+        connected(server) as connection,
+    ):
         await connection.sasl_interactive_bind_s(
             "", ldap.sasl.cram_md5("jack", "secret")
         )
         # The first request asks for the mechanism, the second answers the
         # challenge the server sent back.
-        assert [mechanism for mechanism, _ in servers[0].seen] == [
-            b"CRAM-MD5",
-            b"CRAM-MD5",
-        ]
-        assert servers[0].seen[0][1] is None
-        answer = servers[0].seen[1][1]
+        assert [mechanism for mechanism, _ in seen] == [b"CRAM-MD5", b"CRAM-MD5"]
+        assert seen[0][1] is None
+        answer = seen[1][1]
         assert answer is not None and answer.startswith(b"jack ")
 
 
 async def test_a_sasl_bind_the_server_refuses_is_reported() -> None:
-    async with serving(SaslServer) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         with pytest.raises(ldap.INVALID_CREDENTIALS):
             await connection.sasl_interactive_bind_s(
                 "", ldap.sasl.cram_md5("jill", "wrong")
@@ -1215,24 +1207,25 @@ async def test_a_sasl_bind_the_server_refuses_is_reported() -> None:
 
 
 async def test_sasl_external_says_the_connection_is_the_identity() -> None:
-    servers: list[SaslServer] = []
-
-    def factory() -> ldapserver.BaseLDAPServer:
-        server = SaslServer()
-        servers.append(server)
-        return server
-
-    async with serving(factory) as server, connected(server) as connection:
+    named: list[tuple[bytes, bytes | None]] = []
+    async with (
+        serving_app(sasl_server(named)) as server,
+        connected(server) as connection,
+    ):
         await connection.sasl_external_bind_s(authz_id="dn:cn=jack")
         # An empty response is still a response, which is what EXTERNAL
         # sends when it has no name of its own to give.
-        assert servers[0].seen == [(b"EXTERNAL", b"dn:cn=jack")]
+        assert named == [(b"EXTERNAL", b"dn:cn=jack")]
 
-    async with serving(factory) as server, connected(server) as connection:
+    nameless: list[tuple[bytes, bytes | None]] = []
+    async with (
+        serving_app(sasl_server(nameless)) as server,
+        connected(server) as connection,
+    ):
         await connection.sasl_non_interactive_bind_s("EXTERNAL")
-        assert servers[1].seen == [(b"EXTERNAL", b"")]
+        assert nameless == [(b"EXTERNAL", b"")]
 
-    async with serving(factory) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         # A mechanism that has to be told a name and a password cannot be
         # bound with by a caller who says nothing.
         with pytest.raises(ldap.AUTH_UNKNOWN, match="credentials"):
@@ -1240,15 +1233,15 @@ async def test_sasl_external_says_the_connection_is_the_identity() -> None:
 
 
 async def test_a_sasl_step_by_step_bind_hands_back_the_challenge() -> None:
-    async with serving(SaslServer) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         challenge = await connection.sasl_bind_s("", "CRAM-MD5", None)
-        assert challenge == SaslServer.challenge
+        assert challenge == SASL_CHALLENGE
         answer = ldap.sasl.cram_md5("jack", "secret").process(challenge)
         assert await connection.sasl_bind_s("", "CRAM-MD5", answer) is None
 
 
 async def test_a_step_by_step_bind_the_server_refuses_is_reported() -> None:
-    async with serving(SaslServer) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         challenge = await connection.sasl_bind_s("", "CRAM-MD5", None)
         assert challenge is not None
         with pytest.raises(ldap.INVALID_CREDENTIALS):
@@ -1256,7 +1249,7 @@ async def test_a_step_by_step_bind_the_server_refuses_is_reported() -> None:
 
 
 async def test_a_mechanism_with_no_answer_to_give_stops_the_bind() -> None:
-    async with serving(SaslServer) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         # The base mechanism answers nothing at all, so the exchange the
         # server asks to continue cannot be continued.
         with pytest.raises(ldap.AUTH_UNKNOWN, match="no answer"):
@@ -1304,22 +1297,17 @@ def test_the_sasl_mechanisms_answer_as_their_rfcs_say() -> None:
 
 
 async def test_controls_are_sent_as_the_triples_they_encode_to() -> None:
-    class ControlServer(ldapserver.BaseLDAPServer):
-        """A server that answers with the controls it was sent."""
+    seen: list[list[pureldap.Control]] = []
 
-        seen: list[list[pureldap.Control]] = []
-
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPSearchResultDone:
-            ControlServer.seen.append(list(controls or ()))
-            return pureldap.LDAPSearchResultDone(resultCode=0)
+    async def controlled(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        """Answer with nothing, having noted the controls it was sent."""
+        seen.append(list(unanswered(scope)["controls"] or ()))
+        await respond(send, pureldap.LDAPSearchResultDone(resultCode=0))
 
     paged = ldap.controls.SimplePagedResultsControl(True, size=2, cookie=b"")
-    async with serving(ControlServer) as server, connected(server) as connection:
+    async with serving_app(controlled) as server, connected(server) as connection:
         await connection.search_ext_s(
             "dc=example,dc=com",
             ldap.SCOPE_SUBTREE,
@@ -1335,41 +1323,32 @@ async def test_controls_are_sent_as_the_triples_they_encode_to() -> None:
     # BER writes true as every bit set, which is what the server reads back.
     sent = [
         (oid, bool(criticality), value)
-        for oid, criticality, value in ControlServer.seen[0]
+        for oid, criticality, value in seen[0]
     ]
     assert sent == [
         (b"1.2.840.113556.1.4.319", True, paged.encodeControlValue()),
         (b"2.16.840.1.113730.3.4.2", False, None),
     ]
-    assert ControlServer.seen[1] == [(b"1.2.3", 0, b"raw")]
+    assert seen[1] == [(b"1.2.3", 0, b"raw")]
 
 
 async def test_the_controls_a_response_carries_are_read_back() -> None:
     cookie = b"page-2"
 
-    class PagingServer(ldapserver.BaseLDAPServer):
-        """A server that answers every request with a control of its own."""
+    async def paging(scope: app.Scope, receive: app.Receive, send: app.Send) -> None:
+        """Answer every request with a paged results control of its own."""
+        answer = ldap.controls.SimplePagedResultsControl(False, size=0, cookie=cookie)
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                "controls": [
+                    (ldap.CONTROL_PAGEDRESULTS, 0, answer.encodeControlValue())
+                ],
+            }
+        )
 
-        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
-            # Answer with a paged results control of the server's own.
-            answer = ldap.controls.SimplePagedResultsControl(
-                False, size=0, cookie=cookie
-            )
-            await self._send_anyio_write(
-                pureldap.LDAPMessage(
-                    pureldap.LDAPSearchResultDone(resultCode=0),
-                    id=msg.id,
-                    controls=[
-                        (
-                            ldap.CONTROL_PAGEDRESULTS,
-                            0,
-                            answer.encodeControlValue(),
-                        )
-                    ],
-                ).toWire()
-            )
-
-    async with serving(PagingServer) as server, connected(server) as connection:
+    async with serving_app(paging) as server, connected(server) as connection:
         msgid = await connection.search_ext(
             "dc=example,dc=com", ldap.SCOPE_SUBTREE, serverctrls=[]
         )
@@ -1557,21 +1536,20 @@ class Counting(openldap.SearchNoOpMixIn, ldapobject.SimpleLDAPObject):
     """A connection that can ask how much a search would have found."""
 
 
-def noop_answer(controls: list[pureldap.Control] | None) -> ServerFactory:
+def noop_answer(controls: list[pureldap.Control] | None) -> app.LDAPApp:
     """A server that answers a search with these controls and nothing else."""
 
-    class NoOpServer(ldapserver.BaseLDAPServer):
-        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
-            code = 0 if controls else 3
-            await self._send_anyio_write(
-                pureldap.LDAPMessage(
-                    pureldap.LDAPSearchResultDone(resultCode=code),
-                    id=msg.id,
-                    controls=controls,
-                ).toWire()
-            )
+    async def noop(scope: app.Scope, receive: app.Receive, send: app.Send) -> None:
+        code = 0 if controls else 3
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPSearchResultDone(resultCode=code),
+                "controls": controls,
+            }
+        )
 
-    return NoOpServer
+    return noop
 
 
 async def test_a_noop_search_counts_what_it_would_have_found() -> None:
@@ -1579,22 +1557,22 @@ async def test_a_noop_search_counts_what_it_would_have_found() -> None:
     counted = pureber.BERSequence(
         [pureber.BEREnumerated(0), pureber.BERInteger(3), pureber.BERInteger(1)]
     ).toWire()
-    factory = noop_answer(
+    counting = noop_answer(
         [(openldap.SEARCH_NOOP_OID, 0, counted), (b"1.2.3", 0, b"other")]
     )
-    async with serving(factory) as server:
+    async with serving_app(counting) as server:
         async with Counting(server.uri) as connection:
             assert await connection.noop_search_st("dc=example,dc=com") == (3, 1)
 
     # A server that says nothing about it leaves the numbers unknown.
-    async with serving(noop_answer([])) as server:
+    async with serving_app(noop_answer([])) as server:
         async with Counting(server.uri) as connection:
             with pytest.raises(ldap.TIMELIMIT_EXCEEDED):
                 await connection.noop_search_st("dc=example,dc=com")
             # The search was abandoned on the way out, and is forgotten.
             assert connection._pending == {}
 
-    async with serving(noop_answer([(b"1.2.3", 0, b"other")])) as server:
+    async with serving_app(noop_answer([(b"1.2.3", 0, b"other")])) as server:
         async with Counting(server.uri) as connection:
             assert await connection.noop_search_st("dc=example,dc=com") == (None, None)
 
@@ -2723,22 +2701,19 @@ async def test_the_sasl_options_say_what_a_bind_was_not_told() -> None:
 
 
 async def test_a_bind_is_told_what_the_options_say_and_reports_what_it_did() -> None:
-    servers: list[SaslServer] = []
-
-    def factory() -> ldapserver.BaseLDAPServer:
-        server = SaslServer()
-        servers.append(server)
-        return server
-
-    async with serving(factory) as server, connected(server) as connection:
+    seen: list[tuple[bytes, bytes | None]] = []
+    async with (
+        serving_app(sasl_server(seen)) as server,
+        connected(server) as connection,
+    ):
         connection.set_option(ldap.OPT_X_SASL_AUTHZID, "u:jack")
         # EXTERNAL was given no identity, so the option's is the one sent.
         await connection.sasl_interactive_bind_s("", ldap.sasl.external())
-        assert servers[0].seen == [(b"EXTERNAL", b"u:jack")]
+        assert seen == [(b"EXTERNAL", b"u:jack")]
         assert connection.get_option(ldap.OPT_X_SASL_MECH) == "EXTERNAL"
         assert connection.get_option(ldap.OPT_X_SASL_USERNAME) == "u:jack"
 
-    async with serving(factory) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         await connection.sasl_interactive_bind_s(
             "", ldap.sasl.cram_md5("jack", "secret")
         )
@@ -2813,7 +2788,7 @@ async def test_a_gssapi_bind_asks_for_a_ticket_for_the_server(
         raise ImportError("no Kerberos here")
 
     monkeypatch.setattr(ldap.sasl, "_gssapi", not_installed)
-    async with serving(SaslServer) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         # The exchange itself needs Kerberos; what is checked here is that
         # the bind says which service the ticket should be for.
         with pytest.raises(ImportError, match="no Kerberos here"):
@@ -2891,17 +2866,11 @@ async def test_a_search_written_out_as_it_arrives() -> None:
 
 
 async def test_a_result_a_search_cannot_have_answered_with_is_refused() -> None:
-    class WrongServer(ldapserver.BaseLDAPServer):
-        """A server that answers a search with something else entirely."""
+    async def wrong(scope: app.Scope, receive: app.Receive, send: app.Send) -> None:
+        """Answer a search with something else entirely."""
+        await respond(send, pureldap.LDAPModifyResponse(resultCode=0))
 
-        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
-            await self._send_anyio_write(
-                pureldap.LDAPMessage(
-                    pureldap.LDAPModifyResponse(resultCode=0), id=msg.id
-                ).toWire()
-            )
-
-    async with serving(WrongServer) as server, connected(server) as connection:
+    async with serving_app(wrong) as server, connected(server) as connection:
         collected = ldap.asyncsearch.List(connection)
         await collected.startSearch("dc=example,dc=com", ldap.SCOPE_SUBTREE, "(cn=*)")
         with pytest.raises(ldap.PROTOCOL_ERROR):
@@ -2955,18 +2924,13 @@ async def test_a_reconnect_gives_up_after_being_told_how_many_times_to_try(
 
 
 async def test_a_reconnect_that_the_server_refuses_is_reported() -> None:
-    class RefusingServer(ldapserver.BaseLDAPServer):
-        """A server that will not have anyone bind to it."""
+    async def refusing(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        """Will not have anyone bind to it."""
+        await respond(send, pureldap.LDAPBindResponse(resultCode=49))
 
-        async def handle_LDAPBindRequest(
-            self,
-            request: pureldap.LDAPBindRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPBindResponse:
-            return pureldap.LDAPBindResponse(resultCode=49)
-
-    async with serving(RefusingServer) as server:
+    async with serving_app(refusing) as server:
         connection = ldap.ReconnectLDAPObject(server.uri)
         with pytest.raises(ldap.INVALID_CREDENTIALS):
             await connection.reconnect(server.uri)
@@ -3301,19 +3265,42 @@ class Consumer(ldap.syncrepl.SyncreplConsumer, ldapobject.SimpleLDAPObject):
         self.refreshed = True
 
 
-class SyncServer(ldapserver.BaseLDAPServer):
-    """A server that plays a whole syncrepl session, refresh and persist."""
+def sync_server(asked: list[list[pureldap.Control]]) -> app.LDAPApp:
+    """A server that plays a whole syncrepl session, refresh and persist.
 
-    asked: list[list[pureldap.Control]] = []
+    Whatever controls each search was sent are appended to ``asked``.
+    """
 
-    async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
-        if not isinstance(msg.value, pureldap.LDAPSearchRequest):
+    async def entry(send: app.Send, dn: str, state: int, uuid: str) -> None:
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPSearchResultEntry(
+                    objectName=dn, attributes=[("cn", [dn.split(",")[0][3:]])]
+                ),
+                "controls": [(ldap.CONTROL_SYNC_STATE, 0, sync_state(state, uuid))],
+            }
+        )
+
+    async def info(send: app.Send, value: bytes) -> None:
+        await respond(
+            send,
+            pureldap.LDAPIntermediateResponse(
+                responseName=ldap.syncrepl.SYNC_INFO, responseValue=value
+            ),
+        )
+
+    async def syncing(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        operation = unanswered(scope)
+        if operation["type"] != "ldap.search":
             return
-        SyncServer.asked.append(list(msg.controls or ()))
-        await self.send_entry(msg.id, "cn=one,dc=example,dc=com", 1, UUIDS[0])
+        asked.append(list(operation["controls"] or ()))
+        await entry(send, "cn=one,dc=example,dc=com", 1, UUIDS[0])
         # The refresh is over, and the cookie says where it got to.
-        await self.send_info(
-            msg.id,
+        await info(
+            send,
             sync_info(
                 pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x02,
                 pureber.BEROctetString(b"csn=refreshed"),
@@ -3321,40 +3308,38 @@ class SyncServer(ldapserver.BaseLDAPServer):
             ),
         )
         # Then what changes: one entry is still there, one has gone.
-        await self.send_entry(msg.id, "cn=two,dc=example,dc=com", 0, UUIDS[1])
-        await self.send_entry(msg.id, "cn=two,dc=example,dc=com", 3, UUIDS[1])
+        await entry(send, "cn=two,dc=example,dc=com", 0, UUIDS[1])
+        await entry(send, "cn=two,dc=example,dc=com", 3, UUIDS[1])
         # And a set of entries that are all gone, then a cookie on its own.
-        await self.send_info(
-            msg.id,
+        await info(
+            send,
             sync_info(
                 pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x03,
                 pureber.BEROctetString(b"csn=set"),
                 pureber.BERBoolean(1),
                 pureber.BERSet(
-                    [pureber.BEROctetString(__import__("uuid").UUID(UUIDS[0]).bytes)]
+                    [pureber.BEROctetString(uuid.UUID(UUIDS[0]).bytes)]
                 ),
             ),
         )
-        await self.send_info(
-            msg.id,
+        await info(
+            send,
             pureber.BEROctetString(
                 b"csn=later", tag=pureber.CLASS_CONTEXT | 0x00
             ).toWire(),
         )
         # A message this consumer is not interested in, passed over.
-        await self._send_anyio_write(
-            pureldap.LDAPMessage(
-                pureldap.LDAPIntermediateResponse(
-                    responseName=b"1.2.3", responseValue=b"other"
-                ),
-                id=msg.id,
-            ).toWire()
+        await respond(
+            send,
+            pureldap.LDAPIntermediateResponse(
+                responseName=b"1.2.3", responseValue=b"other"
+            ),
         )
-        await self._send_anyio_write(
-            pureldap.LDAPMessage(
-                pureldap.LDAPSearchResultDone(resultCode=0),
-                id=msg.id,
-                controls=[
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                "controls": [
                     (
                         ldap.CONTROL_SYNC_DONE,
                         0,
@@ -3366,34 +3351,15 @@ class SyncServer(ldapserver.BaseLDAPServer):
                         ).toWire(),
                     )
                 ],
-            ).toWire()
+            }
         )
 
-    async def send_entry(self, msgid: int, dn: str, state: int, uuid: str) -> None:
-        await self._send_anyio_write(
-            pureldap.LDAPMessage(
-                pureldap.LDAPSearchResultEntry(
-                    objectName=dn, attributes=[("cn", [dn.split(",")[0][3:]])]
-                ),
-                id=msgid,
-                controls=[(ldap.CONTROL_SYNC_STATE, 0, sync_state(state, uuid))],
-            ).toWire()
-        )
-
-    async def send_info(self, msgid: int, value: bytes) -> None:
-        await self._send_anyio_write(
-            pureldap.LDAPMessage(
-                pureldap.LDAPIntermediateResponse(
-                    responseName=ldap.syncrepl.SYNC_INFO, responseValue=value
-                ),
-                id=msgid,
-            ).toWire()
-        )
+    return syncing
 
 
 async def test_a_syncrepl_search_is_told_what_the_server_holds() -> None:
-    SyncServer.asked = []
-    async with serving(SyncServer) as server:
+    asked: list[list[pureldap.Control]] = []
+    async with serving_app(sync_server(asked)) as server:
         async with Consumer(server.uri) as connection:
             msgid = await connection.syncrepl_search(
                 "dc=example,dc=com", ldap.SCOPE_SUBTREE, mode="refreshAndPersist"
@@ -3402,7 +3368,7 @@ async def test_a_syncrepl_search_is_told_what_the_server_holds() -> None:
                 pass
 
     # The search asked for syncrepl, in the mode it was told to.
-    [(oid, criticality, value)] = SyncServer.asked[0]
+    [(oid, criticality, value)] = asked[0]
     assert oid == ldap.CONTROL_SYNC.encode()
     assert bool(criticality) is True
     request = ldap.syncrepl.SyncRequestControl(mode="refreshAndPersist")
@@ -3421,8 +3387,8 @@ async def test_a_syncrepl_search_is_told_what_the_server_holds() -> None:
 
 
 async def test_a_syncrepl_search_starts_from_the_cookie_it_was_left() -> None:
-    SyncServer.asked = []
-    async with serving(SyncServer) as server:
+    asked: list[list[pureldap.Control]] = []
+    async with serving_app(sync_server(asked)) as server:
         async with Consumer(server.uri) as connection:
             connection.cookies.append("csn=earlier")
             msgid = await connection.syncrepl_search(
@@ -3432,10 +3398,10 @@ async def test_a_syncrepl_search_starts_from_the_cookie_it_was_left() -> None:
                 pass
 
     # The control it was given is still sent, with the sync request after it.
-    oids = [oid for oid, _, _ in SyncServer.asked[0]]
+    oids = [oid for oid, _, _ in asked[0]]
     assert oids == [b"2.16.840.1.113730.3.4.2", ldap.CONTROL_SYNC.encode()]
-    asked = ldap.syncrepl.SyncRequestControl(cookie="csn=earlier")
-    assert SyncServer.asked[0][1][2] == asked.encodeControlValue()
+    wanted = ldap.syncrepl.SyncRequestControl(cookie="csn=earlier")
+    assert asked[0][1][2] == wanted.encodeControlValue()
 
 
 def test_what_a_syncrepl_message_says_is_read_out_of_it() -> None:
@@ -3525,25 +3491,26 @@ def test_the_syncrepl_controls_say_what_they_are_asked_to() -> None:
     )
 
 
+async def never_answers(
+    scope: app.Scope, receive: app.Receive, send: app.Send
+) -> None:
+    """A server that leaves whatever it is asked to do running."""
+    await anyio.sleep_forever()
+
+
 async def test_a_cancelled_operation_is_answered_rather_than_forgotten() -> None:
-    class CancellingServer(ldapserver.BaseLDAPServer):
-        """A server that answers a cancel, and the operation it stops."""
-
-        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
-            if isinstance(msg.value, pureldap.LDAPExtendedRequest):
-                assert msg.value.requestName == pureldap.LDAPCancelRequest.oid
-                await self._send_anyio_write(
-                    pureldap.LDAPMessage(
-                        pureldap.LDAPExtendedResponse(resultCode=0), id=msg.id
-                    ).toWire()
-                )
-
-    async with serving(CancellingServer) as server:
+    async with serving_app(never_answers) as server:
         async with connected(server) as connection:
             # A search nobody will answer, and then the word to stop it.
             msgid = await connection.search_ext("dc=example,dc=com")
-            assert await connection.cancel_s(msgid) == (ldap.RES_EXTENDED, [])
-            await connection.abandon(msgid)
+            # RFC 3909 answers a cancel it carried out with canceled, which
+            # the client reads as nothing to hand back.
+            assert await connection.cancel_s(msgid) is None
+            # And the search it stopped is answered rather than left
+            # waiting, which is what a cancel does and an abandon does not.
+            with pytest.raises(ldap.LDAPError) as stopped:
+                await connection.result3(msgid)
+            assert stopped.value.args[0]["result"] == 118
 
     request = pureldap.LDAPCancelRequest(cancelID=7)
     assert "cancelID=7" in repr(request)
@@ -3552,119 +3519,103 @@ async def test_a_cancelled_operation_is_answered_rather_than_forgotten() -> None
     ).toWire()
 
 
-async def test_a_cancel_the_server_says_it_did_answers_with_nothing() -> None:
-    class CancelledServer(ldapserver.BaseLDAPServer):
-        """A server that answers the cancel with the code for having done it."""
+async def test_a_cancel_a_server_answers_plainly_is_handed_back() -> None:
+    class Obliging(app.ApplicationServer):
+        """A server that answers a cancel without a code of its own."""
 
-        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
-            if isinstance(msg.value, pureldap.LDAPExtendedRequest):
-                await self._send_anyio_write(
-                    pureldap.LDAPMessage(
-                        pureldap.LDAPExtendedResponse(resultCode=118), id=msg.id
-                    ).toWire()
-                )
+        async def cancel(self, msgid: int) -> int:
+            await super().cancel(msgid)
+            return 0
 
-    async with serving(CancelledServer) as server:
+    async with serving(lambda: Obliging(never_answers)) as server:
         async with connected(server) as connection:
             msgid = await connection.search_ext("dc=example,dc=com")
-            assert await connection.cancel_s(msgid) is None
+            assert await connection.cancel_s(msgid) == (ldap.RES_EXTENDED, [])
             await connection.abandon(msgid)
 
 
 FOREIGN = (b"1.2.3", 0, b"not a sync control")
 
 
-class PersistServer(ldapserver.BaseLDAPServer):
+async def persisting(
+    scope: app.Scope, receive: app.Receive, send: app.Send
+) -> None:
     """A server that says every other thing a syncrepl search can be told."""
 
-    async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
-        if not isinstance(msg.value, pureldap.LDAPSearchRequest):
-            return
-        # An entry with nothing to say about syncing at all.
-        await self.entry(msg.id, "cn=one,dc=example,dc=com", [FOREIGN])
-        # One whose sync control comes after a control this passes over,
-        # and which carries a cookie of its own.
-        await self.entry(
-            msg.id,
-            "cn=two,dc=example,dc=com",
-            [
+    async def entry(dn: str, controls: list[pureldap.Control]) -> None:
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPSearchResultEntry(
+                    objectName=dn, attributes=[]
+                ),
+                "controls": controls,
+            }
+        )
+
+    async def info(value: bytes) -> None:
+        await respond(
+            send,
+            pureldap.LDAPIntermediateResponse(
+                responseName=ldap.syncrepl.SYNC_INFO, responseValue=value
+            ),
+        )
+
+    if unanswered(scope)["type"] != "ldap.search":
+        return
+    # An entry with nothing to say about syncing at all.
+    await entry("cn=one,dc=example,dc=com", [FOREIGN])
+    # One whose sync control comes after a control this passes over, and
+    # which carries a cookie of its own.
+    await entry(
+        "cn=two,dc=example,dc=com",
+        [
+            FOREIGN,
+            (ldap.CONTROL_SYNC_STATE, 0, sync_state(1, UUIDS[0], b"csn=entry")),
+        ],
+    )
+    # A refresh that is not finished, and names nothing.
+    await info(
+        sync_info(
+            pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x01,
+            pureber.BERBoolean(0),
+        )
+    )
+    # Then one that is, after which entries are not counted as present.
+    await info(
+        sync_info(
+            pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x02,
+            pureber.BERBoolean(1),
+        )
+    )
+    await entry(
+        "cn=three,dc=example,dc=com",
+        [(ldap.CONTROL_SYNC_STATE, 0, sync_state(2, UUIDS[1]))],
+    )
+    # A set of entries that are all still there, with no cookie.
+    await info(
+        sync_info(
+            pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x03,
+            pureber.BERSet([pureber.BEROctetString(uuid.UUID(UUIDS[0]).bytes)]),
+        )
+    )
+    await send(
+        {
+            "type": "ldap.response",
+            "response": pureldap.LDAPSearchResultDone(resultCode=0),
+            "controls": [
                 FOREIGN,
-                (
-                    ldap.CONTROL_SYNC_STATE,
-                    0,
-                    sync_state(1, UUIDS[0], b"csn=entry"),
-                ),
+                (ldap.CONTROL_SYNC_DONE, 0, pureber.BERSequence([]).toWire()),
             ],
-        )
-        # A refresh that is not finished, and names nothing.
-        await self.info(
-            msg.id,
-            sync_info(
-                pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x01,
-                pureber.BERBoolean(0),
-            ),
-        )
-        # Then one that is, after which entries are not counted as present.
-        await self.info(
-            msg.id,
-            sync_info(
-                pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x02,
-                pureber.BERBoolean(1),
-            ),
-        )
-        await self.entry(
-            msg.id,
-            "cn=three,dc=example,dc=com",
-            [(ldap.CONTROL_SYNC_STATE, 0, sync_state(2, UUIDS[1]))],
-        )
-        # A set of entries that are all still there, with no cookie.
-        await self.info(
-            msg.id,
-            sync_info(
-                pureber.CLASS_CONTEXT | pureber.STRUCTURED | 0x03,
-                pureber.BERSet(
-                    [pureber.BEROctetString(__import__("uuid").UUID(UUIDS[0]).bytes)]
-                ),
-            ),
-        )
-        await self._send_anyio_write(
-            pureldap.LDAPMessage(
-                pureldap.LDAPSearchResultDone(resultCode=0),
-                id=msg.id,
-                controls=[
-                    FOREIGN,
-                    (ldap.CONTROL_SYNC_DONE, 0, pureber.BERSequence([]).toWire()),
-                ],
-            ).toWire()
-        )
-
-    async def entry(
-        self, msgid: int, dn: str, controls: list[pureldap.Control]
-    ) -> None:
-        await self._send_anyio_write(
-            pureldap.LDAPMessage(
-                pureldap.LDAPSearchResultEntry(objectName=dn, attributes=[]),
-                id=msgid,
-                controls=controls,
-            ).toWire()
-        )
-
-    async def info(self, msgid: int, value: bytes) -> None:
-        await self._send_anyio_write(
-            pureldap.LDAPMessage(
-                pureldap.LDAPIntermediateResponse(
-                    responseName=ldap.syncrepl.SYNC_INFO, responseValue=value
-                ),
-                id=msgid,
-            ).toWire()
-        )
+        }
+    )
 
 
 async def test_a_consumer_that_keeps_nothing_is_told_all_the_same() -> None:
     class Bare(ldap.syncrepl.SyncreplConsumer, ldapobject.SimpleLDAPObject):
         """The mixin as it comes, whose methods all do nothing."""
 
-    async with serving(PersistServer) as server:
+    async with serving_app(persisting) as server:
         async with Bare(server.uri) as connection:
             msgid = await connection.syncrepl_search("dc=example,dc=com")
             # Reading until the search finishes rather than message by
@@ -3673,20 +3624,20 @@ async def test_a_consumer_that_keeps_nothing_is_told_all_the_same() -> None:
 
 
 async def test_a_syncrepl_search_can_be_told_where_to_start_from() -> None:
-    SyncServer.asked = []
-    async with serving(SyncServer) as server:
+    asked: list[list[pureldap.Control]] = []
+    async with serving_app(sync_server(asked)) as server:
         async with Consumer(server.uri) as connection:
             msgid = await connection.syncrepl_search(
                 "dc=example,dc=com", cookie="csn=given"
             )
             while await connection.syncrepl_poll(msgid=msgid):
                 pass
-    asked = ldap.syncrepl.SyncRequestControl(cookie="csn=given")
-    assert SyncServer.asked[0][0][2] == asked.encodeControlValue()
+    wanted = ldap.syncrepl.SyncRequestControl(cookie="csn=given")
+    assert asked[0][0][2] == wanted.encodeControlValue()
 
 
 async def test_the_controls_a_message_carried_come_with_it_when_asked() -> None:
-    async with serving(PersistServer) as server:
+    async with serving_app(persisting) as server:
         async with connected(server) as connection:
             msgid = await connection.search_ext("dc=example,dc=com")
             rtype, data, _, _, _, _ = await connection.result4(
@@ -3706,7 +3657,7 @@ async def test_the_controls_a_message_carried_come_with_it_when_asked() -> None:
 
 
 async def test_something_said_mid_search_is_passed_over_unless_asked_for() -> None:
-    async with serving(PersistServer) as server:
+    async with serving_app(persisting) as server:
         async with connected(server) as connection:
             msgid = await connection.search_ext("dc=example,dc=com")
             seen = []
@@ -3973,26 +3924,14 @@ async def test_only_the_schemes_that_are_read_here_are_read() -> None:
 
 
 async def test_a_server_that_says_where_its_schema_is_not_answers_with_none() -> None:
-    class Bare(ldapserver.BaseLDAPServer):
+    async def bare(scope: app.Scope, receive: app.Receive, send: app.Send) -> None:
         """A server whose root DSE names no subschema subentry."""
+        if unanswered(scope)["type"] == "ldap.bind":
+            await respond(send, pureldap.LDAPBindResponse(resultCode=0))
+        else:
+            await respond(send, pureldap.LDAPSearchResultDone(resultCode=0))
 
-        async def handle_LDAPBindRequest(
-            self,
-            request: pureldap.LDAPBindRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPBindResponse:
-            return pureldap.LDAPBindResponse(resultCode=0)
-
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPSearchResultDone:
-            return pureldap.LDAPSearchResultDone(resultCode=0)
-
-    async with serving(Bare) as server:
+    async with serving_app(bare) as server:
         assert await ldap.schema.urlfetch(server.uri) == (None, None)
 
 
@@ -4110,7 +4049,7 @@ async def test_a_gssapi_bind_can_be_asked_for_by_name(
         raise ImportError("no Kerberos here")
 
     monkeypatch.setattr(ldap.sasl, "_gssapi", not_installed)
-    async with serving(SaslServer) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         with pytest.raises(ImportError, match="no Kerberos here"):
             await connection.sasl_gssapi_bind_s()
     assert asked
@@ -4292,18 +4231,19 @@ def test_a_definition_that_is_not_one_is_refused() -> None:
 async def test_an_extended_operation_answers_the_message_id_it_was_started_as() -> (
     None
 ):
-    class AnsweringServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPExtendedRequest(
-            self,
-            request: pureldap.LDAPExtendedRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPExtendedResponse:
-            return pureldap.LDAPExtendedResponse(
+    async def answering(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        request = unanswered(scope)["request"]
+        assert isinstance(request, pureldap.LDAPExtendedRequest)
+        await respond(
+            send,
+            pureldap.LDAPExtendedResponse(
                 resultCode=0, responseName=request.requestName, response=b"answered"
-            )
+            ),
+        )
 
-    async with serving(AnsweringServer) as server, connected(server) as connection:
+    async with serving_app(answering) as server, connected(server) as connection:
         msgid = await connection.extop(
             pureldap.LDAPExtendedRequest(requestName=b"1.2.3")
         )
@@ -4368,22 +4308,20 @@ async def test_an_extended_response_can_be_read_into_the_class_that_knows_it() -
         [pureber.BERInteger(1800, tag=pureber.CLASS_CONTEXT | 0x01)]
     ).toWire()
 
-    class RefreshingServer(ldapserver.BaseLDAPServer):
-        """A server that answers the refresh request RFC 2589 describes."""
+    async def refreshing(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        """Answer the refresh request RFC 2589 describes."""
+        request = unanswered(scope)["request"]
+        assert isinstance(request, pureldap.LDAPExtendedRequest)
+        await respond(
+            send,
+            pureldap.LDAPExtendedResponse(
+                resultCode=0, responseName=request.requestName, response=answered
+            ),
+        )
 
-        async def handle_LDAPExtendedRequest(
-            self,
-            request: pureldap.LDAPExtendedRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPExtendedResponse:
-            return pureldap.LDAPExtendedResponse(
-                resultCode=0,
-                responseName=request.requestName,
-                response=answered,
-            )
-
-    async with serving(RefreshingServer) as server, connected(server) as connection:
+    async with serving_app(refreshing) as server, connected(server) as connection:
         request = ldap.extop.RefreshRequest(entryName=JACK, requestTtl=3600)
         assert request.requestName is not None
         response = await connection.extop_s(
@@ -4414,17 +4352,18 @@ async def test_a_control_can_be_read_by_a_class_named_for_the_one_call() -> None
         def decodeControlValue(self, encodedControlValue: bytes) -> None:
             self.raw = encodedControlValue
 
-    class PagingServer(ldapserver.BaseLDAPServer):
-        async def handle_async(self, msg: pureldap.LDAPMessage) -> None:
-            await self._send_anyio_write(
-                pureldap.LDAPMessage(
-                    pureldap.LDAPSearchResultDone(resultCode=0),
-                    id=msg.id,
-                    controls=[(ldap.CONTROL_PAGEDRESULTS, 0, b"0\x05\x02\x01\x02\x04\x00")],
-                ).toWire()
-            )
+    async def paging(scope: app.Scope, receive: app.Receive, send: app.Send) -> None:
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                "controls": [
+                    (ldap.CONTROL_PAGEDRESULTS, 0, b"0\x05\x02\x01\x02\x04\x00")
+                ],
+            }
+        )
 
-    async with serving(PagingServer) as server, connected(server) as connection:
+    async with serving_app(paging) as server, connected(server) as connection:
         msgid = await connection.search_ext("dc=example,dc=com")
         _, _, _, answered = await connection.result3(
             msgid, resp_ctrl_classes={ldap.CONTROL_PAGEDRESULTS: Mine}
@@ -4440,20 +4379,17 @@ async def test_a_control_can_be_read_by_a_class_named_for_the_one_call() -> None
 
 
 async def test_the_bind_arguments_are_the_ones_python_ldap_takes() -> None:
-    servers: list[SaslServer] = []
-
-    def factory() -> ldapserver.BaseLDAPServer:
-        server = SaslServer()
-        servers.append(server)
-        return server
-
-    async with serving(factory) as server, connected(server) as connection:
+    seen: list[tuple[bytes, bytes | None]] = []
+    async with (
+        serving_app(sasl_server(seen)) as server,
+        connected(server) as connection,
+    ):
         # sasl_flags comes before authz_id, as it does in python-ldap: an
         # identity passed positionally lands where it is meant to.
         await connection.sasl_external_bind_s(None, None, ldap.SASL_QUIET, "u:jack")
-        assert servers[0].seen == [(b"EXTERNAL", b"u:jack")]
+        assert seen == [(b"EXTERNAL", b"u:jack")]
 
-    async with serving(factory) as server, connected(server) as connection:
+    async with serving_app(sasl_server()) as server, connected(server) as connection:
         # And the mechanism of a step-by-step bind is called mechanism.
         assert await connection.sasl_bind_s(
             "", mechanism="EXTERNAL", cred=b""
@@ -4461,25 +4397,25 @@ async def test_the_bind_arguments_are_the_ones_python_ldap_takes() -> None:
 
 
 async def test_who_the_server_says_we_are_takes_the_controls_it_may() -> None:
-    class WhoamiServer(ldapserver.BaseLDAPServer):
-        seen: list[list[pureldap.Control]] = []
+    seen: list[list[pureldap.Control]] = []
 
-        async def handle_LDAPExtendedRequest(
-            self,
-            request: pureldap.LDAPExtendedRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPExtendedResponse:
-            WhoamiServer.seen.append(list(controls or ()))
-            return pureldap.LDAPExtendedResponse(
+    async def whoami(scope: app.Scope, receive: app.Receive, send: app.Send) -> None:
+        operation = unanswered(scope)
+        seen.append(list(operation["controls"] or ()))
+        request = operation["request"]
+        assert isinstance(request, pureldap.LDAPExtendedRequest)
+        await respond(
+            send,
+            pureldap.LDAPExtendedResponse(
                 resultCode=0, responseName=request.requestName, response=b"dn:cn=jack"
-            )
+            ),
+        )
 
-    async with serving(WhoamiServer) as server, connected(server) as connection:
+    async with serving_app(whoami) as server, connected(server) as connection:
         assert await connection.whoami_s(
             [ldap.controls.ManageDSAITControl()]
         ) == "dn:cn=jack"
-    assert WhoamiServer.seen[0][0][0] == b"2.16.840.1.113730.3.4.2"
+    assert seen[0][0][0] == b"2.16.840.1.113730.3.4.2"
 
 
 def test_a_schema_that_says_one_thing_twice_is_read_as_python_ldap_reads_it() -> None:

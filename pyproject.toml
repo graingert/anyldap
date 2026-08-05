@@ -65,6 +65,7 @@ anyldap-ldap2pdns = "anyldap._scripts.ldap2pdns:console_script"
 anyldap-find-server = "anyldap._scripts.find_server:console_script"
 anyldap-rename = "anyldap._scripts.rename:console_script"
 anyldap-fetchschema = "anyldap._scripts.fetchschema:console_script"
+anyldap-serve = "anyldap._scripts.serve:console_script"
 anyldap-ldifdiff = "anyldap._scripts.ldifdiff:console_script"
 anyldap-ldifpatch = "anyldap._scripts.ldifpatch:console_script"
 
