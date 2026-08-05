@@ -52,7 +52,9 @@ on trio::
 The application is named the way an ASGI server names one. A trailing
 ``()`` -- ``mymodule:make_directory()`` -- says the name points at
 something to call, and that its answer is the application, for one that
-has to be built rather than imported.
+has to be built rather than imported. At least one ``--bind`` is needed,
+since where to listen is not something to guess at, and interrupting it
+is how it is stopped.
 
 .. contents:: :local:
 

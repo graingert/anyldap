@@ -82,7 +82,8 @@ Features
   mymodule:directory``. The application is named the way an ASGI server
   names one, resolved with ``pkgutil.resolve_name()``; a trailing ``()``
   says the name points at something to call, whose answer is the
-  application.
+  application. At least one ``--bind`` is needed, and interrupting it is
+  how it is stopped, on either backend.
 - ``ldapconnector`` can connect with TLS already up, which is what an
   ``ldaps://`` server expects, rather than only raising it afterwards with
   StartTLS. ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()``

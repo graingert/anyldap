@@ -1,6 +1,7 @@
 import functools
 import os
 import pathlib
+import signal
 import socket
 import ssl
 import subprocess
@@ -921,6 +922,18 @@ def test_the_script_refuses_what_it_cannot_run() -> None:
         (["anyldap-serve"], b"Invalid arguments"),
         (["anyldap-serve", "--backend", "curio", "anyldap.app:app_factory"], b"curio"),
         (["anyldap-serve", "nosuchmodule:x"], b"cannot load"),
+        (["anyldap-serve", "test.test_app:echo_result"], b"nothing to listen on"),
+        # A bind that reads but cannot be made: what went wrong is what
+        # comes out, rather than being swallowed with the interrupts.
+        (
+            [
+                "anyldap-serve",
+                "--bind",
+                "ldapi:///no-such-directory/sock",
+                "test.test_app:echo_result",
+            ],
+            b"FileNotFoundError",
+        ),
     ):
         result = subprocess.run(
             [sys.executable, "-m", serve.__name__, *argv[1:]],
@@ -974,8 +987,10 @@ def test_the_script_serves_an_application_on_either_backend(
             answered = decode_message(client.recv(4096))
             assert answered.id == 1
     finally:
-        running.terminate()
-        running.wait(timeout=10)
+        # Interrupted rather than killed, which is how it is meant to be
+        # stopped and what lets it stop of its own accord.
+        running.send_signal(signal.SIGINT)
+        assert running.wait(timeout=10) == 0
         assert running.stderr is not None
         running.stderr.close()
 
@@ -1036,41 +1051,3 @@ async def test_the_script_serves_until_it_is_stopped() -> None:
             assert decode_message(await stream.receive()).id == 1
         await anyio.sleep(0.05)
         task_group.cancel_scope.cancel()
-
-
-def test_the_script_runs_what_it_was_told_to(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Everything but the running of it, which is anyio's to do."""
-    ran: list[tuple[tuple[object, ...], dict[str, object]]] = []
-    # serve looks `run` up on the module when it calls it, so this is the
-    # one it will find.
-    monkeypatch.setattr(anyio, "run", lambda *args, **kwargs: ran.append((args, kwargs)))
-
-    monkeypatch.setattr(
-        sys, "argv", ["anyldap-serve", "test.test_app:echo_result"]
-    )
-    serve.console_script()
-    (args, kwargs) = ran.pop()
-    assert args[0] is serve.main
-    assert args[1] is echo_result
-    # Nothing said where to listen, so the port LDAP is served on it is.
-    assert args[2] == ["ldap://localhost:389"]
-    assert kwargs == {"backend": "asyncio"}
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "anyldap-serve",
-            "--backend",
-            "trio",
-            "--bind",
-            "ldap://127.0.0.1:0",
-            "--bind",
-            "ldapi:///run/ldapi",
-            "test.test_app:echo_result",
-        ],
-    )
-    serve.console_script()
-    (args, kwargs) = ran.pop()
-    assert args[2] == ["ldap://127.0.0.1:0", "ldapi:///run/ldapi"]
-    assert kwargs == {"backend": "trio"}

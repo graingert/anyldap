@@ -5,6 +5,7 @@ import sys
 from typing import cast
 
 import anyio
+from exceptiongroup import BaseExceptionGroup
 
 from anyldap import app, usage
 
@@ -85,8 +86,23 @@ def console_script() -> None:
         sys.stderr.write(f"{sys.argv[0]}: unknown backend {backend!r}\n")
         raise SystemExit(1)
 
-    binds = options["bind"] or ["ldap://localhost:389"]
-    anyio.run(main, application, binds, backend=backend)
+    binds = options["bind"]
+    if not binds:
+        sys.stderr.write(f"{sys.argv[0]}: nothing to listen on; give --bind\n")
+        raise SystemExit(1)
+
+    try:
+        anyio.run(main, application, binds, backend=backend)
+    except KeyboardInterrupt:
+        # Interrupting a server is how a server is stopped, not a fault of
+        # its own to report.
+        pass
+    except BaseExceptionGroup as group:
+        # Which is what trio hands back, since the interrupt reaches the
+        # task group serving rather than the call that started it.
+        _, rest = group.split(KeyboardInterrupt)
+        if rest is not None:
+            raise
 
 
 if __name__ == "__main__":
