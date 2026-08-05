@@ -122,14 +122,15 @@ Features
   ``RES_SEARCH_REFERENCE`` rather than as an entry.
 - ``ldap.schema.urlfetch()`` takes the address of an LDIF file as well as an
   LDAP URL, and reads the schema out of its first record, which is what
-  python-ldap's does. Only ``file:``, ``http:`` and ``https:`` are read, and
-  anything else is refused: python-ldap hands the address to ``urlopen``,
-  which fetches whatever scheme it happens to support, so an address meant
-  to name a file can turn out to be a request and the other way about. The
-  same two rules apply to the URLs ``ldap.ldif`` fetches when
-  ``process_url_schemes`` tells it to fetch any. A file is read through
-  ``anyio.Path``, which does the blocking part where it does not matter, and
-  an ``http:`` address is fetched with httpx2, which anyldap now depends on.
+  python-ldap's does.
+- A URL is read only if it is one of ``file:``, ``http:`` or ``https:``, and
+  refused otherwise. A file is read with ``anyio.Path``, and an ``http:``
+  address is fetched with httpx2. python-ldap hands the address to
+  ``urlopen`` instead, which fetches whatever scheme it happens to support,
+  so an address meant to name a file can turn out to be a request and the
+  other way about -- which matters most for the URLs ``ldap.ldif`` fetches
+  when ``process_url_schemes`` tells it to fetch any, since those are named
+  by the data being parsed rather than by the caller.
 - A schema definition may name itself rather than be numbered:
   ``( nsEncryptionConfig-oid NAME ... )`` is what a 389-ds server publishes,
   and RFC 4512 section 1.4 allows it. It used to be refused, which meant a
@@ -138,6 +139,8 @@ Features
 Other changes
 ^^^^^^^^^^^^^
 
+- `httpx2 <https://pypi.org/project/httpx2/>`_ is a new dependency. It is what
+  a schema or an LDIF value named by an ``http:`` URL is fetched with.
 - python-ldap's own test suite is ported under ``interop/python_ldap/``, with
   its licences and a note of what each file came from, and ``tox -e interop``
   runs this client and python-ldap through the same script against one real
