@@ -907,11 +907,10 @@ def test_the_script_loads_an_application_by_name() -> None:
     assert serve.load("test.test_app:echo_result") is echo_result
 
     for spec, message in (
-        ("nocolon", "is not module:name"),
-        (":name", "is not module:name"),
-        ("anyldap.nosuchmodule:x", "cannot import"),
-        ("anyldap.app:nosuchname", "has no"),
-        ("anyldap.app:SPEC_VERSION", "is not callable"),
+        ("not a name", "cannot load"),
+        ("anyldap.nosuchmodule:x", "cannot load"),
+        ("anyldap.app:nosuchname", "cannot load"),
+        ("anyldap.app:SPEC_VERSION", "is not an application"),
     ):
         with pytest.raises(usage.UsageError, match=message):
             serve.load(spec)
@@ -921,7 +920,7 @@ def test_the_script_refuses_what_it_cannot_run() -> None:
     for argv, message in (
         (["anyldap-serve"], b"Invalid arguments"),
         (["anyldap-serve", "--backend", "curio", "anyldap.app:app_factory"], b"curio"),
-        (["anyldap-serve", "nosuchmodule:x"], b"cannot import"),
+        (["anyldap-serve", "nosuchmodule:x"], b"cannot load"),
     ):
         result = subprocess.run(
             [sys.executable, "-m", serve.__name__, *argv[1:]],
@@ -1000,10 +999,11 @@ def make_nothing() -> object:
     return "not an application"
 
 
-def test_the_script_can_be_told_to_call_what_it_was_named() -> None:
-    assert serve.load("test.test_app:make_echo", factory=True) is echo_result
-    with pytest.raises(usage.UsageError, match="did not make an application"):
-        serve.load("test.test_app:make_nothing", factory=True)
+def test_a_name_that_ends_in_a_call_is_called() -> None:
+    """An application that has to be built says so where it is named."""
+    assert serve.load("test.test_app:make_echo()") is echo_result
+    with pytest.raises(usage.UsageError, match="is not an application"):
+        serve.load("test.test_app:make_nothing()")
 
 
 async def test_something_else_in_the_way_of_a_socket_is_left_alone(

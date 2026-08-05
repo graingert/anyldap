@@ -49,9 +49,10 @@ on trio::
    anyldap-serve --bind ldap://127.0.0.1:1389 mymodule:directory
    anyldap-serve --backend trio --bind ldapi:///run/ldapi mymodule:directory
 
-The application is named the way an ASGI server names one. ``--factory``
-says that the name points at something to call, and that what it answers
-with is the application.
+The application is named the way an ASGI server names one. A trailing
+``()`` -- ``mymodule:make_directory()`` -- says the name points at
+something to call, and that its answer is the application, for one that
+has to be built rather than imported.
 
 .. contents:: :local:
 

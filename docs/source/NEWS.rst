@@ -80,8 +80,9 @@ Features
 - ``anyldap-serve`` runs an application from the command line, on asyncio
   or on trio: ``anyldap-serve --bind ldap://127.0.0.1:1389
   mymodule:directory``. The application is named the way an ASGI server
-  names one, and ``--factory`` says that the name points at something to
-  call, whose answer is the application.
+  names one, resolved with ``pkgutil.resolve_name()``; a trailing ``()``
+  says the name points at something to call, whose answer is the
+  application.
 - ``ldapconnector`` can connect with TLS already up, which is what an
   ``ldaps://`` server expects, rather than only raising it afterwards with
   StartTLS. ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()``
