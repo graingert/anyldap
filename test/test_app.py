@@ -1018,3 +1018,59 @@ async def test_something_else_in_the_way_of_a_socket_is_left_alone(
                 app.listen, echo_result, f"ldapi://{quote(str(in_the_way), safe='')}"
             )
     assert in_the_way.read_text() == "not a socket"
+
+
+async def test_the_script_serves_until_it_is_stopped() -> None:
+    """What it says it is listening on is what it is listening on."""
+    async with anyio.create_task_group() as task_group:
+        bound = await task_group.start(
+            serve.main, echo_result, ["ldap://127.0.0.1:0"]
+        )
+        [url] = bound
+        assert url.startswith("ldap://127.0.0.1:")
+        stream = await anyio.connect_tcp("127.0.0.1", urlparse(url).port or 0)
+        async with stream:
+            await stream.send(
+                pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+            )
+            assert decode_message(await stream.receive()).id == 1
+        await anyio.sleep(0.05)
+        task_group.cancel_scope.cancel()
+
+
+def test_the_script_runs_what_it_was_told_to(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Everything but the running of it, which is anyio's to do."""
+    ran: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    # serve looks `run` up on the module when it calls it, so this is the
+    # one it will find.
+    monkeypatch.setattr(anyio, "run", lambda *args, **kwargs: ran.append((args, kwargs)))
+
+    monkeypatch.setattr(
+        sys, "argv", ["anyldap-serve", "test.test_app:echo_result"]
+    )
+    serve.console_script()
+    (args, kwargs) = ran.pop()
+    assert args[0] is serve.main
+    assert args[1] is echo_result
+    # Nothing said where to listen, so the port LDAP is served on it is.
+    assert args[2] == ["ldap://localhost:389"]
+    assert kwargs == {"backend": "asyncio"}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "anyldap-serve",
+            "--backend",
+            "trio",
+            "--bind",
+            "ldap://127.0.0.1:0",
+            "--bind",
+            "ldapi:///run/ldapi",
+            "test.test_app:echo_result",
+        ],
+    )
+    serve.console_script()
+    (args, kwargs) = ran.pop()
+    assert args[2] == ["ldap://127.0.0.1:0", "ldapi:///run/ldapi"]
+    assert kwargs == {"backend": "trio"}

@@ -57,11 +57,18 @@ class MyOptions(usage.Options):
         self["application"] = application
 
 
-async def main(application: app.LDAPApp, binds: list[str]) -> None:
+async def main(
+    application: app.LDAPApp,
+    binds: list[str],
+    *,
+    task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
+) -> None:
+    """Serve until cancelled, saying where it is listening as it starts."""
     async with anyio.create_task_group() as task_group:
         bound = await task_group.start(app.listen, application, *binds)
         for url in bound:
             print(f"Listening on {url}", file=sys.stderr, flush=True)
+        task_status.started(bound)
 
 
 def console_script() -> None:
