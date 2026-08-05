@@ -515,7 +515,7 @@ cn: theChild
     async def test_children_twoChildren_callback(self) -> None:
         children: list[interfaces.IWalkableLDAPEntry] = []
         with randomizedListdir() as iterdir:
-            r = await self.meta.children(callback=children.append)
+            r = await self.meta.children(callback=util.appender(children))
 
         assert iterdir.mock_calls == [mock.call(self.meta.path)]
         self._cb_test_children_twoChildren_callback(r, children)
@@ -649,7 +649,7 @@ cn: theChild
     async def test_subtree_oneChild_cb(self) -> None:
         got: list[interfaces.IWalkableLDAPEntry] = []
         with randomizedListdir() as iterdir:
-            r = await self.oneChild.subtree(got.append)
+            r = await self.oneChild.subtree(util.appender(got))
 
         assert iterdir.mock_calls == [
             mock.call(self.oneChild.path),
@@ -700,7 +700,7 @@ cn: theChild
     async def test_subtree_many_cb(self) -> None:
         got: list[interfaces.IWalkableLDAPEntry] = []
         with randomizedListdir() as iterdir:
-            result = await self.example.subtree(callback=got.append)
+            result = await self.example.subtree(callback=util.appender(got))
 
         util.assert_permutation(
             iterdir.mock_calls,

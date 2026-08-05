@@ -1,7 +1,7 @@
 """LDAP protocol server"""
 
 import ssl
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 
 import anyio
 from anyio.abc import ByteStream, Listener, SocketAttribute, TaskGroup
@@ -15,8 +15,10 @@ from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import distinguishedname, ldaperrors
 from anyldap.runtime import ConnectionDone, Failure, Protocol, logger
 
-# A handler is given the response objects to send back one at a time.
-Reply = Callable[[pureber.BERBase], object]
+# How a handler answers, one response at a time. Awaiting a reply writes it,
+# so a search that finds a great many entries sends each as it is found rather
+# than holding them all until the last one is in.
+Reply = Callable[[pureber.BERBase], Awaitable[None]]
 
 
 class LDAPServerConnectionLostException(ldaperrors.LDAPException):
@@ -196,11 +198,12 @@ class BaseLDAPServer(Protocol):
 
         name = msg.value.__class__.__name__
         handler = getattr(self, "handle_" + name, self.handleUnknown)
-        responses: list[pureber.BERBase] = []
+
+        async def reply(response: pureber.BERBase) -> None:
+            await self._respond(msg.id, response)
+
         try:
-            result = await await_result(
-                handler(msg.value, msg.controls, responses.append)
-            )
+            result = await await_result(handler(msg.value, msg.controls, reply))
         except ldaperrors.LDAPException as exc:
             result = self._callErrorHandler(
                 name=name,
@@ -211,18 +214,24 @@ class BaseLDAPServer(Protocol):
             result = self._cbOtherError(Failure(exc), name)
         if result is not None:
             assert isinstance(result, pureber.BERBase)
-            responses.append(result)
+            await reply(result)
 
-        for response in responses:
-            message = pureldap.LDAPMessage(response, id=msg.id)
-            if self.debug:
-                logger.debug("S->C %s", repr(message))
-            tls_upgrade = self._tls_upgrade
-            if tls_upgrade is None:
-                await self._send_anyio_write(message.toWire())
-            else:
-                self._tls_upgrade = None
-                await self._upgrade_to_tls(tls_upgrade, message.toWire())
+    async def _respond(self, msgid: int, response: pureber.BERBase) -> None:
+        """One response, written now.
+
+        StartTLS is answered in the clear and the stream raised behind the
+        answer, so a pending upgrade is what says which way to write.
+        """
+        message = pureldap.LDAPMessage(response, id=msgid)
+        if self.debug:
+            logger.debug("S->C %s", repr(message))
+        tls_upgrade = self._tls_upgrade
+        if tls_upgrade is None:
+            await self._send_anyio_write(message.toWire())
+        else:
+            self._tls_upgrade = None
+            await self._upgrade_to_tls(tls_upgrade, message.toWire())
+
     async def _run_reader(self) -> None:
         await self._read_from_stream()
 
@@ -394,11 +403,11 @@ class LDAPServer(BaseLDAPServer):
         # have no way to return an error, anyway.
         self._start_anyio_close()
 
-    def getRootDSE(
+    async def getRootDSE(
         self, request: pureldap.LDAPSearchRequest, reply: Reply
     ) -> pureldap.LDAPSearchResultDone:
         root = self._get_root()
-        reply(
+        await reply(
             pureldap.LDAPSearchResultEntry(
                 objectName="",
                 attributes=[
@@ -463,7 +472,7 @@ class LDAPServer(BaseLDAPServer):
         request: pureldap.LDAPSearchRequest,
         reply: Reply,
     ) -> pureldap.LDAPSearchResultDone:
-        def _sendEntryToClient(entry: interfaces.IConnectedLDAPEntry) -> None:
+        async def _sendEntryToClient(entry: interfaces.IConnectedLDAPEntry) -> None:
             requested_attribs = request.attributes or ()
             filtered_attribs: list[tuple[str | bytes, Sequence[str | bytes]]]
             if len(requested_attribs) > 0 and b"*" not in requested_attribs:
@@ -472,7 +481,7 @@ class LDAPServer(BaseLDAPServer):
                 ]
             else:
                 filtered_attribs = list(entry.items())
-            reply(
+            await reply(
                 pureldap.LDAPSearchResultEntry(
                     objectName=entry.dn.getText(),
                     attributes=filtered_attribs,
@@ -506,7 +515,7 @@ class LDAPServer(BaseLDAPServer):
             and request.scope == pureldap.LDAP_SCOPE_baseObject
             and request.filter == pureldap.LDAPFilter_present("objectClass")
         ):
-            return self.getRootDSE(request, reply)
+            return await self.getRootDSE(request, reply)
         dn = distinguishedname.DistinguishedName(request.baseObject)
         root = self._get_root()
         try:

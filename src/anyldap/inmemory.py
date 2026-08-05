@@ -41,12 +41,12 @@ class ReadOnlyInMemoryLDAPEntry(
 
     async def children(
         self,
-        callback: Callable[[interfaces.IWalkableLDAPEntry], object] | None = None,
+        callback: entryhelpers.EntryCallback | None = None,
     ) -> list[interfaces.IWalkableLDAPEntry] | None:
         if callback is None:
             return list(self._children.values())
         for c in self._children.values():
-            callback(c)
+            await callback(c)
         return None
 
     children_async = children

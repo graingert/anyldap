@@ -197,7 +197,7 @@ class TestInMemoryDatabase:
 
     async def test_subtree_oneChild_cb(self) -> None:
         got: list[interfaces.IWalkableLDAPEntry] = []
-        assert await self.oneChild.subtree(got.append) is None
+        assert await self.oneChild.subtree(util.appender(got)) is None
         util.assert_permutation(
             got,
             [
@@ -226,7 +226,7 @@ class TestInMemoryDatabase:
         got: list[interfaces.IWalkableLDAPEntry] = []
 
 
-        r = await self.root.subtree(callback=got.append)
+        r = await self.root.subtree(callback=util.appender(got))
         assert r is None
 
         want = [
@@ -322,7 +322,7 @@ class TestInMemoryDatabase:
         got: list[interfaces.IWalkableLDAPEntry] = []
 
 
-        r = await self.root.search(filterText="(|(cn=foo)(cn=bar))", callback=got.append)
+        r = await self.root.search(filterText="(|(cn=foo)(cn=bar))", callback=util.appender(got))
         assert r is None
 
         want = [

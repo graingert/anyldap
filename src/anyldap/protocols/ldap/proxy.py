@@ -65,10 +65,10 @@ class Proxy(ldapserver.BaseLDAPServer):
         else:
             await self.client.send_noResponse_async(request)
 
-    def _gotResponse(
+    async def _gotResponse(
         self, response: pureldap.LDAPProtocolResponse, reply: ldapserver.Reply
     ) -> bool:
-        reply(response)
+        await reply(response)
 
         # TODO this is ugly
         return isinstance(

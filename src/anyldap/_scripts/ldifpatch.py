@@ -12,7 +12,7 @@ async def output(
 ) -> None:
     outputFile.write(ldif._header())
 
-    def _write(node: interfaces.IConnectedLDAPEntry) -> None:
+    async def _write(node: interfaces.IConnectedLDAPEntry) -> None:
         outputFile.write(node.toWire())
 
     await tree.subtree(callback=_write)

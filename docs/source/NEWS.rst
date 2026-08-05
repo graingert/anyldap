@@ -7,6 +7,26 @@ Changelog
 Backwards incompatible changes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+- A server handler's ``reply`` writes each response as it is given, rather
+  than collecting them all and writing them once the handler has returned.
+  A search over a large tree now sends each entry as it is found, so the
+  server no longer holds the whole result in memory, and a client reading
+  the results sees them arrive rather than waiting for the last one. The
+  callback is awaited, so ``reply(response)`` becomes ``await
+  reply(response)`` -- ``Reply`` is now
+  ``Callable[[BERBase], Awaitable[None]]``.
+- The callbacks that walk a tree are awaited too: the ``callback`` argument
+  to ``children()``, ``subtree()`` and ``search()`` must be a coroutine
+  function, which is what lets an entry be written out as it is reached
+  instead of gathered first. ``ProxyBase.handleProxiedResponse()`` may now
+  return an awaitable, as ``handleBeforeForwardRequest()`` already could.
+- ``LDAPClient.dataReceived()`` is ``dataReceived_async()``, a coroutine,
+  because dispatching a response may now await. The old name raises
+  ``TypeError`` naming the new one rather than quietly dropping the bytes.
+- ``MergedLDAPServer`` interleaves the entries it merges. Each upstream
+  server's entries used to be held until that server had finished; now each
+  is forwarded as it arrives, so entries from the servers may alternate.
+  The result-done still comes last, once every upstream has answered.
 - ``pureber.BERSequence`` is a read-only ``Sequence``, not a ``UserList``.
   Reading one is unchanged -- indexing, slicing, iterating and ``len()`` all
   work -- but ``append()``, ``extend()``, ``insert()``, ``pop()`` and item

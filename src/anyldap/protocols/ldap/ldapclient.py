@@ -1,7 +1,7 @@
 """LDAP protocol client"""
 
 import ssl
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any, TypedDict, runtime_checkable
 from typing import Protocol as TypingProtocol
 
@@ -9,7 +9,7 @@ import anyio
 from anyio.abc import ByteStream, TaskGroup
 from anyio.streams.tls import TLSStream
 
-from anyldap._async import ResultSlot
+from anyldap._async import ResultSlot, await_result
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldaperrors
 from anyldap.runtime import ConnectionDone, Failure, Protocol, logger, unwrap_failure
@@ -20,7 +20,7 @@ from anyldap.runtime import ConnectionDone, Failure, Protocol, logger, unwrap_fa
 Pending = tuple[
     ResultSlot[object],
     bool,
-    Callable[..., bool] | None,
+    Callable[..., bool | Awaitable[bool]] | None,
     tuple[object, ...] | None,
     Mapping[str, object] | None,
 ]
@@ -106,7 +106,7 @@ class LDAPClientLike(TypingProtocol):
     async def send_multiResponse_async(
         self,
         op: pureldap.LDAPProtocolRequest,
-        handler: Callable[..., bool],
+        handler: Callable[..., bool | Awaitable[bool]],
         *args: object,
         **kwargs: object,
     ) -> object: ...
@@ -147,7 +147,7 @@ class LDAPServiceClient(LDAPClientLike, TypingProtocol):
         self,
         op: pureldap.LDAPProtocolRequest,
         controls: Iterable[pureldap.Control] | None,
-        handler: Callable[..., bool] | None,
+        handler: Callable[..., bool | Awaitable[bool]] | None,
         *args: object,
         **kwargs: object,
     ) -> object: ...
@@ -180,7 +180,13 @@ class LDAPClient(Protocol):
         )
     )
 
-    def dataReceived(self, recd: bytes) -> None:
+    async def dataReceived_async(self, recd: bytes) -> None:
+        """Everything that has arrived, decoded and dispatched.
+
+        A response is handed to whoever is waiting for it as it is read, and
+        a handler may await, so this is a coroutine where the base
+        protocol's ``dataReceived`` is not.
+        """
         self.buffer += recd
         while 1:
             try:
@@ -191,7 +197,15 @@ class LDAPClient(Protocol):
             if not o:
                 break
             assert isinstance(o, pureldap.LDAPMessage)
-            self.handle(o)
+            await self.handle(o)
+
+    def dataReceived(self, recd: bytes) -> None:
+        """Refuse the name this used to go by.
+
+        The base protocol's ``dataReceived`` does nothing, so inheriting it
+        would swallow the bytes; say what to call instead.
+        """
+        raise TypeError("dataReceived is a coroutine here: await dataReceived_async")
 
     def connectionMade(self) -> None:
         """TCP connection has opened"""
@@ -247,7 +261,7 @@ class LDAPClient(Protocol):
     async def send_multiResponse(
         self,
         op: pureldap.LDAPProtocolRequest,
-        handler: Callable[..., bool],
+        handler: Callable[..., bool | Awaitable[bool]],
         *args: object,
         **kwargs: object,
     ) -> object:
@@ -275,7 +289,7 @@ class LDAPClient(Protocol):
         self,
         op: pureldap.LDAPProtocolRequest,
         controls: Iterable[pureldap.Control] | None = None,
-        handler: Callable[..., bool] | None = None,
+        handler: Callable[..., bool | Awaitable[bool]] | None = None,
         *args: object,
         **kwargs: object,
     ) -> object:
@@ -306,7 +320,7 @@ class LDAPClient(Protocol):
         op: pureldap.LDAPProtocolRequest,
         controls: Iterable[pureldap.Control] | None,
         return_controls: bool,
-        handler: Callable[..., bool] | None,
+        handler: Callable[..., bool | Awaitable[bool]] | None,
         args: tuple[object, ...] | None,
         kwargs: Mapping[str, object] | None,
     ) -> object:
@@ -326,7 +340,7 @@ class LDAPClient(Protocol):
     def unsolicitedNotification(self, msg: object) -> None:
         logger.info("Got unsolicited notification: %s", repr(msg))
 
-    def handle(self, msg: pureldap.LDAPMessage) -> None:
+    async def handle(self, msg: pureldap.LDAPMessage) -> None:
         assert isinstance(msg.value, pureldap.LDAPProtocolResponse)
         if self.debug:
             logger.debug("C<-S %s", repr(msg))
@@ -356,11 +370,13 @@ class LDAPClient(Protocol):
                 assert kwargs is not None
                 # Return true to mark request as fully handled
                 if return_controls:
-                    if handler(msg.value, msg.controls, *args, **kwargs):
+                    if await await_result(
+                        handler(msg.value, msg.controls, *args, **kwargs)
+                    ):
                         slot.set_value((msg.value, msg.controls))
                         del self.onwire[msg.id]
                 else:
-                    if handler(msg.value, *args, **kwargs):
+                    if await await_result(handler(msg.value, *args, **kwargs)):
                         slot.set_value(msg.value)
                         del self.onwire[msg.id]
 
@@ -466,7 +482,7 @@ class LDAPClient(Protocol):
                 data = await stream.receive()
                 tls_upgrade = self._tls_upgrade
                 if tls_upgrade is None:
-                    self.dataReceived(data)
+                    await self.dataReceived_async(data)
                 else:
                     self.buffer += data
                     try:
@@ -477,7 +493,7 @@ class LDAPClient(Protocol):
                         continue
                     self.buffer = self.buffer[used:]
                     assert isinstance(message, pureldap.LDAPMessage)
-                    self.handle(message)
+                    await self.handle(message)
                 if tls_upgrade is not None and tls_upgrade["response_received"]:
                     if tls_upgrade["error"] is None:
                         try:

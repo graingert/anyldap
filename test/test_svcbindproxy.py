@@ -8,6 +8,7 @@ from anyldap import config, ldapfilter, testutil
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldaperrors, proxy, svcbindproxy
 
+from . import util
 from ._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
@@ -219,14 +220,14 @@ async def test_maybe_fallback_results() -> None:
     request = pureldap.LDAPBindRequest(dn="cn=alice", auth="secret")
     server = _legacy_proxy()
     success = await server._maybeFallback_async(
-        object(), request, None, lambda value: None
+        object(), request, None, util.discard
     )
     assert success is not None
     assert success.resultCode == ldaperrors.Success.resultCode
     assert success.matchedDN == "cn=alice"
 
     denied = await server._maybeFallback_async(
-        None, request, None, lambda value: None
+        None, request, None, util.discard
     )
     assert denied is not None
     assert denied.resultCode == ldaperrors.LDAPInvalidCredentials.resultCode
@@ -303,7 +304,7 @@ async def test_bind_handler_validation_and_anonymous_forwarding() -> None:
     server = _legacy_proxy()
     with pytest.raises(ldaperrors.LDAPProtocolError):
         server.handle_LDAPBindRequest(
-            pureldap.LDAPBindRequest(version=2), None, lambda value: None
+            pureldap.LDAPBindRequest(version=2), None, util.discard
         )
 
     class AnonymousProxy(svcbindproxy.ServiceBindingProxy):
@@ -317,7 +318,7 @@ async def test_bind_handler_validation_and_anonymous_forwarding() -> None:
 
     anonymous = AnonymousProxy(config=config.LDAPConfig())
     result = anonymous.handle_LDAPBindRequest(
-        pureldap.LDAPBindRequest(dn=""), None, lambda value: None
+        pureldap.LDAPBindRequest(dn=""), None, util.discard
     )
     assert await result == "forwarded"
 
@@ -340,7 +341,7 @@ async def test_legacy_bind_uses_connected_client_search_interface(
     response = await server.handle_LDAPBindRequest(
         pureldap.LDAPBindRequest(dn="cn=jack,dc=example,dc=com", auth="secret"),
         None,
-        lambda value: None,
+        util.discard,
     )
 
     assert isinstance(response, pureldap.LDAPBindResponse)

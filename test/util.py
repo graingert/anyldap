@@ -1,11 +1,33 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import TypeVar
 
 from anyldap.testutil import FailTest
 
-__all__ = ["FailTest", "assert_permutation", "collected"]
+__all__ = ["FailTest", "appender", "assert_permutation", "collected", "discard"]
 
 _T = TypeVar("_T")
+
+
+async def discard(response: object) -> None:
+    """A reply that goes nowhere.
+
+    Handlers write their responses through the reply they are handed; tests
+    that only care whether the call returns or raises give them this one.
+    """
+
+
+def appender(target: list[_T]) -> Callable[[_T], Awaitable[None]]:
+    """``target.append`` as a coroutine function.
+
+    Replies and tree walks hand over one item at a time and await the
+    callback, so a test that only wants to collect them still has to give a
+    coroutine function.
+    """
+
+    async def append(item: _T) -> None:
+        target.append(item)
+
+    return append
 
 
 def assert_permutation(first: Iterable[object], second: Iterable[object]) -> None:

@@ -136,7 +136,7 @@ async def test_client_methods_use_real_socket_stream() -> None:
             controls: Iterable[pureldap.Control] | None,
             reply: ldapserver.Reply,
         ) -> pureldap.LDAPSearchResultDone:
-            reply(pureldap.LDAPSearchResultEntry("cn=entry", []))
+            await reply(pureldap.LDAPSearchResultEntry("cn=entry", []))
             return pureldap.LDAPSearchResultDone(resultCode=0)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
@@ -222,14 +222,14 @@ async def test_client_response_dispatch_and_disconnect_errors() -> None:
     client = ldapclient.LDAPClient()
     client.debug = True
     client.connectionMade()
-    client.handle(
+    await client.handle(
         pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(resultCode=0), id=0)
     )
 
     controlled: ResultSlot[object] = ResultSlot()
     client.onwire[1] = (controlled, True, None, (), {})
     controls = [(b"1.2.3", False, None)]
-    client.handle(
+    await client.handle(
         pureldap.LDAPMessage(
             pureldap.LDAPBindResponse(resultCode=0), id=1, controls=controls
         )
@@ -242,11 +242,11 @@ async def test_client_response_dispatch_and_disconnect_errors() -> None:
 
     pending: ResultSlot[object] = ResultSlot()
     client.onwire[2] = (pending, False, lambda response: False, (), {})
-    client.handle(
+    await client.handle(
         pureldap.LDAPMessage(pureldap.LDAPSearchResultEntry("cn=a", []), id=2)
     )
     client.onwire[2] = (pending, False, lambda response: True, (), {})
-    client.handle(
+    await client.handle(
         pureldap.LDAPMessage(pureldap.LDAPSearchResultDone(resultCode=0), id=2)
     )
     assert isinstance(await pending.wait(), pureldap.LDAPSearchResultDone)
@@ -457,10 +457,13 @@ async def test_client_stream_state_guards_and_closed_socket_write() -> None:
         task_group.cancel_scope.cancel()
 
 
-def test_partial_message_and_starttls_guards() -> None:
+async def test_partial_message_and_starttls_guards() -> None:
     client = ldapclient.LDAPClient()
-    client.dataReceived(b"\x30")
+    await client.dataReceived_async(b"\x30")
     assert client.buffer == b"\x30"
+    # The sync name is gone rather than quietly dropping what arrived.
+    with pytest.raises(TypeError, match="dataReceived_async"):
+        client.dataReceived(b"\x30")
 
 
 def test_clientConnectionLost_rep() -> None:

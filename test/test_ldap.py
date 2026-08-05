@@ -494,7 +494,7 @@ async def test_walking_one_entry_at_a_time_waits_for_each() -> None:
             reply: ldapserver.Reply,
         ) -> pureldap.LDAPSearchResultDone:
             for name in ("uid=one", "uid=two"):
-                reply(
+                await reply(
                     pureldap.LDAPSearchResultEntry(
                         objectName=f"{name},dc=example,dc=com", attributes=[]
                     )
@@ -694,7 +694,7 @@ async def test_starttls_raises_tls_on_the_connection_that_is_already_open() -> N
         ) -> None:
             assert request.requestName == pureldap.LDAPStartTLSRequest.oid
             self.start_tls(server_context)
-            reply(pureldap.LDAPStartTLSResponse(resultCode=0))
+            await reply(pureldap.LDAPStartTLSResponse(resultCode=0))
 
     def factory() -> ldapserver.BaseLDAPServer:
         server = StartTLSServer()
@@ -786,7 +786,7 @@ async def test_a_search_reference_is_handed_back_as_python_ldap_does() -> None:
             controls: Iterable[pureldap.Control] | None,
             reply: ldapserver.Reply,
         ) -> pureldap.LDAPSearchResultDone:
-            reply(
+            await reply(
                 pureldap.LDAPSearchResultReference(
                     uris=[pureber.BEROctetString(b"ldap://elsewhere.example.com/dc=x")]
                 )
@@ -935,13 +935,13 @@ def continuing_to(*uris: str) -> ServerFactory:
             controls: Iterable[pureldap.Control] | None,
             reply: ldapserver.Reply,
         ) -> pureldap.LDAPSearchResultDone:
-            reply(
+            await reply(
                 pureldap.LDAPSearchResultEntry(
                     objectName=b"cn=here,dc=example,dc=com",
                     attributes=[(b"cn", [b"here"])],
                 )
             )
-            reply(
+            await reply(
                 pureldap.LDAPSearchResultReference(
                     uris=[pureber.BEROctetString(uri.encode()) for uri in uris]
                 )
@@ -1889,7 +1889,7 @@ def schema_server() -> ServerFactory:
         ) -> pureldap.LDAPSearchResultDone:
             if request.baseObject == b"cn=Subschema":
                 asked = [to_unicode(name) for name in request.attributes]
-                reply(
+                await reply(
                     pureldap.LDAPSearchResultEntry(
                         objectName="cn=Subschema",
                         attributes=[
@@ -1900,7 +1900,7 @@ def schema_server() -> ServerFactory:
                     )
                 )
             elif request.baseObject == b"dc=example,dc=com":
-                reply(
+                await reply(
                     pureldap.LDAPSearchResultEntry(
                         objectName="dc=example,dc=com",
                         attributes=[("subschemaSubentry", [b"cn=Subschema"])],
@@ -2054,10 +2054,10 @@ async def test_the_root_dse_says_what_the_server_holds() -> None:
     class RootDSEServer(ldapserver.LDAPServer):
         """A server that answers for itself, as one holding a tree does."""
 
-        def getRootDSE(
+        async def getRootDSE(
             self, request: pureldap.LDAPSearchRequest, reply: ldapserver.Reply
         ) -> pureldap.LDAPSearchResultDone:
-            reply(
+            await reply(
                 pureldap.LDAPSearchResultEntry(
                     objectName="",
                     attributes=[
@@ -3150,7 +3150,7 @@ async def test_a_reconnect_raises_tls_again_if_it_had_been_raised() -> None:
         ) -> None:
             assert request.requestName == pureldap.LDAPStartTLSRequest.oid
             self.start_tls(server_context)
-            reply(pureldap.LDAPStartTLSResponse(resultCode=0))
+            await reply(pureldap.LDAPStartTLSResponse(resultCode=0))
 
     def factory() -> ldapserver.BaseLDAPServer:
         server = StartTLSServer()
@@ -4330,7 +4330,7 @@ async def test_the_socket_a_connection_names_is_the_one_under_the_tls() -> None:
             reply: ldapserver.Reply,
         ) -> None:
             self.start_tls(server_context)
-            reply(pureldap.LDAPStartTLSResponse(resultCode=0))
+            await reply(pureldap.LDAPStartTLSResponse(resultCode=0))
 
     def factory() -> ldapserver.BaseLDAPServer:
         server = StartTLSServer()

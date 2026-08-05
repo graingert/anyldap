@@ -292,7 +292,7 @@ class IConnectedLDAPEntry(ILDAPEntry):
         sizeLimit: int = 0,
         timeLimit: int = 0,
         typesOnly: int = 0,
-        callback: Callable[["IConnectedLDAPEntry"], object] | None = None,
+        callback: Callable[["IConnectedLDAPEntry"], Awaitable[None]] | None = None,
         # What comes back depends on how it was called -- the results, or
         # nothing when a callback took them, or the server's response
         # controls -- so a caller that wants the results says so. The
@@ -368,7 +368,7 @@ class IWalkableLDAPEntry(IConnectedLDAPEntry):
     """
 
     def children(
-        callback: Callable[["IWalkableLDAPEntry"], object] | None = None
+        callback: Callable[["IWalkableLDAPEntry"], Awaitable[None]] | None = None
     ) -> Awaitable[list["IWalkableLDAPEntry"] | None]:
         """
 
@@ -387,7 +387,7 @@ class IWalkableLDAPEntry(IConnectedLDAPEntry):
         """
 
     def subtree(
-        callback: Callable[["IWalkableLDAPEntry"], object] | None = None
+        callback: Callable[["IWalkableLDAPEntry"], Awaitable[None]] | None = None
     ) -> Awaitable[list["IWalkableLDAPEntry"] | None]:
         """
 

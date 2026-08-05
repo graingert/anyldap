@@ -849,7 +849,7 @@ class TestLDAPServerTest:
     async def test_passwordModify_rejects_unknown_sequence_item(self) -> None:
         with pytest.raises(ldaperrors.LDAPProtocolError):
             await self.server.extendedRequest_LDAPPasswordModifyRequest(
-                pureber.BERSequence([pureber.BERInteger(1)]), lambda response: None
+                pureber.BERSequence([pureber.BERInteger(1)]), util.discard
             )
 
     async def test_passwordModify_rejects_non_sequence_value(self) -> None:

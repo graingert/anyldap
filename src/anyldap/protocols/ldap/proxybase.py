@@ -47,7 +47,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         self.client = None
         ldapserver.BaseLDAPServer.connectionLost(self, reason)
 
-    def _failedToConnectToProxiedServer(self, err: Failure) -> None:
+    async def _failedToConnectToProxiedServer(self, err: Failure) -> None:
         """
         The connection to the proxied server failed.
         """
@@ -68,7 +68,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
                 )
             else:
                 continue
-            reply(msg)
+            await reply(msg)
         self._start_anyio_close()
 
     async def _processBacklog_async(self) -> None:
@@ -122,7 +122,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         """
         return (request, controls)
 
-    def _gotResponseFromProxiedServer(
+    async def _gotResponseFromProxiedServer(
         self,
         response: pureldap.LDAPProtocolResponse,
         reply: ldapserver.Reply,
@@ -132,7 +132,11 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         """
         Returns True if this is the last response to the request.
         """
-        reply(self.handleProxiedResponse(response, request, controls))
+        await reply(
+            await await_result(
+                self.handleProxiedResponse(response, request, controls)
+            )
+        )
         return isinstance(
             response,
             (
@@ -146,10 +150,10 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         response: pureldap.LDAPProtocolResponse,
         request: pureldap.LDAPProtocolRequest,
         controls: Controls,
-    ) -> pureldap.LDAPProtocolResponse:
+    ) -> pureldap.LDAPProtocolResponse | Awaitable[pureldap.LDAPProtocolResponse]:
         """
         Override to intercept and modify proxied responses.
-        Must return the modified response.
+        Must return the modified response, or an awaitable of the same.
         """
         return response
 
@@ -179,10 +183,10 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         if self.debug:
             logger.info("Received extended request: %s", request.requestName)
         if request.requestName == pureldap.LDAPStartTLSRequest.oid:
-            return self.handleStartTLSRequest(request, controls, reply)
+            return await self.handleStartTLSRequest(request, controls, reply)
         return await await_result(self.handleUnknown(request, controls, reply))
 
-    def handleStartTLSRequest(
+    async def handleStartTLSRequest(
         self,
         request: pureldap.LDAPExtendedRequest,
         controls: Controls,
@@ -217,7 +221,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
                 self.start_tls(self.factory.options)
                 if debug_flag:
                     logger.info("Replying with successful LDAPStartTLSResponse ...")
-                reply(msg)
+                await reply(msg)
                 self.startTLS_initiated = True
                 msg = None
         else:
@@ -254,7 +258,7 @@ class ProxyBase(ldapserver.BaseLDAPServer):
         try:
             proto = await await_result(self.clientConnector())
         except Exception as exc:
-            self._failedToConnectToProxiedServer(Failure(exc))
+            await self._failedToConnectToProxiedServer(Failure(exc))
             return
 
         if self.use_tls:

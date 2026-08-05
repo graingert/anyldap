@@ -1,6 +1,6 @@
 """Pythonic API for LDAP operations."""
 import functools
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Protocol
 
 import outcome
@@ -30,7 +30,7 @@ class LDAPSender(Protocol):
         self,
         op: pureldap.LDAPProtocolRequest,
         controls: Iterable[pureldap.Control] | None,
-        handler: Callable[..., bool] | None,
+        handler: Callable[..., bool | Awaitable[bool]] | None,
         *args: object,
         **kwargs: object,
     ) -> object: ...
