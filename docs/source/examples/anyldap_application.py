@@ -1,7 +1,9 @@
 """Serve a directory by writing an application rather than a subclass.
 
 Each LDAP operation is handed to ``directory`` with a scope saying what
-was asked, and answered by sending responses back one at a time.
+was asked, and answered by sending responses back one at a time. The
+lifespan scope comes first and last, which is where the task group that
+outlives any one connection is opened.
 """
 
 import anyio
@@ -17,8 +19,18 @@ ENTRIES = {
 
 
 async def directory(
-    scope: app.OperationScope, receive: app.Receive, send: app.Send
+    scope: app.Scope, receive: app.Receive, send: app.Send
 ) -> None:
+    if scope["type"] == "lifespan":
+        assert (await receive())["type"] == "lifespan.startup"
+        async with anyio.create_task_group() as background:
+            # Open for as long as the server runs, so an operation can
+            # start work that outlives the connection it came in on.
+            scope["state"]["background"] = background
+            await send({"type": "lifespan.startup.complete"})
+            assert (await receive())["type"] == "lifespan.shutdown"
+            await send({"type": "lifespan.shutdown.complete"})
+        return
     if scope["type"] == "ldap.bind":
         # Whatever a bind decides belongs to the connection, not to the
         # operation that decided it.

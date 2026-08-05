@@ -1,14 +1,14 @@
 """
 Test cases for anyldap.protocols.ldap.ldapsyntax module.
 """
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 
 import anyio
 import pytest
 from anyio.abc import ByteStream
 from exceptiongroup import suppress
 
-from anyldap import runtime
+from anyldap import app, runtime
 from anyldap._async import ResultSlot
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapclient, ldaperrors, ldapserver
@@ -35,21 +35,24 @@ _finish_ex = _finish
 async def test_async_multi_response_and_no_response_paths() -> None:
     client = ldapclient.LDAPClient()
 
-    class SearchServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPSearchResultDone:
-            return pureldap.LDAPSearchResultDone(resultCode=0)
+    async def searching(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPSearchResultDone(resultCode=0),
+            }
+        )
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
     server_stream = await accept_one(listener)
     async with anyio.create_task_group() as task_group:
-        task_group.start_soon(ldapserver.serve_stream, server_stream, SearchServer)
+        task_group.start_soon(
+            ldapserver.serve_stream, server_stream, app.app_factory(searching)
+        )
         await client.attach_stream(client_stream, task_group)
         request = pureldap.LDAPSearchRequest()
         response_received = anyio.Event()
@@ -89,21 +92,24 @@ async def test_async_disconnected_and_tls_guards() -> None:
 async def test_send_async_receives_response_from_stream() -> None:
     client = ldapclient.LDAPClient()
 
-    class BindServer(ldapserver.BaseLDAPServer):
-        async def handle_LDAPBindRequest(
-            self,
-            request: pureldap.LDAPBindRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPBindResponse:
-            return pureldap.LDAPBindResponse(resultCode=0)
+    async def binding(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPBindResponse(resultCode=0),
+            }
+        )
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     client_stream = await anyio.connect_tcp(host, port)
     server_stream = await accept_one(listener)
     async with anyio.create_task_group() as task_group:
-        task_group.start_soon(ldapserver.serve_stream, server_stream, BindServer)
+        task_group.start_soon(
+            ldapserver.serve_stream, server_stream, app.app_factory(binding)
+        )
         await client.attach_stream(client_stream, task_group)
         response = await client.send_async(pureldap.LDAPBindRequest())
         assert isinstance(response, pureldap.LDAPBindResponse)
@@ -121,23 +127,21 @@ async def test_client_methods_use_real_socket_stream() -> None:
             super().connectionLost(reason)
             closed.set()
 
-    class Server(ldapserver.BaseLDAPServer):
-        async def handle_LDAPBindRequest(
-            self,
-            request: pureldap.LDAPBindRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPBindResponse:
-            return pureldap.LDAPBindResponse(resultCode=0)
-
-        async def handle_LDAPSearchRequest(
-            self,
-            request: pureldap.LDAPSearchRequest,
-            controls: Iterable[pureldap.Control] | None,
-            reply: ldapserver.Reply,
-        ) -> pureldap.LDAPSearchResultDone:
-            await reply(pureldap.LDAPSearchResultEntry("cn=entry", []))
-            return pureldap.LDAPSearchResultDone(resultCode=0)
+    async def server(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        assert scope["type"] != "lifespan"
+        if scope["type"] == "ldap.bind":
+            response: pureber.BERBase = pureldap.LDAPBindResponse(resultCode=0)
+        else:
+            await send(
+                {
+                    "type": "ldap.response",
+                    "response": pureldap.LDAPSearchResultEntry("cn=entry", []),
+                }
+            )
+            response = pureldap.LDAPSearchResultDone(resultCode=0)
+        await send({"type": "ldap.response", "response": response})
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
@@ -146,7 +150,9 @@ async def test_client_methods_use_real_socket_stream() -> None:
     client_stream = await anyio.connect_tcp(host, port)
     server_stream = await accept_one(listener)
     async with anyio.create_task_group() as task_group:
-        task_group.start_soon(ldapserver.serve_stream, server_stream, Server)
+        task_group.start_soon(
+            ldapserver.serve_stream, server_stream, app.app_factory(server)
+        )
         await client.attach_stream(client_stream, task_group)
         assert isinstance(
             await client.send(pureldap.LDAPBindRequest()),

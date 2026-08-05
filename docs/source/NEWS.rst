@@ -48,10 +48,25 @@ Features
   anything else per-connection belongs. Each operation runs in its own task
   and its own cancel scope, so reading the next request does not wait for
   the last one to be answered, and an abandon cancels the operation it
-  names while it is still running -- which, as RFC 4511 section 4.11 says,
-  is then not answered at all. ``app.listen()`` and ``app.serve()`` run one
-  the way ``ldapserver.listen()`` and ``ldapserver.serve()`` run a
-  protocol.
+  names while it is still running. As RFC 4511 section 4.11 says, an
+  abandoned operation is then not answered at all: ``send`` raises
+  ``ClientDisconnected`` rather than writing, the way a reset HTTP/2 stream
+  refuses what is written to it, and a closed connection refuses the same
+  way. A response may carry controls of its own, which is what a paged
+  search needs and what a ``handle_*`` method has no way to say.
+- ``anyldap.app.lifespan()`` calls an application once with a lifespan
+  scope before the first connection is accepted, and once more when
+  serving is over, which is where it opens what it needs for as long as it
+  is running -- a task group, a connection pool -- by leaving it in
+  ``scope["state"]``. Every connection scope's ``state`` starts as a copy
+  of that, so work an operation starts in the application's task group
+  outlives the connection it came in on. ``app.listen()`` and
+  ``app.serve()`` run one the way ``ldapserver.listen()`` and
+  ``ldapserver.serve()`` run a protocol, with startup finishing before the
+  socket is bound, so the address ``listen()`` reports says the
+  application is ready as well as the listener. An application that will
+  not take a lifespan scope is served without one, as the ASGI
+  specification says to do.
 - ``ldapconnector`` can connect with TLS already up, which is what an
   ``ldaps://`` server expects, rather than only raising it afterwards with
   StartTLS. ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()``

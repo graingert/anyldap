@@ -3,10 +3,10 @@ from collections.abc import Sequence
 import anyio
 import pytest
 
-from anyldap import inmemory, testutil
+from anyldap import app, inmemory, testutil
 from anyldap._async import ResultSlot, await_result
 from anyldap.protocols import pureldap
-from anyldap.protocols.ldap import ldapclient, ldapserver, ldapsyntax
+from anyldap.protocols.ldap import ldapclient, ldapsyntax
 from anyldap.runtime import Failure, Protocol, unwrap_failure
 
 from ._anyio_helpers import local_address
@@ -90,19 +90,25 @@ async def test_ldap_client_bind_async() -> None:
     client = ldapclient.LDAPClient()
     creds = (b"cn=foo,dc=example,dc=com", b"secret")
 
-    class BindServer(ldapserver.BaseLDAPServer):
-        def handle_LDAPBindRequest(
-            self,
-            request: pureldap.LDAPBindRequest,
-            controls: object,
-            reply: object,
-        ) -> pureldap.LDAPBindResponse:
-            return pureldap.LDAPBindResponse(resultCode=0, matchedDN=request.dn)
+    async def binding(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        assert scope["type"] == "ldap.bind"
+        request = scope["request"]
+        assert isinstance(request, pureldap.LDAPBindRequest)
+        await send(
+            {
+                "type": "ldap.response",
+                "response": pureldap.LDAPBindResponse(
+                    resultCode=0, matchedDN=request.dn
+                ),
+            }
+        )
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
     host, port = local_address(listener)
     async with anyio.create_task_group() as task_group:
-        task_group.start_soon(ldapserver.serve, listener, BindServer)
+        task_group.start_soon(app.serve, listener, binding)
         client_stream = await anyio.connect_tcp(host, port)
         await client.attach_stream(client_stream, task_group)
         assert await client.bind_async(*creds) == (creds[0], None)

@@ -20,16 +20,26 @@ state such as the bound user belongs.
 
 A request arrives whole, so it is in the scope rather than being
 received. ``receive`` hands over what happens *after* it: the client
-abandoning this operation, or the connection going away.
+abandoning this operation, or the connection going away. Once there is
+nowhere left to write -- the operation abandoned, or the connection
+closed -- ``send`` raises `ClientDisconnected` rather than quietly
+throwing the rest of the answer away.
+
+`lifespan` calls the application once more, with a `LifespanScope`, so
+that it can open what it needs for as long as it is serving and close it
+again afterwards. `listen` and `serve` do that around the listener they
+run.
 """
 
 import ssl
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from typing import Literal, TypedDict
 
 import anyio
 from anyio.abc import ByteStream, Listener, SocketAttribute
 from anyio.streams.tls import TLSStream
+from typing_extensions import NotRequired
 
 from anyldap._encoder import to_bytes
 from anyldap.protocols import pureber, pureldap
@@ -38,6 +48,39 @@ from anyldap.runtime import Failure, Protocol, logger
 
 #: Which revision of the scopes and events below a scope was built for.
 SPEC_VERSION = "0.1"
+
+
+class ClientDisconnected(Exception):
+    """Raised by ``send`` when there is no longer anywhere to write.
+
+    The client abandoned or cancelled this operation, or the connection
+    itself went away. Either way the rest of the answer is not wanted,
+    which is what a reset stream means to an HTTP/2 application.
+    """
+
+
+class LifespanFailed(Exception):
+    """The application refused to start up, or failed shutting down."""
+
+
+#: Every name an operation scope can go by. It is a closed set so that
+#: ``scope["type"] == "lifespan"`` tells the two kinds of scope apart.
+OperationType = Literal[
+    "ldap.bind",
+    "ldap.unbind",
+    "ldap.search",
+    "ldap.modify",
+    "ldap.add",
+    "ldap.delete",
+    "ldap.modifydn",
+    "ldap.compare",
+    "ldap.abandon",
+    "ldap.extended",
+    "ldap.starttls",
+    "ldap.cancel",
+    "ldap.passwordmodify",
+    "ldap.unknown",
+]
 
 
 class ConnectionScope(TypedDict):
@@ -66,12 +109,65 @@ class OperationScope(TypedDict):
     so on -- so an application can dispatch on it.
     """
 
-    type: str
+    type: OperationType
     spec_version: str
     id: int
     request: pureldap.LDAPProtocolRequest
     controls: Sequence[pureldap.Control] | None
     connection: ConnectionScope
+
+
+class LifespanScope(TypedDict):
+    """The application itself, rather than any one operation.
+
+    It is entered once before the first connection is accepted and left
+    once the last one is done with, so it is where an application opens
+    whatever it needs for as long as it is serving -- a task group, a
+    connection pool -- by keeping it in ``state``. Every connection scope
+    starts as a copy of that ``state``.
+    """
+
+    type: Literal["lifespan"]
+    spec_version: str
+    state: dict[str, object]
+
+
+class StartupEvent(TypedDict):
+    """Serving is about to begin."""
+
+    type: Literal["lifespan.startup"]
+
+
+class ShutdownEvent(TypedDict):
+    """Serving has finished."""
+
+    type: Literal["lifespan.shutdown"]
+
+
+class StartupCompleteEvent(TypedDict):
+    """The application is ready to be served."""
+
+    type: Literal["lifespan.startup.complete"]
+
+
+class StartupFailedEvent(TypedDict):
+    """The application cannot start, and says why."""
+
+    type: Literal["lifespan.startup.failed"]
+    message: NotRequired[str]
+
+
+class ShutdownCompleteEvent(TypedDict):
+    """The application has finished shutting down."""
+
+    type: Literal["lifespan.shutdown.complete"]
+
+
+class ShutdownFailedEvent(TypedDict):
+    """The application failed to shut down cleanly, and says why."""
+
+    type: Literal["lifespan.shutdown.failed"]
+    message: NotRequired[str]
 
 
 class AbandonEvent(TypedDict):
@@ -87,10 +183,15 @@ class DisconnectEvent(TypedDict):
 
 
 class ResponseEvent(TypedDict):
-    """One response, written to the client as it is sent."""
+    """One response, written to the client as it is sent.
+
+    A response may carry controls of its own, which is how a server
+    answers a paged search with the cookie for the next page.
+    """
 
     type: Literal["ldap.response"]
     response: pureber.BERBase
+    controls: NotRequired[Sequence[pureldap.Control] | None]
 
 
 class StartTLSEvent(TypedDict):
@@ -111,23 +212,32 @@ class CloseEvent(TypedDict):
     type: Literal["ldap.close"]
 
 
-ReceiveEvent = AbandonEvent | DisconnectEvent
-SendEvent = ResponseEvent | StartTLSEvent | CloseEvent
+Scope = OperationScope | LifespanScope
+ReceiveEvent = AbandonEvent | DisconnectEvent | StartupEvent | ShutdownEvent
+SendEvent = (
+    ResponseEvent
+    | StartTLSEvent
+    | CloseEvent
+    | StartupCompleteEvent
+    | StartupFailedEvent
+    | ShutdownCompleteEvent
+    | ShutdownFailedEvent
+)
 
 Receive = Callable[[], Awaitable[ReceiveEvent]]
 Send = Callable[[SendEvent], Awaitable[None]]
-LDAPApp = Callable[[OperationScope, Receive, Send], Awaitable[None]]
+LDAPApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
 # An extended request arrives as itself, with an OID naming what it asks
 # for, so which one it is is read from the OID and not from its class.
-_EXTENDED_TYPES: dict[bytes, str] = {
+_EXTENDED_TYPES: dict[bytes, OperationType] = {
     pureldap.LDAPStartTLSRequest.oid: "ldap.starttls",
     pureldap.LDAPCancelRequest.oid: "ldap.cancel",
     pureldap.LDAPPasswordModifyRequest.oid: "ldap.passwordmodify",
 }
 
-_REQUEST_TYPES: tuple[tuple[type[pureldap.LDAPProtocolRequest], str], ...] = (
+_REQUEST_TYPES: tuple[tuple[type[pureldap.LDAPProtocolRequest], OperationType], ...] = (
     (pureldap.LDAPBindRequest, "ldap.bind"),
     (pureldap.LDAPUnbindRequest, "ldap.unbind"),
     (pureldap.LDAPSearchRequest, "ldap.search"),
@@ -157,7 +267,7 @@ _FAILURE_RESPONSES: dict[str, type[pureldap.LDAPResult]] = {
 _UNANSWERED = frozenset({"ldap.unbind"})
 
 
-def operation_type(request: pureldap.LDAPProtocolRequest) -> str:
+def operation_type(request: pureldap.LDAPProtocolRequest) -> OperationType:
     """What to call this request in a scope.
 
     Anything with no name of its own is ``"ldap.unknown"``, which an
@@ -253,9 +363,12 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
     differently; that one is finished before the next request is read.
     """
 
-    def __init__(self, app: LDAPApp) -> None:
+    def __init__(self, app: LDAPApp, state: Mapping[str, object] = {}) -> None:
         super().__init__()
         self.app = app
+        # What the lifespan scope left behind. Each connection starts from
+        # a copy of it, as ASGI has each of its scopes do.
+        self.state = state
         self._operations: dict[int, _Operation] = {}
         self._connection_scope: ConnectionScope | None = None
 
@@ -316,7 +429,7 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
             server=self._address(stream.extra(SocketAttribute.local_address, None)),
             client=self._address(stream.extra(SocketAttribute.remote_address, None)),
             tls=isinstance(stream, TLSStream),
-            state={},
+            state=dict(self.state),
             abandon=self.abandon,
         )
 
@@ -372,6 +485,9 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
             with operation.cancel_scope:
                 try:
                     await self.app(scope, operation.receive, send)
+                except ClientDisconnected:
+                    # Answered by going away; there is nothing left to say.
+                    pass
                 except ldaperrors.LDAPException as exc:
                     await self._fail(operation, msg.id, name, exc.message)
                 except Exception as exc:
@@ -390,7 +506,8 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
         name: str,
         errorMessage: str | bytes | None,
     ) -> None:
-        if name in _UNANSWERED:
+        if name in _UNANSWERED or operation.abandoned or self._anyio_stream is None:
+            # Nothing is owed, or there is nowhere left to say it.
             return
         await self._send_event(
             operation,
@@ -402,29 +519,120 @@ class ApplicationServer(ldapserver.BaseLDAPServer):
         self, operation: _Operation, msgid: int, event: SendEvent
     ) -> None:
         if operation.abandoned:
-            # An abandoned operation is never answered, so whatever the
-            # application had left to say is dropped rather than written.
-            return
+            raise ClientDisconnected(f"operation {msgid} was abandoned")
+        if self._anyio_stream is None:
+            raise ClientDisconnected("the connection is closed")
         if event["type"] == "ldap.response":
-            await self._respond(msgid, event["response"])
+            await self._respond(msgid, event["response"], event.get("controls"))
         elif event["type"] == "ldap.starttls":
             self.start_tls(event["ssl_context"])
-        else:
+        elif event["type"] == "ldap.close":
             self._start_anyio_close()
+        else:
+            raise TypeError(f"{event['type']} is not something an operation sends")
 
 
-def app_factory(app: LDAPApp) -> Callable[[], ApplicationServer]:
+def app_factory(
+    app: LDAPApp, state: Mapping[str, object] = {}
+) -> Callable[[], ApplicationServer]:
     """A protocol factory serving ``app``, for `listen` and `serve`."""
 
     def factory() -> ApplicationServer:
-        return ApplicationServer(app)
+        return ApplicationServer(app, state)
 
     return factory
 
 
+@asynccontextmanager
+async def lifespan(app: LDAPApp) -> AsyncIterator[Mapping[str, object]]:
+    """Run the application's lifespan scope around whatever is inside.
+
+    The application is called once with a `LifespanScope` and told that
+    startup is happening; what it puts in ``scope["state"]`` before
+    answering is what every connection then starts from. It is told about
+    shutdown when the block ends, which is where an application closes
+    what it opened -- and, since it may hold the scope open across the
+    whole of it, where a task group it started is waited for.
+
+    An application that will not take a lifespan scope is served without
+    one, as the ASGI specification says to do.
+    """
+    state: dict[str, object] = {}
+    scope = LifespanScope(type="lifespan", spec_version=SPEC_VERSION, state=state)
+    events_send, events_receive = anyio.create_memory_object_stream[ReceiveEvent](0)
+    replies_send, replies_receive = anyio.create_memory_object_stream[SendEvent](0)
+    # An application that lingers after answering shutdown is let go of
+    # rather than waited for.
+    running = anyio.CancelScope()
+    failed: LifespanFailed | None = None
+
+    async def run() -> None:
+        try:
+            with running:
+                await app(scope, events_receive.receive, replies_send.send)
+        except Exception:
+            logger.info("Application has no lifespan scope", exc_info=True)
+        finally:
+            # Closing these is what lets a wait for an answer end when the
+            # application is not going to give one.
+            events_receive.close()
+            replies_send.close()
+
+    async def tell(event: ReceiveEvent, answer: str) -> bool:
+        """Say what is happening, and wait for the application to answer.
+
+        Answers ``False`` when there was no lifespan scope to tell, which
+        is not an error: an application need not have one. A wrong answer
+        is recorded rather than raised, so that it is not raised from
+        inside a task group and delivered as a group of one.
+        """
+        nonlocal failed
+        try:
+            await events_send.send(event)
+            reply = await replies_receive.receive()
+        except (
+            anyio.BrokenResourceError,
+            anyio.ClosedResourceError,
+            anyio.EndOfStream,
+        ):
+            return False
+        if reply["type"] == "lifespan.startup.failed" or (
+            reply["type"] == "lifespan.shutdown.failed"
+        ):
+            failed = LifespanFailed(reply.get("message", ""))
+        elif reply["type"] != answer:
+            failed = LifespanFailed(f"{reply['type']} answered {event['type']}")
+        return True
+
+    async with (
+        events_send,
+        replies_receive,
+        anyio.create_task_group() as task_group,
+    ):
+        task_group.start_soon(run)
+        try:
+            told = await tell(
+                {"type": "lifespan.startup"}, "lifespan.startup.complete"
+            )
+            if failed is None:
+                try:
+                    yield state
+                finally:
+                    if told:
+                        await tell(
+                            {"type": "lifespan.shutdown"},
+                            "lifespan.shutdown.complete",
+                        )
+        finally:
+            running.cancel()
+    if failed is not None:
+        raise failed
+
+
 async def serve(listener: Listener[ByteStream], app: LDAPApp) -> None:
     """Answer everything that connects to ``listener`` with ``app``."""
-    await ldapserver.serve(listener, app_factory(app))
+    async with lifespan(app) as state:
+        await ldapserver.serve(listener, app_factory(app, state))
 
 
 async def listen(
@@ -437,13 +645,15 @@ async def listen(
 ) -> None:
     """Listen for TCP clients and answer them with ``app``.
 
-    The bound address is reported through ``task_status``, so a caller
-    that asked for port 0 learns which port it was given.
+    Startup finishes before the socket is bound, so the bound address
+    reported through ``task_status`` says that the application is ready as
+    well as that the listener is.
     """
-    await ldapserver.listen(
-        host,
-        port,
-        app_factory(app),
-        backlog=backlog,
-        task_status=task_status,
-    )
+    async with lifespan(app) as state:
+        await ldapserver.listen(
+            host,
+            port,
+            app_factory(app, state),
+            backlog=backlog,
+            task_status=task_status,
+        )

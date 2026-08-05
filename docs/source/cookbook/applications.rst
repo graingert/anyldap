@@ -71,8 +71,11 @@ Abandon and cancel
 """"""""""""""""""
 
 An abandon cancels the operation it names. RFC 4511 section 4.11 says an
-abandoned operation is never answered, so anything the application had
-left to send is dropped rather than written.
+abandoned operation is never answered, so ``send`` refuses rather than
+writing: it raises :exc:`~anyldap.app.ClientDisconnected`, the way a reset
+HTTP/2 stream refuses what is written to it. A closed connection refuses
+the same way. An application that lets the error escape ends that
+operation and nothing else.
 
 A cancel (RFC 3909) is an operation of its own and *is* answered, so an
 application handles it by stopping the operation it names and then saying
@@ -81,6 +84,39 @@ so::
    if scope["type"] == "ldap.cancel":
        scope["connection"]["abandon"](app.cancel_id(scope["request"]))
        await send({"type": "ldap.response", "response": canceled})
+
+
+""""""""""""""""""""""""
+Starting up and stopping
+""""""""""""""""""""""""
+
+:func:`~anyldap.app.listen` and :func:`~anyldap.app.serve` call the
+application once more before the first connection is accepted, with a
+:class:`~anyldap.app.LifespanScope`, and once again when they are done.
+That is where an application opens whatever it needs for as long as it is
+serving, and the usual shape holds the scope open across the whole of it::
+
+   async def app(scope, receive, send):
+       if scope["type"] == "lifespan":
+           assert (await receive())["type"] == "lifespan.startup"
+           async with anyio.create_task_group() as background:
+               scope["state"]["background"] = background
+               await send({"type": "lifespan.startup.complete"})
+               assert (await receive())["type"] == "lifespan.shutdown"
+               await send({"type": "lifespan.shutdown.complete"})
+           return
+
+Every connection scope's ``state`` starts as a copy of the lifespan
+scope's, so ``scope["connection"]["state"]["background"]`` is that task
+group, and work an operation starts in it is owned by the application
+rather than by the connection that started it. Leaving the block is what
+shuts the application down; the task group it opened is waited for as it
+goes. An application that will not take a lifespan scope -- one that
+raises when it is given one -- is served without it.
+
+Startup finishing before the socket is bound means the address
+:func:`~anyldap.app.listen` reports says the application is ready too, not
+only the listener.
 
 
 ''''

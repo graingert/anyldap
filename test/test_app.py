@@ -15,6 +15,12 @@ from ._anyio_helpers import MemoryByteStream, local_address
 pytestmark = pytest.mark.anyio
 
 
+def operation(scope: app.Scope) -> app.OperationScope:
+    """The scope, once it is known not to be the lifespan one."""
+    assert scope["type"] != "lifespan"
+    return scope
+
+
 def decode_message(wire_bytes: bytes) -> pureldap.LDAPMessage:
     message, _ = pureber.berDecodeObject(
         ldapserver.BaseLDAPServer.berdecoder, wire_bytes
@@ -24,9 +30,12 @@ def decode_message(wire_bytes: bytes) -> pureldap.LDAPMessage:
 
 
 async def echo_result(
-    scope: app.OperationScope, receive: app.Receive, send: app.Send
+    scope: app.Scope, receive: app.Receive, send: app.Send
 ) -> None:
     """Answer every operation with a search-done carrying its scope type."""
+    if scope["type"] == "lifespan":
+        # Nothing to set up, so this application does not take one.
+        raise NotImplementedError("no lifespan here")
     await send(
         {
             "type": "ldap.response",
@@ -104,9 +113,9 @@ async def test_an_operation_is_answered_with_its_scope() -> None:
     seen: list[app.OperationScope] = []
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
-        seen.append(scope)
+        seen.append(operation(scope))
         await echo_result(scope, receive, send)
 
     async with anyio.create_task_group() as task_group:
@@ -138,9 +147,9 @@ async def test_controls_reach_the_scope() -> None:
     seen: list[app.OperationScope] = []
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
-        seen.append(scope)
+        seen.append(operation(scope))
         await echo_result(scope, receive, send)
 
     controls = [(b"1.2.3", False, None)]
@@ -162,9 +171,9 @@ async def test_operations_run_concurrently() -> None:
     holding = anyio.Event()
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
-        if scope["id"] == 1:
+        if operation(scope)["id"] == 1:
             await holding.wait()
         else:
             holding.set()
@@ -191,7 +200,7 @@ async def test_abandon_stops_an_operation_and_silences_it() -> None:
     finished = anyio.Event()
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
         if scope["type"] != "ldap.search":
             await echo_result(scope, receive, send)
@@ -202,13 +211,16 @@ async def test_abandon_stops_an_operation_and_silences_it() -> None:
                 reason.append(await receive())
             await anyio.sleep_forever()
         finally:
-            # Never written: an abandoned operation is not answered.
-            await send(
-                {
-                    "type": "ldap.response",
-                    "response": pureldap.LDAPSearchResultDone(resultCode=0),
-                }
-            )
+            # An abandoned operation has nowhere left to write, which
+            # saying so is how it finds out.
+            with anyio.CancelScope(shield=True):
+                with pytest.raises(app.ClientDisconnected, match="abandoned"):
+                    await send(
+                        {
+                            "type": "ldap.response",
+                            "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                        }
+                    )
             finished.set()
 
     async with anyio.create_task_group() as task_group:
@@ -257,12 +269,12 @@ async def test_cancel_is_answered_by_abandoning_through_the_connection() -> None
     stopped = anyio.Event()
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
         if scope["type"] == "ldap.cancel":
-            request = scope["request"]
+            request = operation(scope)["request"]
             assert isinstance(request, pureldap.LDAPExtendedRequest)
-            scope["connection"]["abandon"](app.cancel_id(request))
+            operation(scope)["connection"]["abandon"](app.cancel_id(request))
             await send(
                 {
                     "type": "ldap.response",
@@ -314,7 +326,7 @@ async def test_cancel_id_reads_the_operation_out_of_the_request() -> None:
 
 async def test_an_application_that_fails_still_answers() -> None:
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
         if scope["type"] == "ldap.bind":
             raise ldaperrors.LDAPInvalidCredentials("no")
@@ -344,7 +356,7 @@ async def test_an_unanswered_operation_that_fails_says_nothing() -> None:
     failed = anyio.Event()
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
         if scope["type"] == "ldap.unbind":
             failed.set()
@@ -367,7 +379,7 @@ async def test_an_unanswered_operation_that_fails_says_nothing() -> None:
 
 async def test_unbind_closes_the_connection() -> None:
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
         assert scope["type"] == "ldap.unbind"
         await send({"type": "ldap.close"})
@@ -387,7 +399,7 @@ async def test_losing_the_connection_tells_an_operation_so() -> None:
     seen: list[app.ReceiveEvent] = []
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
         running.set()
         seen.append(await receive())
@@ -412,7 +424,7 @@ async def test_an_event_waits_for_an_application_that_is_not_yet_reading() -> No
     release = anyio.Event()
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
         running.set()
         await release.wait()
@@ -450,9 +462,9 @@ async def test_an_unsolicited_notification_is_logged_not_dispatched() -> None:
     answered: list[int] = []
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
-        answered.append(scope["id"])
+        answered.append(operation(scope)["id"])
 
     async with anyio.create_task_group() as task_group:
         server, stream = await _attach(application, task_group)
@@ -477,7 +489,7 @@ async def test_starttls_raises_the_connection_behind_its_answer() -> None:
     authority.configure_trust(client_context)
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
         if scope["type"] == "ldap.starttls":
             await send({"type": "ldap.starttls", "ssl_context": server_context})
@@ -523,9 +535,9 @@ async def test_a_served_connection_knows_both_its_addresses() -> None:
     seen: list[app.ConnectionScope] = []
 
     async def application(
-        scope: app.OperationScope, receive: app.Receive, send: app.Send
+        scope: app.Scope, receive: app.Receive, send: app.Send
     ) -> None:
-        seen.append(scope["connection"])
+        seen.append(operation(scope)["connection"])
         await echo_result(scope, receive, send)
 
     listener = await anyio.create_tcp_listener(local_host="127.0.0.1", local_port=0)
@@ -543,3 +555,202 @@ async def test_a_served_connection_knows_both_its_addresses() -> None:
     assert seen[0]["server"] == (host, port)
     assert seen[0]["client"] is not None
     assert not seen[0]["tls"]
+
+
+async def test_send_after_the_connection_is_closed_is_refused() -> None:
+    running = anyio.Event()
+    refused: list[Exception] = []
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        running.set()
+        await gone.wait()
+        try:
+            await send(
+                {
+                    "type": "ldap.response",
+                    "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                }
+            )
+        except app.ClientDisconnected as exc:
+            refused.append(exc)
+
+    gone = anyio.Event()
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(application, task_group)
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+        )
+        await running.wait()
+        await server.aclose()
+        gone.set()
+
+    assert [str(exc) for exc in refused] == ["the connection is closed"]
+
+
+async def test_an_operation_cannot_send_a_lifespan_event() -> None:
+    refused: list[str] = []
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        try:
+            await send({"type": "lifespan.startup.complete"})
+        except TypeError as exc:
+            refused.append(str(exc))
+        await echo_result(scope, receive, send)
+
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(application, task_group)
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+        )
+        assert decode_message(await stream.next_write()).id == 1
+        await server.aclose()
+
+    assert refused == ["lifespan.startup.complete is not something an operation sends"]
+
+
+async def test_lifespan_state_holds_a_task_group_the_connections_use() -> None:
+    """The classic shape: a task group open for as long as the server runs."""
+    done: list[str] = []
+    shutting_down = anyio.Event()
+
+    async def note(dn: str) -> None:
+        # Only finishes as the application shuts down, so the task group
+        # having waited for it is what the last assertion shows.
+        await shutting_down.wait()
+        done.append(dn)
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        if scope["type"] == "lifespan":
+            assert await receive() == {"type": "lifespan.startup"}
+            async with anyio.create_task_group() as background:
+                scope["state"]["background"] = background
+                await send({"type": "lifespan.startup.complete"})
+                assert await receive() == {"type": "lifespan.shutdown"}
+                shutting_down.set()
+                await send({"type": "lifespan.shutdown.complete"})
+            return
+        started = operation(scope)["connection"]["state"]["background"]
+        assert isinstance(started, anyio.abc.TaskGroup)
+        # Work started from a connection, but owned by the application.
+        started.start_soon(note, "cn=jack")
+        await echo_result(scope, receive, send)
+
+    async with app.lifespan(application) as state:
+        async with anyio.create_task_group() as task_group:
+            server = app.ApplicationServer(application, state)
+            stream = MemoryByteStream()
+            await server.attach_stream(stream, task_group)
+            await stream.feed(
+                pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+            )
+            assert decode_message(await stream.next_write()).id == 1
+            await server.aclose()
+        # Leaving the lifespan is what shuts the application down, and the
+        # task group it opened is waited for as it goes.
+        assert done == []
+
+    assert done == ["cn=jack"]
+
+
+async def test_lifespan_runs_startup_and_shutdown_in_order() -> None:
+    seen: list[str] = []
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        assert scope["type"] == "lifespan"
+        seen.append((await receive())["type"])
+        scope["state"]["opened"] = True
+        await send({"type": "lifespan.startup.complete"})
+        seen.append((await receive())["type"])
+        await send({"type": "lifespan.shutdown.complete"})
+
+    async with app.lifespan(application) as state:
+        assert state == {"opened": True}
+        seen.append("serving")
+
+    assert seen == ["lifespan.startup", "serving", "lifespan.shutdown"]
+
+
+async def test_an_application_without_a_lifespan_is_served_anyway() -> None:
+    async with app.lifespan(echo_result) as state:
+        assert state == {}
+
+
+async def test_startup_that_fails_is_not_served() -> None:
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await receive()
+        await send({"type": "lifespan.startup.failed", "message": "no database"})
+
+    # Starting up is what fails, so there is never a body to run.
+    with pytest.raises(app.LifespanFailed, match="no database"):
+        await app.lifespan(application).__aenter__()
+
+
+async def test_shutdown_that_fails_is_reported() -> None:
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await receive()
+        await send({"type": "lifespan.startup.complete"})
+        await receive()
+        await send({"type": "lifespan.shutdown.failed"})
+
+    with pytest.raises(app.LifespanFailed, match="^$"):
+        async with app.lifespan(application):
+            pass
+
+
+async def test_an_answer_to_the_wrong_question_is_an_error() -> None:
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        await receive()
+        await send({"type": "lifespan.shutdown.complete"})
+
+    with pytest.raises(app.LifespanFailed, match="answered lifespan.startup"):
+        await app.lifespan(application).__aenter__()
+
+
+async def test_an_application_may_simply_let_the_refusal_out() -> None:
+    """Being refused is an answer, not a bug to be reported."""
+    running = anyio.Event()
+    gone = anyio.Event()
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        if operation(scope)["id"] == 1:
+            running.set()
+            await gone.wait()
+            # Nothing catches this; the operation ends with it, and the
+            # connection carries on.
+            await send(
+                {
+                    "type": "ldap.response",
+                    "response": pureldap.LDAPSearchResultDone(resultCode=0),
+                }
+            )
+        else:
+            await echo_result(scope, receive, send)
+
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(application, task_group)
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+        )
+        await running.wait()
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=2).toWire()
+        )
+        assert decode_message(await stream.next_write()).id == 2
+        await server.aclose()
+        gone.set()
