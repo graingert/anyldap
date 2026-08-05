@@ -10,7 +10,7 @@ imports the ``crypt`` module that Python 3.13 removed -- the two modules are
 vendored here. Their Python 2 compatibility shims are dropped, and they are
 otherwise formatted by this project's linters rather than kept byte-identical
 to upstream. passlib's own tests for them are vendored alongside, as
-anyldap/test/test_vendored_des.py and test_vendored_md4.py.
+test/test_vendored_des.py and test_vendored_md4.py.
 
 See LICENSE in this directory for the passlib copyright notice, and for the
 separate notice covering the DES routines that passlib itself derived from

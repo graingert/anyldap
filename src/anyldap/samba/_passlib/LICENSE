@@ -2,10 +2,10 @@ These files are vendored from passlib 1.7.4
 (https://pypi.org/project/passlib/) and are covered by the notices below
 rather than by anyldap's own LICENSE:
 
-    anyldap/samba/_passlib/_md4.py    from passlib/crypto/_md4.py
-    anyldap/samba/_passlib/des.py     from passlib/crypto/des.py
-    anyldap/test/test_vendored_md4.py from passlib/tests/test_crypto_builtin_md4.py
-    anyldap/test/test_vendored_des.py from passlib/tests/test_crypto_des.py
+    src/anyldap/samba/_passlib/_md4.py from passlib/crypto/_md4.py
+    src/anyldap/samba/_passlib/des.py  from passlib/crypto/des.py
+    test/test_vendored_md4.py          from passlib/tests/test_crypto_builtin_md4.py
+    test/test_vendored_des.py          from passlib/tests/test_crypto_des.py
 
 They have been modified: their Python 2 compatibility shims are replaced,
 the tests are adapted to pytest, and all four are formatted by anyldap's

@@ -9,8 +9,8 @@ from anyldap import delta, inmemory, interfaces
 from anyldap import entry as entrymod
 from anyldap.protocols.ldap import distinguishedname, ldaperrors
 from anyldap.runtime import ConnectionDone, Failure
-from anyldap.test import util
-from anyldap.test.util import collected
+from . import util
+from .util import collected
 
 pytestmark = pytest.mark.anyio
 

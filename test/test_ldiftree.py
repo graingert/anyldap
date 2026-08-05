@@ -20,8 +20,8 @@ import pytest
 from anyldap import delta, entry, interfaces, ldiftree
 from anyldap.entry import BaseLDAPEntry
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
-from anyldap.test import util
-from anyldap.test._testing import capture_logs
+from . import util
+from ._testing import capture_logs
 
 pytestmark = pytest.mark.anyio
 

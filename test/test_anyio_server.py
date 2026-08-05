@@ -22,7 +22,7 @@ from anyldap.protocols.ldap import (
 )
 from anyldap.protocols.ldap.proxybase import Controls
 from anyldap.runtime import ConnectionDone, Failure
-from anyldap.test._anyio_helpers import (
+from ._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
     local_address,

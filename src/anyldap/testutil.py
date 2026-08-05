@@ -9,7 +9,6 @@ from anyio.abc import ByteStream, SocketAttribute, SocketListener, TaskGroup
 
 from anyldap._encoder import SupportsToWire, to_bytes
 from anyldap.runtime import Failure
-from anyldap.test import util
 
 if TYPE_CHECKING:
     from anyldap.protocols.ldap import ldapserver
@@ -17,6 +16,10 @@ if TYPE_CHECKING:
 # What a driver is sent: an LDAP message, or the marker standing in for the
 # unbind response it fakes.
 Sent = SupportsToWire | str
+
+
+class FailTest(AssertionError):
+    """Raised by test helpers when an expectation was not met."""
 
 
 async def exchange_async(
@@ -50,7 +53,7 @@ async def exchange_async(
 
 
 def mustRaise(dummy: object) -> NoReturn:
-    raise util.FailTest("Should have raised an exception.")
+    raise FailTest("Should have raised an exception.")
 
 
 def _print_func_name(frame: FrameType, event: str, arg: object) -> None:

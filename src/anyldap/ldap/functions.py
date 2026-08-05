@@ -22,8 +22,14 @@ def strf_secs(secs: float) -> str:
 
 
 def strp_secs(dt_str: str) -> int:
-    """A generalized time, as seconds since the epoch."""
-    return int(time.mktime(time.strptime(dt_str, _GENERALIZED_TIME)) - time.timezone)
+    """A generalized time, as seconds since the epoch.
+
+    The time read is UTC, so it is turned back into seconds as UTC.
+    python-ldap goes through ``time.mktime()`` and subtracts
+    ``time.timezone``, which is an hour out wherever the local zone is on
+    summer time; this is the inverse of :func:`strf_secs` everywhere.
+    """
+    return int(calendar.timegm(time.strptime(dt_str, _GENERALIZED_TIME)))
 
 
 def escape_str(escape_func: Callable[[Value], str], val: str, *args: Value) -> str:

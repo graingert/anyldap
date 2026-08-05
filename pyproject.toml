@@ -9,7 +9,7 @@ description = "A Pure-Python AnyIO library for LDAP"
 authors = [{ name = "Tommi Virtanen", email = "tv@eagain.net" }]
 maintainers = [{ name = "Bret Curtis", email = "psi29a@gmail.com" }]
 license = "MIT"
-license-files = ["LICENSE", "anyldap/samba/_passlib/LICENSE"]
+license-files = ["LICENSE", "src/anyldap/samba/_passlib/LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "anyio",
@@ -78,7 +78,7 @@ readme = { file = ["README.rst"], content-type = "text/x-rst" }
 [tool.setuptools_scm]
 
 [tool.setuptools.packages.find]
-include = ["anyldap*"]
+where = ["src"]
 
 # Files that are only needed in the repository (CI, GitHub, dev tooling) and
 # are deliberately kept out of the sdist by MANIFEST.in.
@@ -97,6 +97,9 @@ ignore = [
 [tool.mypy]
 strict = true
 plugins = ["mypy_zope:plugin"]
+# build/ holds copies of files that are checked where they really live, and
+# checking both spellings is how mypy ends up reporting duplicate modules.
+exclude = ["^build/"]
 
 # gssapi is what the GSSAPI SASL mechanism asks for if it is used, and is
 # not a dependency: it is imported inside the call that needs it.
@@ -107,6 +110,7 @@ ignore_missing_imports = true
 [tool.coverage.run]
 branch = true
 source_pkgs = ["anyldap"]
+source = ["test"]
 parallel = true
 patch = ["subprocess"]
 
@@ -115,15 +119,8 @@ fail_under = 100
 show_missing = true
 skip_covered = true
 
-[tool.coverage.paths]
-source = [
-    "*/site-packages/anyldap",
-    '*\site-packages\anyldap',
-]
-
 [tool.pytest.ini_options]
-addopts = "-ra --cov=anyldap --cov-report=term-missing --cov-fail-under=100"
-testpaths = ["anyldap/test"]
+addopts = "-ra --cov --cov-report=term-missing --cov-fail-under=100"
 strict = true
 filterwarnings = ["error"]
 
@@ -199,7 +196,7 @@ passenv = *
 commands =
     {envpython} --version
     test: pytest --version
-    test: pytest {posargs:anyldap/test}
+    test: pytest {posargs}
 
     ; Only run on local dev env.
     dev: coverage report --show-missing
@@ -209,7 +206,7 @@ commands =
     dev: pre-commit run --all-files --show-diff-on-failure
     linters: pre-commit {posargs:run --all-files --show-diff-on-failure}
 
-    mypy: mypy {posargs:anyldap}
+    mypy: mypy {posargs:.}
 
 ; Checks this client against python-ldap itself, on a real OpenLDAP server.
 ; Not in envlist: it needs slapd installed, and headers to build python-ldap
