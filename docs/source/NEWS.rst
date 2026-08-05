@@ -39,58 +39,60 @@ Backwards incompatible changes
 Features
 ^^^^^^^^
 
-- ``anyldap.app`` serves a directory written as an application rather than
-  as a subclass: a coroutine function of ``(scope, receive, send)``, the
-  three arguments an ASGI web application takes. What a scope describes is
-  an LDAP *operation*, since LDAP multiplexes and a client may have several
-  outstanding at once, and the operations of one connection share
-  ``scope["connection"]``, whose ``state`` is where the bound user and
-  anything else per-connection belongs. Each operation runs in its own task
-  so reading the next request does not wait for the last one to be
-  answered. Stopping an operation is the connection's business rather than
-  an application's, so neither an abandon nor a cancel arrives as a scope.
+- ``anyldap.app`` serves a directory written as an application rather
+  than as a subclass: a coroutine function of ``(scope, receive, send)``,
+  the three arguments an ASGI web application takes. What a scope
+  describes is an LDAP *operation* rather than a connection, since LDAP
+  multiplexes and a client may have several outstanding at once. Each runs
+  in its own task, so reading the next request does not wait for the last
+  one to be answered, and what they share is ``scope["connection"]``,
+  whose ``state`` is where the bound user and anything else
+  per-connection belongs. A response may carry controls of its own, which
+  is what a paged search needs and what a ``handle_*`` method has no way
+  to say.
+- Stopping an operation is the connection's business rather than an
+  application's, so neither an abandon nor a cancel arrives as a scope.
   Neither cancels anything either: what ends is the message id, the way
-  resetting an HTTP/2 stream does, and ``send`` raises
-  ``ClientDisconnected``, an ``OSError``, from then on. A closed connection refuses the same way. What the client is told is
-  what differs -- RFC 4511 section 4.11 leaves an abandoned operation
-  unanswered, while RFC 3909 has a cancel answer both itself and the
-  operation it stopped, in whatever shape that one was going to be
-  answered in. A response may carry controls of its own, which is what a
-  paged search needs and what a ``handle_*`` method has no way to say.
+  resetting an HTTP/2 stream does, so ``send`` raises
+  ``ClientDisconnected`` -- an ``OSError`` -- from then on, and a closed
+  connection refuses the same way. What the client is told is what
+  differs. RFC 4511 section 4.11 leaves an abandoned operation unanswered;
+  RFC 3909 has a cancel answer both itself and the operation it stopped,
+  in whatever shape that one was going to be answered in, so that a client
+  waiting on it stops waiting.
 - ``anyldap.app.lifespan()`` calls an application once with a lifespan
   scope before the first connection is accepted, and once more when
   serving is over, which is where it opens what it needs for as long as it
   is running -- a task group, a connection pool -- by leaving it in
   ``scope["state"]``. Every connection scope's ``state`` starts as a copy
   of that, so work an operation starts in the application's task group
-  outlives the connection it came in on. ``app.listen()`` and
-  ``app.serve()`` run one the way ``ldapserver.listen()`` and
-  ``ldapserver.serve()`` run a protocol, with startup finishing before the
-  sockets are bound, so what ``listen()`` reports says the application is
-  ready as well as the listener. An application that will not take a
-  lifespan scope is served without one, as the ASGI specification says to
-  do.
+  outlives the connection it came in on. An application that will not take
+  a lifespan scope is served without one, as the ASGI specification says
+  to do.
 - ``app.listen()`` takes the URLs to listen on, the way OpenLDAP's
   ``slapd -h`` does: ``ldap://host:port`` is a TCP socket,
   ``ldapi://path`` one in the filesystem, and ``ldaps://host:port`` a TCP
   socket with TLS already up. Several may be given. What it reports
   through ``task_status`` is the URLs it actually bound, so a port of 0
   comes back as the port that was chosen and what comes back can be handed
-  to ``ldap.initialize()``.
+  to ``ldap.initialize()``. Startup finishes first, so being told where
+  the server is says the application is ready as well as the listener.
+  ``app.serve()`` is the same for a listener already made, and
+  ``app.app_factory()`` turns an application into a protocol factory.
+- ``app.listen()`` and ``app.serve()`` take a ``shutdown_trigger``, as
+  anycorn's ``serve()`` does. It is awaited alongside the serving, and
+  returning from it stops the server -- which is how to stop one without
+  cancelling it, and so how the lifespan still gets to shut the
+  application down.
 - ``anyldap-serve`` runs an application from the command line, on asyncio
   or on trio: ``anyldap-serve --bind ldap://127.0.0.1:1389
   mymodule:directory``. The application is named the way an ASGI server
   names one, resolved with ``pkgutil.resolve_name()``; a trailing ``()``
   says the name points at something to call, whose answer is the
-  application. At least one ``--bind`` is needed, and interrupting or
-  terminating it is how it is stopped, on either backend: it takes those
-  signals over before it binds anything, so the application shuts down
-  rather than being cancelled.
-- ``app.listen()`` and ``app.serve()`` take a ``shutdown_trigger``, as
-  anycorn's ``serve()`` does. It is awaited alongside the serving, and
-  returning from it stops the server, which is how to stop one without
-  cancelling it -- and so how the lifespan still gets to shut the
-  application down.
+  application. At least one ``--bind`` is needed, since where to listen is
+  not something to guess at. Interrupting or terminating it is how it is
+  stopped: it takes those signals over before it binds anything, so the
+  application is shut down rather than cancelled.
 - ``ldapconnector`` can connect with TLS already up, which is what an
   ``ldaps://`` server expects, rather than only raising it afterwards with
   StartTLS. ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()``
