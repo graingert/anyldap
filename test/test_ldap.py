@@ -2421,20 +2421,31 @@ def test_the_extensions_of_a_url_are_a_mapping_of_their_own() -> None:
 # LDIF, as RFC 2849 writes it.
 
 
-def written(dn: str, record: object, **kwargs: object) -> str:
+def written(
+    dn: str,
+    record: "ldap.ldif.Entry | ldap.ldif.AddModlist | ldap.ldif.ModifyModlist",
+    base64_attrs: Iterable[str] | None = None,
+    cols: int = 76,
+    line_sep: str = "\n",
+) -> str:
     """One record, as ldap.ldif writes it."""
     out = io.StringIO()
-    writer = ldap.ldif.LDIFWriter(out, **kwargs)  # type: ignore[arg-type]
-    writer.unparse(dn, record)  # type: ignore[arg-type]
+    writer = ldap.ldif.LDIFWriter(out, base64_attrs, cols, line_sep)
+    writer.unparse(dn, record)
     assert writer.records_written == 1
     return out.getvalue()
 
 
 def parsed(
-    text: str, **kwargs: object
+    text: str,
+    ignored_attr_types: Iterable[str] | None = None,
+    max_entries: int = 0,
+    process_url_schemes: Iterable[str] | None = None,
 ) -> list[tuple[str, "ldap.ldif.ParsedEntry"]]:
     """The entry records some LDIF holds."""
-    records = ldap.ldif.LDIFRecordList(io.StringIO(text), **kwargs)  # type: ignore[arg-type]
+    records = ldap.ldif.LDIFRecordList(
+        io.StringIO(text), ignored_attr_types, max_entries, process_url_schemes
+    )
     records.parse()
     return records.all_records
 
@@ -2490,10 +2501,11 @@ def test_a_change_record_is_written_the_way_modify_would_be_called() -> None:
         "dn: dc=x\nchangetype: add\na: one\nb: two\n\n"
     )
     # Anything else is neither, and says so.
+    # Neither of these is a record, which is the point of them.
     with pytest.raises(ValueError, match="wrong length"):
-        written("dc=x", [("a",)])
+        written("dc=x", [("a",)])  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="must be dictionary or list"):
-        written("dc=x", "a: one")
+        written("dc=x", "a: one")  # type: ignore[arg-type]
 
 
 def test_a_change_record_is_read_back_as_the_modifications_it_describes() -> None:

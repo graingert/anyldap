@@ -3,6 +3,7 @@
 import calendar
 import time
 from collections.abc import Callable
+from typing import TypeVar
 
 from anyldap.ldap import ldapobject
 from anyldap.ldap.dn import explode_dn as explode_dn
@@ -32,13 +33,19 @@ def strp_secs(dt_str: str) -> int:
     return int(calendar.timegm(time.strptime(dt_str, _GENERALIZED_TIME)))
 
 
-def escape_str(escape_func: Callable[..., str], val: str, *args: Value) -> str:
+# What an escaper takes. ``escape_filter_chars`` takes either text or bytes
+# and ``escape_dn_chars`` only text, so what may be escaped here is whatever
+# the escaper that was passed will take.
+_Escapable = TypeVar("_Escapable", bound=Value)
+
+
+def escape_str(
+    escape_func: Callable[[_Escapable], str], val: str, *args: _Escapable
+) -> str:
     """A template filled in with values that were escaped first.
 
     ``escape_func`` is what to escape them with: ``escape_filter_chars`` for
-    a filter, ``escape_dn_chars`` for a DN. The two do not take the same
-    argument -- one takes what a filter may assert, the other only text --
-    so what is said here is that whatever is passed is passed on.
+    a filter, ``escape_dn_chars`` for a DN.
     """
     return val % tuple(escape_func(arg) for arg in args)
 
