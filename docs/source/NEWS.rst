@@ -19,10 +19,11 @@ Backwards incompatible changes
 Features
 ^^^^^^^^
 
-- ``ldapconnector`` connects with TLS from the first byte, which is what
-  ``ldaps://`` is, as against StartTLS negotiating in the clear first:
-  ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()`` take
-  ``tls`` and an ``ssl_context``.
+- ``ldapconnector`` can connect with TLS already up, which is what an
+  ``ldaps://`` server expects, rather than only raising it afterwards with
+  StartTLS. ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()``
+  take ``tls=True``, or an ``ssl_context``, which asks for TLS by itself.
+  They are told in their arguments; neither reads a URL scheme.
 - ``ldiftree`` lists a directory through ``anyio.Path`` rather than
   ``os.listdir()``, so reading a tree no longer blocks the event loop while
   it waits for the filesystem.
