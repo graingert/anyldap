@@ -15,9 +15,8 @@
 #     Only some BOOLEAN and INTEGER types have default values in
 #     this protocol definition.
 
-from collections import UserList
-from collections.abc import Iterable, Sized
-from typing import ClassVar, Protocol
+from collections.abc import Iterable, Sequence, Sized
+from typing import ClassVar, Protocol, overload
 
 from typing_extensions import Self
 
@@ -119,8 +118,11 @@ class BERBase(WireStrAlias):
         if tag is not None:
             self.tag = tag
 
-    def __len__(self) -> int:
-        return len(self.toWire())
+    def __bool__(self) -> bool:
+        # Every BER object is something. This used to fall out of a __len__
+        # that measured the encoded form -- a length no caller wanted, and one
+        # that made a sequence of no members look like nothing decoded.
+        return True
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, BERBase):
@@ -326,15 +328,15 @@ class BEREnumerated(BERInteger):
     tag = 0x0A
 
 
-class BERSequence(BERStructured, UserList[BERBase]):
-    # TODO __getslice__ calls __init__ with no args.
-    tag = 0x10
+class BERSequence(BERStructured, Sequence[BERBase]):
+    """A BER object holding a sequence of other BER objects.
 
-    # UserList sets __hash__ to None and BERBase hashes its wire form. The MRO
-    # already resolves that in BERBase's favour; saying so here settles it in
-    # the class rather than leaving it to base ordering. Restoring a hash a
-    # base removed is what no annotation can express.
-    __hash__ = BERBase.__hash__  # type: ignore[assignment]
+    Read-only: a sequence is decoded off the wire or built from its members,
+    and nothing edits one in place afterwards. That also leaves it hashable
+    on its wire form, which a mutable base would have taken away.
+    """
+
+    tag = 0x10
 
     @classmethod
     def fromBER(
@@ -355,7 +357,19 @@ class BERSequence(BERStructured, UserList[BERBase]):
     ) -> None:
         BERStructured.__init__(self, tag)
         assert value is not None
-        UserList.__init__(self, value)
+        self.data = list(value)
+
+    @overload
+    def __getitem__(self, index: int) -> BERBase: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> Sequence[BERBase]: ...
+
+    def __getitem__(self, index: int | slice) -> BERBase | Sequence[BERBase]:
+        return self.data[index]
+
+    def __len__(self) -> int:
+        return len(self.data)
 
     def toWire(self) -> bytes:
         r = b"".join(to_bytes(x) for x in self.data)
