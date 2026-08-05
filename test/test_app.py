@@ -39,6 +39,11 @@ def decode_message(wire_bytes: bytes) -> pureldap.LDAPMessage:
     return message
 
 
+async def respond(send: app.Send, response: pureber.BERBase) -> None:
+    """One response, which is most of what these applications do."""
+    await send({"type": "ldap.response", "response": response})
+
+
 async def echo_result(
     scope: app.Scope, receive: app.Receive, send: app.Send
 ) -> None:
@@ -1051,3 +1056,225 @@ async def test_the_script_serves_until_it_is_stopped() -> None:
             assert decode_message(await stream.receive()).id == 1
         await anyio.sleep(0.05)
         task_group.cancel_scope.cancel()
+
+
+async def test_responses_interleave_rather_than_coming_out_in_runs() -> None:
+    """One operation's answers do not have to finish before another's start."""
+    first_entry_sent = anyio.Event()
+    other_answered = anyio.Event()
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        if operation(scope)["id"] == 1:
+            await respond(
+                send, pureldap.LDAPSearchResultEntry(objectName="cn=a", attributes=[])
+            )
+            first_entry_sent.set()
+            # Held open part-way through, which is where the other
+            # operation's answer lands.
+            await other_answered.wait()
+            await respond(
+                send, pureldap.LDAPSearchResultEntry(objectName="cn=b", attributes=[])
+            )
+            await respond(send, pureldap.LDAPSearchResultDone(resultCode=0))
+        else:
+            await first_entry_sent.wait()
+            await respond(send, pureldap.LDAPBindResponse(resultCode=0))
+            other_answered.set()
+
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(application, task_group)
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+        )
+        await stream.feed(
+            pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=2).toWire()
+        )
+        written = [decode_message(await stream.next_write()).id for _ in range(4)]
+        # The bind's answer sits between two of the search's, which is what
+        # multiplexing means and what writing per operation would not do.
+        assert written == [1, 2, 1, 1]
+        await server.aclose()
+
+
+async def test_many_operations_are_in_flight_at_once() -> None:
+    """All of them are running before any of them is answered."""
+    started = 0
+    done = 0
+    everyone = anyio.Event()
+    all_done = anyio.Event()
+    wanted = 20
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        nonlocal started, done
+        started += 1
+        if started == wanted:
+            everyone.set()
+        # Answering only once the last one has started, so this deadlocks
+        # rather than passing if they are run one after another.
+        await everyone.wait()
+        await respond(
+            send,
+            pureldap.LDAPSearchResultDone(
+                resultCode=0, errorMessage=str(operation(scope)["id"])
+            ),
+        )
+        done += 1
+        if done == wanted:
+            all_done.set()
+
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(application, task_group)
+        with anyio.fail_after(10):
+            for msgid in range(1, wanted + 1):
+                await stream.feed(
+                    pureldap.LDAPMessage(
+                        pureldap.LDAPSearchRequest(), id=msgid
+                    ).toWire()
+                )
+            answered = {
+                decode_message(await stream.next_write()).id for _ in range(wanted)
+            }
+        assert answered == set(range(1, wanted + 1))
+        # An answer is written before the application that wrote it
+        # returns, so the connection is only rid of them once they have.
+        await all_done.wait()
+        assert server._operations == {}
+        await server.aclose()
+
+
+async def test_abandoning_one_of_many_leaves_its_siblings_alone() -> None:
+    running = 0
+    all_running = anyio.Event()
+    was_refused = anyio.Event()
+    refused: list[int] = []
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        nonlocal running
+        msgid = operation(scope)["id"]
+        running += 1
+        if running == 3:
+            all_running.set()
+        await all_running.wait()
+        if msgid == 2:
+            # The one that was abandoned finds out by being refused.
+            assert await receive() == {"type": "ldap.abandon"}
+            with pytest.raises(app.ClientDisconnected):
+                await respond(send, pureldap.LDAPSearchResultDone(resultCode=0))
+            refused.append(msgid)
+            was_refused.set()
+            return
+        await respond(
+            send,
+            pureldap.LDAPSearchResultDone(resultCode=0, errorMessage=str(msgid)),
+        )
+
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(application, task_group)
+        with anyio.fail_after(10):
+            for msgid in (1, 2, 3):
+                await stream.feed(
+                    pureldap.LDAPMessage(
+                        pureldap.LDAPSearchRequest(), id=msgid
+                    ).toWire()
+                )
+            await all_running.wait()
+            await stream.feed(
+                pureldap.LDAPMessage(
+                    pureldap.LDAPAbandonRequest(value=2), id=4
+                ).toWire()
+            )
+            answered = {
+                decode_message(await stream.next_write()).id for _ in range(2)
+            }
+        # Nothing was written for the abandoned one, and the others were
+        # not held up by it.
+        assert answered == {1, 3}
+        await was_refused.wait()
+        assert refused == [2]
+        await server.aclose()
+
+
+async def test_operations_in_flight_share_what_the_connection_knows() -> None:
+    """A bind is seen by an operation that was already running."""
+    bound = anyio.Event()
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        state = operation(scope)["connection"]["state"]
+        if scope["type"] == "ldap.bind":
+            state["bound"] = "cn=jack"
+            bound.set()
+            await respond(send, pureldap.LDAPBindResponse(resultCode=0))
+        else:
+            # Already running when the bind arrives, and reading the same
+            # dict it wrote to.
+            await bound.wait()
+            await respond(
+                send,
+                pureldap.LDAPSearchResultDone(
+                    resultCode=0, errorMessage=str(state["bound"])
+                ),
+            )
+
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(application, task_group)
+        with anyio.fail_after(10):
+            await stream.feed(
+                pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+            )
+            await stream.feed(
+                pureldap.LDAPMessage(pureldap.LDAPBindRequest(), id=2).toWire()
+            )
+            answered = [decode_message(await stream.next_write()) for _ in range(2)]
+        assert [message.id for message in answered] == [2, 1]
+        assert isinstance(answered[1].value, pureldap.LDAPResult)
+        assert answered[1].value.errorMessage == b"cn=jack"
+        await server.aclose()
+
+
+async def test_starttls_is_the_one_operation_that_does_not_overlap() -> None:
+    """What follows it is framed differently, so nothing may run alongside."""
+    seen: list[str] = []
+
+    async def application(
+        scope: app.Scope, receive: app.Receive, send: app.Send
+    ) -> None:
+        if scope["type"] == "ldap.starttls":
+            seen.append("starttls started")
+            # Anything running concurrently would say so in here.
+            for _ in range(5):
+                await anyio.lowlevel.checkpoint()
+            seen.append("starttls finished")
+            await respond(send, pureldap.LDAPStartTLSResponse(resultCode=0))
+            return
+        seen.append("search")
+        await respond(send, pureldap.LDAPSearchResultDone(resultCode=0))
+
+    async with anyio.create_task_group() as task_group:
+        server, stream = await _attach(application, task_group)
+        with anyio.fail_after(10):
+            # Both in the one write, so the reader has them both in hand.
+            await stream.feed(
+                pureldap.LDAPMessage(
+                    pureldap.LDAPExtendedRequest(
+                        requestName=pureldap.LDAPStartTLSRequest.oid
+                    ),
+                    id=1,
+                ).toWire()
+                + pureldap.LDAPMessage(
+                    pureldap.LDAPSearchRequest(), id=2
+                ).toWire()
+            )
+            assert [decode_message(await stream.next_write()).id for _ in range(2)] == [
+                1,
+                2,
+            ]
+        assert seen == ["starttls started", "starttls finished", "search"]
+        await server.aclose()
