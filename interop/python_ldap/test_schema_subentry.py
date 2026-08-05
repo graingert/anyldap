@@ -12,8 +12,8 @@ well, taken from the same files.
 
 import os
 import pathlib
-from collections.abc import Iterator
-from typing import Any
+from collections.abc import Iterator, Mapping
+from typing import Any, cast
 
 import pytest
 
@@ -280,7 +280,10 @@ def test_subschema_file(test_file: pathlib.Path) -> None:
         ldif_parser = ldap.ldif.LDIFRecordList(ldif_file, max_entries=1)
         ldif_parser.parse()
     _, subschema_subentry = ldif_parser.all_records[0]
-    sub_schema = ldap.schema.SubSchema(subschema_subentry)
+    # Only a value the LDIF names by URL is ever None, and this reads none.
+    sub_schema = ldap.schema.SubSchema(
+        cast(Mapping[str, list[bytes]], subschema_subentry)
+    )
 
     # Smoke-check for listall() and attribute_types()
     for objclass in sub_schema.listall(ObjectClass):

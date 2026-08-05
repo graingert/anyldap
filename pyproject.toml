@@ -107,6 +107,12 @@ exclude = ["^build/"]
 module = "gssapi"
 ignore_missing_imports = true
 
+# python-ldap is what the interop tests check this against. It ships no type
+# hints of its own, and it is not installed outside the interop environment.
+[[tool.mypy.overrides]]
+module = ["ldap", "ldap.*", "ldif", "slapdtest"]
+ignore_missing_imports = true
+
 [tool.coverage.run]
 branch = true
 source_pkgs = ["anyldap"]
@@ -206,7 +212,7 @@ commands =
     dev: pre-commit run --all-files --show-diff-on-failure
     linters: pre-commit {posargs:run --all-files --show-diff-on-failure}
 
-    mypy: mypy {posargs:src test}
+    mypy: mypy {posargs:.}
 
 ; Checks this client against python-ldap itself, on a real OpenLDAP server.
 ; Not in envlist: it needs slapd installed, and headers to build python-ldap

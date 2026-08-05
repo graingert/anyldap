@@ -4,6 +4,7 @@ include LICENSE
 include docs/source/examples/ldif2ldif
 include anyldap.schema
 include src/anyldap/samba/_passlib/LICENSE
+include src/anyldap/py.typed
 recursive-include docs *.cfg
 recursive-include docs *.conf
 recursive-include docs *.dia

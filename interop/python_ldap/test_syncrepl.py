@@ -10,7 +10,7 @@ syncprov overlay from python-ldap's ``SLAPD_CONF_PROVIDER_TEMPLATE``.
 
 import binascii
 import os
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator, Iterator, Sequence
 from typing import Any
 
 import pytest
@@ -155,7 +155,9 @@ class SyncreplClient(SyncreplConsumer, ldap.SimpleLDAPObject):
         self.refresh_done = False
         ldap.SimpleLDAPObject.__init__(self, uri)
 
-    async def search(self, search_base: str, search_mode: str) -> None:
+    async def search(  # type: ignore[override]
+        self, search_base: str, search_mode: str
+    ) -> None:
         """
         Start a syncrepl search operation, given a base DN and search mode.
         """
@@ -195,7 +197,7 @@ class SyncreplClient(SyncreplConsumer, ldap.SimpleLDAPObject):
         """
         self.refresh_done = True
 
-    def syncrepl_delete(self, uuids: list[str]) -> None:  # type: ignore[override]
+    def syncrepl_delete(self, uuids: Sequence[str]) -> None:
         """
         Delete the given items from both maps.
         """
@@ -220,8 +222,8 @@ class SyncreplClient(SyncreplConsumer, ldap.SimpleLDAPObject):
         self.dn_attrs[dn] = attrs
 
     def syncrepl_present(
-        self, uuids: list[str] | None, refreshDeletes: bool | None = False
-    ) -> None:  # type: ignore[override]
+        self, uuids: Sequence[str] | None, refreshDeletes: bool | None = False
+    ) -> None:
         """
         The 'present' message from the LDAP server is the most complicated
         part of the refresh phase.  Suggest looking here for more info:
@@ -246,7 +248,7 @@ class SyncreplClient(SyncreplConsumer, ldap.SimpleLDAPObject):
             pass
 
 
-class SyncreplProvider(python_ldap_slapdtest.SlapdObject):  # type: ignore[misc]
+class SyncreplProvider(python_ldap_slapdtest.SlapdObject):  # type: ignore[misc, name-defined]
     slapd_conf_template = SLAPD_CONF_PROVIDER_TEMPLATE
 
 

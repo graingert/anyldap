@@ -32,11 +32,13 @@ def strp_secs(dt_str: str) -> int:
     return int(calendar.timegm(time.strptime(dt_str, _GENERALIZED_TIME)))
 
 
-def escape_str(escape_func: Callable[[Value], str], val: str, *args: Value) -> str:
+def escape_str(escape_func: Callable[..., str], val: str, *args: Value) -> str:
     """A template filled in with values that were escaped first.
 
     ``escape_func`` is what to escape them with: ``escape_filter_chars`` for
-    a filter, ``escape_dn_chars`` for a DN.
+    a filter, ``escape_dn_chars`` for a DN. The two do not take the same
+    argument -- one takes what a filter may assert, the other only text --
+    so what is said here is that whatever is passed is passed on.
     """
     return val % tuple(escape_func(arg) for arg in args)
 
