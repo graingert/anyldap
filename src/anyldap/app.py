@@ -228,6 +228,9 @@ SendEvent = (
     | ShutdownFailedEvent
 )
 
+#: Awaited alongside a running server; returning from it stops the server.
+ShutdownTrigger = Callable[[], Awaitable[None]]
+
 Receive = Callable[[], Awaitable[ReceiveEvent]]
 Send = Callable[[SendEvent], Awaitable[None]]
 LDAPApp = Callable[[Scope, Receive, Send], Awaitable[None]]
@@ -673,10 +676,44 @@ async def lifespan(app: LDAPApp) -> AsyncIterator[Mapping[str, object]]:
         raise failed
 
 
-async def serve(listener: Listener[ByteStream], app: LDAPApp) -> None:
-    """Answer everything that connects to ``listener`` with ``app``."""
-    async with lifespan(app) as state:
+async def _stop_when(
+    trigger: Callable[[], Awaitable[None]], scope: anyio.CancelScope
+) -> None:
+    """Stop serving once the trigger says to."""
+    await trigger()
+    scope.cancel()
+
+
+async def _serve(
+    listener: Listener[ByteStream],
+    app: LDAPApp,
+    state: Mapping[str, object],
+    shutdown_trigger: ShutdownTrigger | None,
+) -> None:
+    """Serve until the trigger says to stop, or forever if there is none."""
+    async with anyio.create_task_group() as task_group:
+        if shutdown_trigger is not None:
+            task_group.start_soon(
+                _stop_when, shutdown_trigger, task_group.cancel_scope
+            )
         await ldapserver.serve(listener, app_factory(app, state))
+
+
+async def serve(
+    listener: Listener[ByteStream],
+    app: LDAPApp,
+    *,
+    shutdown_trigger: ShutdownTrigger | None = None,
+) -> None:
+    """Answer everything that connects to ``listener`` with ``app``.
+
+    ``shutdown_trigger`` is awaited alongside the serving, and returning
+    from it stops the server -- which is how to stop one without
+    cancelling it from outside, and so how the application still gets to
+    shut down. Nothing stops it if there is none.
+    """
+    async with lifespan(app) as state:
+        await _serve(listener, app, state, shutdown_trigger)
 
 
 #: Where an ``ldapi://`` URL that names no socket means, as OpenLDAP has it.
@@ -742,6 +779,7 @@ async def listen(
     *binds: str,
     backlog: int = 65536,
     ssl_context: ssl.SSLContext | None = None,
+    shutdown_trigger: ShutdownTrigger | None = None,
     task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
 ) -> None:
     """Listen where these LDAP URLs say to, and answer with ``app``.
@@ -779,4 +817,4 @@ async def listen(
         if ssl_context is not None:
             listening = TLSListener(combined, ssl_context, standard_compatible=False)
         task_status.started(bound)
-        await ldapserver.serve(listening, app_factory(app, state))
+        await _serve(listening, app, state, shutdown_trigger)

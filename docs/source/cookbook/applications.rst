@@ -53,8 +53,16 @@ The application is named the way an ASGI server names one. A trailing
 ``()`` -- ``mymodule:make_directory()`` -- says the name points at
 something to call, and that its answer is the application, for one that
 has to be built rather than imported. At least one ``--bind`` is needed,
-since where to listen is not something to guess at, and interrupting it
-is how it is stopped.
+since where to listen is not something to guess at. Interrupting it, or
+terminating it, is how it is stopped -- it takes those signals over
+itself, so the application is shut down rather than cancelled.
+
+:func:`~anyldap.app.listen` and :func:`~anyldap.app.serve` take a
+``shutdown_trigger`` for the same reason, an idea taken from anycorn: it
+is awaited alongside the serving, and returning from it stops the server
+in the ordinary way, with the lifespan closing after it. Cancelling a
+server from outside stops it too, but does not leave it anywhere to shut
+down in.
 
 .. contents:: :local:
 

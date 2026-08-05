@@ -1,11 +1,12 @@
 """Run an LDAP application from the command line."""
 
+import functools
 import pkgutil
+import signal
 import sys
 from typing import cast
 
 import anyio
-from exceptiongroup import BaseExceptionGroup
 
 from anyldap import app, usage
 
@@ -62,14 +63,35 @@ async def main(
     application: app.LDAPApp,
     binds: list[str],
     *,
+    shutdown_trigger: app.ShutdownTrigger | None = None,
     task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
 ) -> None:
-    """Serve until cancelled, saying where it is listening as it starts."""
-    async with anyio.create_task_group() as task_group:
-        bound = await task_group.start(app.listen, application, *binds)
-        for url in bound:
-            print(f"Listening on {url}", file=sys.stderr, flush=True)
-        task_status.started(bound)
+    """Serve until told to stop, saying where it is listening as it starts.
+
+    Being told is a signal by default -- an interrupt, or a termination,
+    which is what a service manager sends -- so that the application gets
+    to shut down rather than being cancelled out from under itself. The
+    signals are taken over before anything is bound, since a server that
+    says it is listening before it can be stopped can be missed.
+    """
+    with anyio.open_signal_receiver(signal.SIGINT, signal.SIGTERM) as signals:
+
+        async def interrupted() -> None:
+            async for _ in signals:
+                return
+
+        async with anyio.create_task_group() as task_group:
+            bound = await task_group.start(
+                functools.partial(
+                    app.listen,
+                    application,
+                    *binds,
+                    shutdown_trigger=shutdown_trigger or interrupted,
+                )
+            )
+            for url in bound:
+                print(f"Listening on {url}", file=sys.stderr, flush=True)
+            task_status.started(bound)
 
 
 def console_script() -> None:
@@ -91,18 +113,9 @@ def console_script() -> None:
         sys.stderr.write(f"{sys.argv[0]}: nothing to listen on; give --bind\n")
         raise SystemExit(1)
 
-    try:
-        anyio.run(main, application, binds, backend=backend)
-    except KeyboardInterrupt:
-        # Interrupting a server is how a server is stopped, not a fault of
-        # its own to report.
-        pass
-    except BaseExceptionGroup as group:
-        # Which is what trio hands back, since the interrupt reaches the
-        # task group serving rather than the call that started it.
-        _, rest = group.split(KeyboardInterrupt)
-        if rest is not None:
-            raise
+    # Nothing to catch: the signals are the server's own, so being stopped
+    # is a return rather than an interrupt to report.
+    anyio.run(main, application, binds, backend=backend)
 
 
 if __name__ == "__main__":
