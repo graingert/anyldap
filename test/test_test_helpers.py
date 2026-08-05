@@ -7,6 +7,7 @@ import pytest
 
 from anyldap import testutil
 from anyldap.protocols import pureldap
+
 from . import util
 from ._anyio_helpers import AsyncLDAPClientDriver, MemoryByteStream
 from ._testing import Clock, capture_logs

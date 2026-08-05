@@ -23,6 +23,7 @@ from anyldap.ldap import ldapobject
 from anyldap.ldap.controls import openldap
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldapserver
+
 from ._anyio_helpers import local_address
 
 pytestmark = pytest.mark.anyio

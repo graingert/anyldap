@@ -13,6 +13,7 @@ from anyldap import delta, entry, inmemory, schema, testutil
 from anyldap._encoder import to_bytes
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import fetchschema, ldaperrors, ldapserver
+
 from . import test_schema, util
 from ._testing import capture_logs
 from .util import collected

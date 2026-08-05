@@ -8,6 +8,7 @@ from anyldap._async import ResultSlot, await_result
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldapserver, ldapsyntax
 from anyldap.runtime import Failure, Protocol, unwrap_failure
+
 from ._anyio_helpers import local_address
 
 pytestmark = pytest.mark.anyio

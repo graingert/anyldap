@@ -9,6 +9,7 @@ from anyldap import delta, inmemory, interfaces
 from anyldap import entry as entrymod
 from anyldap.protocols.ldap import distinguishedname, ldaperrors
 from anyldap.runtime import ConnectionDone, Failure
+
 from . import util
 from .util import collected
 

@@ -10,6 +10,7 @@ import pytest
 from anyldap import config
 from anyldap.protocols import pureldap
 from anyldap.protocols.ldap import ldapclient, ldaperrors, proxy
+
 from ._anyio_helpers import (
     AsyncLDAPClientDriver,
     MemoryByteStream,
