@@ -66,10 +66,22 @@ Features
   outlives the connection it came in on. ``app.listen()`` and
   ``app.serve()`` run one the way ``ldapserver.listen()`` and
   ``ldapserver.serve()`` run a protocol, with startup finishing before the
-  socket is bound, so the address ``listen()`` reports says the
-  application is ready as well as the listener. An application that will
-  not take a lifespan scope is served without one, as the ASGI
-  specification says to do.
+  sockets are bound, so what ``listen()`` reports says the application is
+  ready as well as the listener. An application that will not take a
+  lifespan scope is served without one, as the ASGI specification says to
+  do.
+- ``app.listen()`` takes the URLs to listen on, the way OpenLDAP's
+  ``slapd -h`` does: ``ldap://host:port`` is a TCP socket,
+  ``ldapi://path`` one in the filesystem, and ``ldaps://host:port`` a TCP
+  socket with TLS already up. Several may be given. What it reports
+  through ``task_status`` is the URLs it actually bound, so a port of 0
+  comes back as the port that was chosen and what comes back can be handed
+  to ``ldap.initialize()``.
+- ``anyldap-serve`` runs an application from the command line, on asyncio
+  or on trio: ``anyldap-serve --bind ldap://127.0.0.1:1389
+  mymodule:directory``. The application is named the way an ASGI server
+  names one, and ``--factory`` says that the name points at something to
+  call, whose answer is the application.
 - ``ldapconnector`` can connect with TLS already up, which is what an
   ``ldaps://`` server expects, rather than only raising it afterwards with
   StartTLS. ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()``

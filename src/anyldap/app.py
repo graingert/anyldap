@@ -31,17 +31,23 @@ again afterwards. `listen` and `serve` do that around the listener they
 run.
 """
 
+import contextlib
+import os
 import ssl
+import stat
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Literal, TypedDict
+from urllib.parse import unquote, urlparse
 
 import anyio
-from anyio.abc import ByteStream, Listener, SocketAttribute
-from anyio.streams.tls import TLSStream
+from anyio.abc import ByteStream, Listener, SocketAttribute, SocketListener
+from anyio.streams.stapled import MultiListener
+from anyio.streams.tls import TLSListener, TLSStream
 from typing_extensions import NotRequired
 
 from anyldap._encoder import to_bytes
+from anyldap.ldap.ldapurl import ldapUrlEscape
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldaperrors, ldapserver
 from anyldap.runtime import Failure, Protocol, logger
@@ -673,25 +679,104 @@ async def serve(listener: Listener[ByteStream], app: LDAPApp) -> None:
         await ldapserver.serve(listener, app_factory(app, state))
 
 
+#: Where an ``ldapi://`` URL that names no socket means, as OpenLDAP has it.
+DEFAULT_LDAPI_PATH = "/var/run/ldapi"
+
+
+def _target(spec: str) -> str | tuple[str, int]:
+    """Where an LDAP URL says to listen: a path, or a host and a port.
+
+    ``ldap://host:port`` is a TCP socket and ``ldapi://path`` one in the
+    filesystem, which is the vocabulary OpenLDAP's ``-h`` takes. Reading
+    them all before binding any means a URL that says nothing to listen on
+    is refused before a server is half-started.
+    """
+    parsed = urlparse(spec)
+    if parsed.scheme == "ldapi":
+        return unquote(parsed.netloc or parsed.path) or DEFAULT_LDAPI_PATH
+    if parsed.scheme not in ("ldap", "ldaps"):
+        raise ValueError(f"cannot listen on {spec!r}")
+    # A port of 0 is a port to be chosen, not a port that was left out.
+    port = parsed.port
+    if port is None:
+        port = 636 if parsed.scheme == "ldaps" else 389
+    return parsed.hostname or "localhost", port
+
+
+async def _bind(target: str | tuple[str, int], backlog: int) -> Listener[ByteStream]:
+    """Listen where a URL said to.
+
+    A stale socket left behind by a server that did not tidy up is
+    removed, since binding would fail on it and nothing is listening
+    there. Anything else in the way is left alone.
+    """
+    if isinstance(target, tuple):
+        host, port = target
+        return await anyio.create_tcp_listener(
+            local_host=host, local_port=port, backlog=backlog
+        )
+    with contextlib.suppress(FileNotFoundError):
+        if stat.S_ISSOCK(os.stat(target).st_mode):
+            os.unlink(target)
+    return await anyio.create_unix_listener(target, backlog=backlog)
+
+
+def _bound(listener: Listener[ByteStream], scheme: str) -> str:
+    """The URL a listener ended up on, which a client can be given.
+
+    A port of 0 is a port the operating system chose, so what was asked
+    for is not what to report.
+    """
+    # Every listener here is one of these; MultiListener says only that
+    # they are listeners, since it holds whatever it was given.
+    assert isinstance(listener, SocketListener)
+    address = listener.extra(SocketAttribute.local_address)
+    if isinstance(address, tuple):
+        host, port = address
+        return f"{scheme}://[{host}]:{port}" if ":" in host else f"{scheme}://{host}:{port}"
+    return f"ldapi://{ldapUrlEscape(address)}"
+
+
 async def listen(
     app: LDAPApp,
-    host: str = "127.0.0.1",
-    port: int = 0,
-    *,
+    *binds: str,
     backlog: int = 65536,
-    task_status: anyio.abc.TaskStatus[object] = anyio.TASK_STATUS_IGNORED,
+    ssl_context: ssl.SSLContext | None = None,
+    task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
 ) -> None:
-    """Listen for TCP clients and answer them with ``app``.
+    """Listen where these LDAP URLs say to, and answer with ``app``.
 
-    Startup finishes before the socket is bound, so the bound address
-    reported through ``task_status`` says that the application is ready as
-    well as that the listener is.
+    ``ldap://host:port`` is a TCP socket, ``ldapi://path`` one in the
+    filesystem, and ``ldaps://host:port`` a TCP socket with TLS already
+    up, which needs an ``ssl_context``. Several may be given, as
+    OpenLDAP's ``-h`` takes several; at least one must be, since where to
+    listen is not something to guess at.
+
+    What ``task_status`` reports is the URLs actually bound -- with the
+    port the operating system chose in place of a 0 that asked for one --
+    so a caller can hand one straight to ``ldap.initialize()``. Startup
+    finishes before any of them are bound, so being told where the server
+    is says the application is ready as well.
     """
+    if not binds:
+        raise ValueError("nothing to listen on")
+    targets = [_target(spec) for spec in binds]
+    scheme = "ldaps" if ssl_context is not None else "ldap"
     async with lifespan(app) as state:
-        await ldapserver.listen(
-            host,
-            port,
-            app_factory(app, state),
-            backlog=backlog,
-            task_status=task_status,
-        )
+        listeners: list[Listener[ByteStream]] = []
+        try:
+            for target in targets:
+                listeners.append(await _bind(target, backlog))
+        except BaseException:
+            # One of them not binding leaves the rest listening for a
+            # server that is not going to run.
+            for made in listeners:
+                await anyio.aclose_forcefully(made)
+            raise
+        combined = MultiListener(listeners)
+        bound = [_bound(one, scheme) for one in combined.listeners]
+        listening: Listener[ByteStream] = combined
+        if ssl_context is not None:
+            listening = TLSListener(combined, ssl_context, standard_compatible=False)
+        task_status.started(bound)
+        await ldapserver.serve(listening, app_factory(app, state))

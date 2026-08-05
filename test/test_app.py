@@ -1,12 +1,21 @@
+import functools
+import os
+import pathlib
+import socket
 import ssl
+import subprocess
+import sys
+from urllib.parse import quote, urlparse
 
 import anyio
 import anyio.lowlevel
 import anyio.streams.tls
 import pytest
 import trustme
+from exceptiongroup import BaseExceptionGroup
 
-from anyldap import app
+from anyldap import app, usage
+from anyldap._scripts import serve
 from anyldap.protocols import pureber, pureldap
 from anyldap.protocols.ldap import ldaperrors, ldapserver
 
@@ -532,8 +541,10 @@ async def test_starttls_raises_the_connection_behind_its_answer() -> None:
         await echo_result(scope, receive, send)
 
     async with anyio.create_task_group() as task_group:
-        host, port = await task_group.start(app.listen, application, "127.0.0.1", 0)
-        stream = await anyio.connect_tcp(host, port)
+        [bound] = await task_group.start(app.listen, application, "ldap://127.0.0.1:0")
+        parsed = urlparse(bound)
+        assert parsed.hostname is not None and parsed.port is not None
+        stream = await anyio.connect_tcp(parsed.hostname, parsed.port)
         await stream.send(
             pureldap.LDAPMessage(
                 pureldap.LDAPExtendedRequest(
@@ -783,3 +794,227 @@ async def test_an_application_may_simply_let_the_refusal_out() -> None:
         assert decode_message(await stream.next_write()).id == 2
         await server.aclose()
         gone.set()
+
+
+async def test_listening_reports_the_urls_it_ended_up_on(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A port of 0 is filled in, so what comes back can be opened."""
+    socket_path = tmp_path / "ldapi"
+    # A socket left behind by a server that did not tidy up is replaced.
+    stale = socket.socket(socket.AF_UNIX)
+    stale.bind(str(socket_path))
+    stale.close()
+    assert socket_path.is_socket()
+    with anyio.fail_after(10):
+        async with anyio.create_task_group() as task_group:
+            bound = await task_group.start(
+                app.listen,
+                echo_result,
+                "ldap://127.0.0.1:0",
+                f"ldapi://{quote(str(socket_path), safe='')}",
+            )
+            over_tcp, over_unix = bound
+            assert over_tcp.startswith("ldap://127.0.0.1:")
+            assert urlparse(over_tcp).port != 0
+            assert over_unix == f"ldapi://{quote(str(socket_path), safe='')}"
+            assert socket_path.is_socket()
+
+            # Both are answering, which is what being told about them is
+            # for.
+            for stream in (
+                await anyio.connect_tcp("127.0.0.1", urlparse(over_tcp).port or 0),
+                await anyio.connect_unix(socket_path),
+            ):
+                async with stream:
+                    await stream.send(
+                        pureldap.LDAPMessage(
+                            pureldap.LDAPSearchRequest(), id=1
+                        ).toWire()
+                    )
+                    assert decode_message(await stream.receive()).id == 1
+                # Let the server notice the connection has gone before the
+                # listener is taken away from under it.
+                await anyio.sleep(0.05)
+            task_group.cancel_scope.cancel()
+
+
+async def test_a_url_that_is_not_one_to_listen_on_is_refused() -> None:
+    async with anyio.create_task_group() as task_group:
+        # Read before any of them is bound, so a server is never
+        # half-started by one that says nothing.
+        with pytest.raises(ValueError, match="cannot listen on"):
+            await task_group.start(
+                app.listen, echo_result, "ldap://127.0.0.1:0", "http://example.com"
+            )
+        with pytest.raises(ValueError, match="nothing to listen on"):
+            await task_group.start(app.listen, echo_result)
+
+        # A URL that reads but will not bind: the one before it does bind,
+        # so this is what shows the rest are closed rather than left open.
+        taken = socket.socket()
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        try:
+            # Failing to bind happens after startup, so it comes back
+            # the way anything a task group raises does.
+            with pytest.raises(BaseExceptionGroup):
+                await task_group.start(
+                    app.listen,
+                    echo_result,
+                    "ldap://127.0.0.1:0",
+                    f"ldap://127.0.0.1:{taken.getsockname()[1]}",
+                )
+        finally:
+            taken.close()
+
+
+async def test_listening_with_tls_says_it_is_ldaps() -> None:
+    authority = trustme.CA()
+    certificate = authority.issue_cert("localhost")
+    server_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    certificate.configure_cert(server_context)
+    client_context = ssl.create_default_context()
+    authority.configure_trust(client_context)
+
+    async with anyio.create_task_group() as task_group:
+        [bound] = await task_group.start(
+            functools.partial(
+                app.listen,
+                echo_result,
+                "ldaps://127.0.0.1:0",
+                ssl_context=server_context,
+            )
+        )
+        assert bound.startswith("ldaps://127.0.0.1:")
+        stream = await anyio.connect_tcp(
+            "127.0.0.1",
+            urlparse(bound).port or 0,
+            tls=True,
+            ssl_context=client_context,
+            tls_hostname="localhost",
+            tls_standard_compatible=False,
+        )
+        async with stream:
+            await stream.send(
+                pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+            )
+            assert decode_message(await stream.receive()).id == 1
+        task_group.cancel_scope.cancel()
+
+
+def test_the_script_loads_an_application_by_name() -> None:
+    assert serve.load("test.test_app:echo_result") is echo_result
+
+    for spec, message in (
+        ("nocolon", "is not module:name"),
+        (":name", "is not module:name"),
+        ("anyldap.nosuchmodule:x", "cannot import"),
+        ("anyldap.app:nosuchname", "has no"),
+        ("anyldap.app:SPEC_VERSION", "is not callable"),
+    ):
+        with pytest.raises(usage.UsageError, match=message):
+            serve.load(spec)
+
+
+def test_the_script_refuses_what_it_cannot_run() -> None:
+    for argv, message in (
+        (["anyldap-serve"], b"Invalid arguments"),
+        (["anyldap-serve", "--backend", "curio", "anyldap.app:app_factory"], b"curio"),
+        (["anyldap-serve", "nosuchmodule:x"], b"cannot import"),
+    ):
+        result = subprocess.run(
+            [sys.executable, "-m", serve.__name__, *argv[1:]],
+            check=False,
+            capture_output=True,
+        )
+        assert result.returncode == 1
+        assert message in result.stderr
+
+
+@pytest.mark.parametrize("backend", ["asyncio", "trio"])
+def test_the_script_serves_an_application_on_either_backend(
+    backend: str, tmp_path: pathlib.Path
+) -> None:
+    """What it prints is where it is listening, which can then be opened."""
+    (tmp_path / "served.py").write_text(
+        "from anyldap.protocols import pureldap\n\n\n"
+        "async def directory(scope, receive, send):\n"
+        "    if scope['type'] == 'lifespan':\n"
+        "        raise NotImplementedError\n"
+        "    await send(\n"
+        "        {'type': 'ldap.response',\n"
+        "         'response': pureldap.LDAPSearchResultDone(resultCode=0)}\n"
+        "    )\n"
+    )
+    running = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            serve.__name__,
+            "--backend",
+            backend,
+            "--bind",
+            "ldap://127.0.0.1:0",
+            "served:directory",
+        ],
+        cwd=tmp_path,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": str(tmp_path)},
+    )
+    try:
+        assert running.stderr is not None
+        said = running.stderr.readline().decode()
+        assert said.startswith("Listening on ldap://127.0.0.1:")
+        port = int(said.rsplit(":", 1)[1])
+
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as client:
+            client.sendall(
+                pureldap.LDAPMessage(pureldap.LDAPSearchRequest(), id=1).toWire()
+            )
+            answered = decode_message(client.recv(4096))
+            assert answered.id == 1
+    finally:
+        running.terminate()
+        running.wait(timeout=10)
+        assert running.stderr is not None
+        running.stderr.close()
+
+
+def test_a_url_with_no_port_means_the_one_ldap_uses() -> None:
+    assert app._target("ldap://example.com") == ("example.com", 389)
+    assert app._target("ldaps://example.com") == ("example.com", 636)
+    assert app._target("ldap://example.com:1389") == ("example.com", 1389)
+    # And a socket in the filesystem has a place of its own to default to.
+    assert app._target("ldapi://") == app.DEFAULT_LDAPI_PATH
+    assert app._target("ldapi:///tmp/sock") == "/tmp/sock"
+
+
+def make_echo() -> app.LDAPApp:
+    """An application that has to be built rather than imported."""
+    return echo_result
+
+
+def make_nothing() -> object:
+    """A factory that does not make an application."""
+    return "not an application"
+
+
+def test_the_script_can_be_told_to_call_what_it_was_named() -> None:
+    assert serve.load("test.test_app:make_echo", factory=True) is echo_result
+    with pytest.raises(usage.UsageError, match="did not make an application"):
+        serve.load("test.test_app:make_nothing", factory=True)
+
+
+async def test_something_else_in_the_way_of_a_socket_is_left_alone(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Only a stale socket is cleared; anything else is someone's file."""
+    in_the_way = tmp_path / "ldapi"
+    in_the_way.write_text("not a socket")
+    async with anyio.create_task_group() as task_group:
+        with pytest.raises(BaseExceptionGroup):
+            await task_group.start(
+                app.listen, echo_result, f"ldapi://{quote(str(in_the_way), safe='')}"
+            )
+    assert in_the_way.read_text() == "not a socket"

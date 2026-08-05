@@ -77,8 +77,8 @@ async def directory(
 
 async def main() -> None:
     async with anyio.create_task_group() as task_group:
-        host, port = await task_group.start(app.listen, directory, "127.0.0.1", 1389)
-        print(f"LDAP server listening on {host}:{port}")
+        [url] = await task_group.start(app.listen, directory, "ldap://127.0.0.1:1389")
+        print(f"LDAP server listening on {url}")
         await anyio.sleep_forever()
 
 

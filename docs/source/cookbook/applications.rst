@@ -10,6 +10,8 @@ operation at a time.
 
 .. code-block:: python
 
+   import anyio
+
    from anyldap import app
 
    async def directory(scope, receive, send):
@@ -17,9 +19,39 @@ operation at a time.
            await send({"type": "ldap.response", "response": entry})
        await send({"type": "ldap.response", "response": done})
 
+   anyio.run(app.listen, directory, "ldap://127.0.0.1:1389")
+
 The three arguments are the ones an ASGI web application takes, so that
 anyone who has written one will recognise the shape, but a scope here
 describes an LDAP *operation* rather than an HTTP request.
+
+:func:`~anyldap.app.listen` takes the URLs to listen on, the way
+OpenLDAP's ``slapd -h`` does: ``ldap://host:port`` for a TCP socket,
+``ldapi://path`` for one in the filesystem, and ``ldaps://host:port``
+for a TCP socket with TLS already up, which needs an ``ssl_context``.
+
+What it reports through :meth:`~anyio.abc.TaskGroup.start` is the URLs it
+actually bound, so a port of 0 comes back as the port that was chosen and
+what comes back can be opened::
+
+   async with anyio.create_task_group() as task_group:
+       [url] = await task_group.start(app.listen, directory, "ldap://127.0.0.1:0")
+       async with ldap.initialize(url) as connection:
+           ...
+
+:func:`~anyldap.app.serve` is the same for a listener that has already
+been made, and :func:`~anyldap.app.app_factory` turns an application into
+a protocol factory, for the places that take one.
+
+There is also a command for it, which runs an application on asyncio or
+on trio::
+
+   anyldap-serve --bind ldap://127.0.0.1:1389 mymodule:directory
+   anyldap-serve --backend trio --bind ldapi:///run/ldapi mymodule:directory
+
+The application is named the way an ASGI server names one. ``--factory``
+says that the name points at something to call, and that what it answers
+with is the application.
 
 .. contents:: :local:
 
