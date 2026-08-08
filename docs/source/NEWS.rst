@@ -27,6 +27,15 @@ Backwards incompatible changes
   server's entries used to be held until that server had finished; now each
   is forwarded as it arrives, so entries from the servers may alternate.
   The result-done still comes last, once every upstream has answered.
+- ``zope.interface`` is no longer a dependency. The ``I*`` interfaces in
+  ``anyldap.interfaces`` are ``typing.Protocol`` classes, which they sit
+  alongside several of already, so what satisfies one is whatever has the
+  methods rather than whatever was declared to. ``@implementer`` is gone,
+  since inheriting or simply matching is the declaration now, and
+  ``I.providedBy(x)`` is ``isinstance(x, I)``. The one place that adapted
+  -- ``IConnectedLDAPEntry(factory)`` in the server's ``_get_root()`` --
+  asserts instead, which is all the adaptation did with no adapters
+  registered. ``mypy-zope`` goes with it.
 
 Features
 ^^^^^^^^

@@ -22,7 +22,7 @@ class Autofill_sum:  # TODO baseclass
         pass
 
     def notify(self, ldapObject: object, attributeType: str | bytes) -> None:
-        assert interfaces.IEditableLDAPEntry.providedBy(ldapObject)
+        assert isinstance(ldapObject, interfaces.IEditableLDAPEntry)
         if attributeType not in self.sumAttrs:
             return
 

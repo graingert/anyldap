@@ -2,8 +2,6 @@ import configparser
 import os.path
 from collections.abc import Iterable
 
-from zope.interface import implementer
-
 from anyldap import interfaces
 from anyldap.protocols.ldap import distinguishedname
 
@@ -16,7 +14,6 @@ class MissingBaseDNError(Exception):
         return self.__doc__
 
 
-@implementer(interfaces.ILDAPConfig)
 class LDAPConfig:
 
     baseDN: distinguishedname.DistinguishedName | None = None

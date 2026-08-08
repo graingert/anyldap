@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Protocol
 
 import outcome
-from zope.interface import implementer
 
 from anyldap import attributeset, delta, entry, interfaces, ldapfilter
 from anyldap._async import ResultSlot, await_result
@@ -148,11 +147,6 @@ class JournaledLDAPAttributeSet(attributeset.LDAPAttributeSet[AttributeText]):
         self.ldapObject.journal(delta.Delete(self.key))
 
 
-@implementer(
-    interfaces.ILDAPEntry,
-    interfaces.IEditableLDAPEntry,
-    interfaces.IServerBackedLDAPEntry,
-)
 class LDAPEntryWithClient(entry.EditableLDAPEntry):
     _state = "invalid"
     """

@@ -6,7 +6,6 @@ import os
 import uuid
 
 import anyio
-from zope.interface import implementer
 
 from anyldap import attributeset, entry, entryhelpers, interfaces
 from anyldap._encoder import to_unicode
@@ -117,7 +116,6 @@ async def put(path: AnyPath, entry: entry.BaseLDAPEntry) -> bool:
     return await _put(path, entry)
 
 
-@implementer(interfaces.IWalkableLDAPEntry)
 class LDIFTreeEntry(
     entry.EditableLDAPEntry,
     entryhelpers.DiffTreeMixin,

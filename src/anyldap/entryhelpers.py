@@ -202,7 +202,7 @@ class SubtreeFromChildrenMixin:
 
         # self is the entry the mixin was mixed into; the callback is handed
         # entries, so say that the host is one.
-        assert interfaces.IWalkableLDAPEntry.providedBy(self)
+        assert isinstance(self, interfaces.IWalkableLDAPEntry)
         await callback(self)
         children = await self.children()
         assert children is not None
@@ -357,7 +357,7 @@ class SearchByTreeWalkingMixin:
             async def iterateSelf(
                 callback: EntryCallback,
             ) -> list[Entry] | None:
-                assert interfaces.IWalkableLDAPEntry.providedBy(self)
+                assert isinstance(self, interfaces.IWalkableLDAPEntry)
                 await callback(self)
                 return None
 

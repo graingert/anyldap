@@ -54,7 +54,8 @@ class LDAPServerWithUPNBind(LDAPServer):
 
         request_dn = to_bytes(request.dn)
 
-        root = interfaces.IConnectedLDAPEntry(self.factory)
+        root = self.factory
+        assert isinstance(root, interfaces.IConnectedLDAPEntry)
 
         if b"@" in request_dn and b"," not in request_dn:
             # This might be an UPN request.

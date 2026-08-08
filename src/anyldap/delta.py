@@ -220,7 +220,7 @@ class ModifyOp(Operation):
     async def patch(self, root: interfaces.IConnectedLDAPEntry) -> interfaces.ILDAPEntry:
         entry = await root.lookup(self.dn)
         # A tree being patched has to hand back entries that can be written to.
-        assert interfaces.IEditableLDAPEntry.providedBy(entry)
+        assert isinstance(entry, interfaces.IEditableLDAPEntry)
         for mod in self.modifications:
             mod.patch(entry)
         return entry
@@ -315,7 +315,7 @@ class DeleteOp(Operation):
 
     async def patch(self, root: interfaces.IConnectedLDAPEntry) -> object:
         entry = await root.lookup(self.dn)
-        assert interfaces.IEditableLDAPEntry.providedBy(entry)
+        assert isinstance(entry, interfaces.IEditableLDAPEntry)
         return await entry.delete()
 
     def __repr__(self) -> str:

@@ -255,11 +255,11 @@ class BaseLDAPServer(Protocol):
     factory: object
 
     def _get_root(self) -> interfaces.IConnectedLDAPEntry:
-        if hasattr(self.factory, "root"):
-            root = self.factory.root
-            assert interfaces.IConnectedLDAPEntry.providedBy(root)
-            return root
-        return interfaces.IConnectedLDAPEntry(self.factory)
+        root = getattr(self.factory, "root", self.factory)
+        # The factory holds the tree or is the tree; either way what comes
+        # back has to be one.
+        assert isinstance(root, interfaces.IConnectedLDAPEntry)
+        return root
 
     def handleUnknown(
         self,
@@ -547,7 +547,7 @@ class LDAPServer(BaseLDAPServer):
         dn = distinguishedname.DistinguishedName(request.value)
         root = self._get_root()
         entry = await root.lookup(dn)
-        assert interfaces.IEditableLDAPEntry.providedBy(entry)
+        assert isinstance(entry, interfaces.IEditableLDAPEntry)
         await entry.delete()
         return pureldap.LDAPDelResponse(resultCode=0)
 
@@ -603,7 +603,7 @@ class LDAPServer(BaseLDAPServer):
         )
         root = self._get_root()
         entry = await root.lookup(dn)
-        assert interfaces.IEditableLDAPEntry.providedBy(entry)
+        assert isinstance(entry, interfaces.IEditableLDAPEntry)
         await entry.move(newdn)
         return pureldap.LDAPModifyDNResponse(resultCode=0)
 
@@ -620,7 +620,7 @@ class LDAPServer(BaseLDAPServer):
         root = self._get_root()
         mod = delta.ModifyOp.fromLDAP(request)
         entry = await mod.patch(root)
-        assert interfaces.IEditableLDAPEntry.providedBy(entry)
+        assert isinstance(entry, interfaces.IEditableLDAPEntry)
         await entry.commit()
         return pureldap.LDAPModifyResponse(resultCode=0)
 
@@ -713,7 +713,7 @@ class LDAPServer(BaseLDAPServer):
             raise ldaperrors.LDAPInsufficientAccessRights()
         if oldPasswd is not None or newPasswd is None:
             raise ldaperrors.LDAPOperationsError("Password does not support this case.")
-        assert interfaces.IEditableLDAPEntry.providedBy(self.boundUser)
+        assert isinstance(self.boundUser, interfaces.IEditableLDAPEntry)
         self.boundUser.setPassword(to_bytes(newPasswd))
         await self.boundUser.commit()
         return pureldap.LDAPExtendedResponse(

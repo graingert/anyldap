@@ -19,7 +19,6 @@ dependencies = [
     "outcome",
     "pyparsing",
     "typing_extensions>=4.0",
-    "zope.interface",
 ]
 classifiers = [
     "Intended Audience :: Developers",
@@ -97,7 +96,6 @@ ignore = [
 
 [tool.mypy]
 strict = true
-plugins = ["mypy_zope:plugin"]
 # build/ holds copies of files that are checked where they really live, and
 # checking both spellings is how mypy ends up reporting duplicate modules.
 exclude = ["^build/"]
@@ -187,7 +185,6 @@ deps =
     trio
     ; Type checking, on the same env as the tests so imports resolve.
     mypy: mypy
-    mypy: mypy-zope
     mypy: pytest
     ; Dependecies for local dev environment.
     dev: diff_cover
@@ -231,7 +228,6 @@ deps =
     python-ldap
     ; The interop tests run on both backends, the same as the rest.
     trio
-    zope.interface
 commands =
     {envpython} -m pytest {posargs:interop} --no-cov
 

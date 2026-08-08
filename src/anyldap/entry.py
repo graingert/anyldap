@@ -4,8 +4,6 @@ from collections.abc import Iterable, Iterator
 from hashlib import sha1
 from typing import ClassVar
 
-from zope.interface import implementer
-
 from anyldap import attributeset, delta, interfaces
 from anyldap._collections import InsensitiveDict
 from anyldap._encoder import WireStrAlias, get_strings, to_bytes
@@ -34,7 +32,6 @@ def sshaDigest(passphrase: bytes, salt: bytes | None = None) -> bytes:
     return crypt
 
 
-@implementer(interfaces.ILDAPEntry)
 class BaseLDAPEntry(WireStrAlias):
     dn: distinguishedname.DistinguishedName
     _object_class_keys: ClassVar[set[AttributeText]] = set(get_strings("objectClass"))
@@ -285,7 +282,6 @@ class BaseLDAPEntry(WireStrAlias):
         return hash(self.dn)
 
 
-@implementer(interfaces.IEditableLDAPEntry)
 class EditableLDAPEntry(BaseLDAPEntry):
     def __setitem__(self, key: AttributeText, value: Iterable[AttributeText]) -> None:
         new = self.buildAttributeSet(key, value)
