@@ -1,8 +1,6 @@
 from collections.abc import Awaitable, Callable
 from typing import Protocol as TypingProtocol
 
-from zope.interface import implementer
-
 from anyldap import entry, entryhelpers, interfaces
 from anyldap._async import ResultSlot, await_result
 from anyldap.protocols.ldap import distinguishedname, ldaperrors, ldifprotocol
@@ -19,13 +17,13 @@ class ReadableFile(TypingProtocol):
     def read(self, size: int) -> bytes | Awaitable[bytes]: ...
 
 
-@implementer(interfaces.IWalkableLDAPEntry)
 class ReadOnlyInMemoryLDAPEntry(
     entry.EditableLDAPEntry,
     entryhelpers.DiffTreeMixin,
     entryhelpers.SubtreeFromChildrenMixin,
     entryhelpers.MatchMixin,
     entryhelpers.SearchByTreeWalkingMixin,
+    interfaces.IWalkableLDAPEntry,
 ):
     def __init__(
         self,
