@@ -1,8 +1,8 @@
 Changelog
 =========
 
-0.2.0 (2026-08-05)
-------------------
+Unreleased
+----------
 
 Backwards incompatible changes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -27,14 +27,6 @@ Backwards incompatible changes
   server's entries used to be held until that server had finished; now each
   is forwarded as it arrives, so entries from the servers may alternate.
   The result-done still comes last, once every upstream has answered.
-- ``pureber.BERSequence`` is a read-only ``Sequence``, not a ``UserList``.
-  Reading one is unchanged -- indexing, slicing, iterating and ``len()`` all
-  work -- but ``append()``, ``extend()``, ``insert()``, ``pop()`` and item
-  assignment are gone. A sequence is built from the items it is to hold.
-- ``passlib`` is no longer a dependency. The DES and MD4 that the Samba
-  password code needed are vendored under ``anyldap.samba._passlib``, with
-  passlib's own licence beside them, so nothing has to be installed for
-  ``setPassword_Samba()`` to work.
 
 Features
 ^^^^^^^^
@@ -93,6 +85,25 @@ Features
   not something to guess at. Interrupting or terminating it is how it is
   stopped: it takes those signals over before it binds anything, so the
   application is shut down rather than cancelled.
+
+0.2.0 (2026-08-05)
+------------------
+
+Backwards incompatible changes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``pureber.BERSequence`` is a read-only ``Sequence``, not a ``UserList``.
+  Reading one is unchanged -- indexing, slicing, iterating and ``len()`` all
+  work -- but ``append()``, ``extend()``, ``insert()``, ``pop()`` and item
+  assignment are gone. A sequence is built from the items it is to hold.
+- ``passlib`` is no longer a dependency. The DES and MD4 that the Samba
+  password code needed are vendored under ``anyldap.samba._passlib``, with
+  passlib's own licence beside them, so nothing has to be installed for
+  ``setPassword_Samba()`` to work.
+
+Features
+^^^^^^^^
+
 - ``ldapconnector`` can connect with TLS already up, which is what an
   ``ldaps://`` server expects, rather than only raising it afterwards with
   StartTLS. ``connectToLDAPEndpointAsync()`` and ``connectToLDAPDNAsync()``
