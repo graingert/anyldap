@@ -1,3 +1,4 @@
+from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -63,11 +64,13 @@ class ILDAPEntry(Protocol):
 
     dn: DistinguishedName
 
+    @abstractmethod
     def toWire(self) -> bytes:
         """
         The entry as LDIF, encoded.
         """
 
+    @abstractmethod
     def __getitem__(self, key: str | bytes) -> LDAPAttributeSet[str | bytes]:
         """
 
@@ -81,6 +84,7 @@ class ILDAPEntry(Protocol):
 
         """
 
+    @abstractmethod
     def get(
         self,
         key: str | bytes,
@@ -101,18 +105,23 @@ class ILDAPEntry(Protocol):
 
         """
 
+    @abstractmethod
     def has_key(self, key: str | bytes) -> bool:
         """TODO"""
 
+    @abstractmethod
     def __contains__(self, key: str | bytes) -> bool:
         """TODO"""
 
+    @abstractmethod
     def keys(self) -> list[str | bytes]:
         """TODO"""
 
+    @abstractmethod
     def items(self) -> list[tuple[str | bytes, list[str | bytes]]]:
         """TODO"""
 
+    @abstractmethod
     def __str__(self) -> str:
         """
 
@@ -133,6 +142,7 @@ class ILDAPEntry(Protocol):
 
         """
 
+    @abstractmethod
     def __eq__(self, other: object) -> bool:
         """
 
@@ -160,6 +170,7 @@ class ILDAPEntry(Protocol):
 
         """
 
+    @abstractmethod
     def __ne__(self, other: object) -> bool:
         """
 
@@ -167,12 +178,15 @@ class ILDAPEntry(Protocol):
 
         """
 
+    @abstractmethod
     def __len__(self) -> int:
         """TODO"""
 
+    @abstractmethod
     def __nonzero__(self) -> bool:
         """Always return True"""
 
+    @abstractmethod
     def bind(self, password: str | bytes) -> Awaitable["ILDAPEntry"]:
         """
         Try to authenticate with given secret.
@@ -193,6 +207,7 @@ class IEditableLDAPEntry(ILDAPEntry, Protocol):
     satisfies this satisfies that.
     """
 
+    @abstractmethod
     def __setitem__(self, key: str | bytes, value: Iterable[str | bytes]) -> None:
         """
 
@@ -208,6 +223,7 @@ class IEditableLDAPEntry(ILDAPEntry, Protocol):
 
         """
 
+    @abstractmethod
     def __delitem__(self, key: str | bytes) -> None:
         """
 
@@ -225,11 +241,13 @@ class IEditableLDAPEntry(ILDAPEntry, Protocol):
 
         """
 
+    @abstractmethod
     def undo(self) -> None:
         """
         Forget all pending changes.
         """
 
+    @abstractmethod
     def commit(self) -> Awaitable[object]:
         """
         Send all pending changes to the LDAP server.
@@ -238,6 +256,7 @@ class IEditableLDAPEntry(ILDAPEntry, Protocol):
         succeeded; the server-backed entry answers with itself.
         """
 
+    @abstractmethod
     def move(self, newDN: AnyDN) -> Awaitable[object]:
         """
 
@@ -249,6 +268,7 @@ class IEditableLDAPEntry(ILDAPEntry, Protocol):
 
         """
 
+    @abstractmethod
     def delete(self) -> Awaitable[object]:
         """
 
@@ -258,6 +278,7 @@ class IEditableLDAPEntry(ILDAPEntry, Protocol):
 
         """
 
+    @abstractmethod
     def setPassword(self, newPasswd: bytes) -> object | Awaitable[object]:
         """
 
@@ -285,6 +306,7 @@ class IConnectedLDAPEntry(ILDAPEntry, Protocol):
     walking its own children is IWalkableLDAPEntry.
     """
 
+    @abstractmethod
     def search(
         self,
         filterText: str | None = None,
@@ -339,6 +361,7 @@ class IConnectedLDAPEntry(ILDAPEntry, Protocol):
 
         """
 
+    @abstractmethod
     def lookup(self, dn: AnyDN) -> Awaitable["IConnectedLDAPEntry"]:
         """
         Lookup the referred to by dn.
@@ -346,6 +369,7 @@ class IConnectedLDAPEntry(ILDAPEntry, Protocol):
         @return: An entry from the same tree, or raises e.g. LDAPNoSuchObject.
         """
 
+    @abstractmethod
     def addChild(
         self,
         rdn: RelativeDistinguishedName | str | bytes, attributes: Attributes
@@ -372,6 +396,7 @@ class IWalkableLDAPEntry(IConnectedLDAPEntry, Protocol):
     asks the server to search instead.
     """
 
+    @abstractmethod
     def children(
         self,
         callback: Callable[["IWalkableLDAPEntry"], Awaitable[None]] | None = None
@@ -392,6 +417,7 @@ class IWalkableLDAPEntry(IConnectedLDAPEntry, Protocol):
 
         """
 
+    @abstractmethod
     def subtree(
         self,
         callback: Callable[["IWalkableLDAPEntry"], Awaitable[None]] | None = None
@@ -412,6 +438,7 @@ class IWalkableLDAPEntry(IConnectedLDAPEntry, Protocol):
 
         """
 
+    @abstractmethod
     def match(self, filter: BERBase) -> bool:
         """
 
@@ -426,6 +453,7 @@ class IWalkableLDAPEntry(IConnectedLDAPEntry, Protocol):
         """
 
 
+    @abstractmethod
     def diffTree(
         self,
         other: "IWalkableLDAPEntry",
@@ -450,6 +478,7 @@ class IServerBackedLDAPEntry(IConnectedLDAPEntry, Protocol):
     in-memory and LDIF backends are trees unto themselves.
     """
 
+    @abstractmethod
     def fetch(self, *attributes: str | bytes) -> Awaitable["ILDAPEntry"]:
         """
         Fetch the attributes of this object from the server.
@@ -462,6 +491,7 @@ class IServerBackedLDAPEntry(IConnectedLDAPEntry, Protocol):
         @return: Completes when the operation is done.
         """
 
+    @abstractmethod
     def namingContext(self) -> Awaitable["ILDAPEntry"]:
         """
         Return an LDAPEntry for the naming context that contains this object.
@@ -498,6 +528,7 @@ class LDAPConfigLike(Protocol):
 class ILDAPConfig(Protocol):
     """Generic LDAP configuration retrieval."""
 
+    @abstractmethod
     def getBaseDN(self) -> DistinguishedName | str:
         """
         Get the LDAP base DN, as a DistinguishedName.
@@ -506,12 +537,14 @@ class ILDAPConfig(Protocol):
         if configuration does not specify a base DN.
         """
 
+    @abstractmethod
     def getServiceLocationOverrides(self) -> dict[DistinguishedName, ServiceLocation]:
         """
         Get the LDAP service location overrides, as a mapping of
         DistinguishedName to (host, port) tuples.
         """
 
+    @abstractmethod
     def copy(
         self,
         baseDN: AnyDN | None = None,
@@ -522,8 +555,10 @@ class ILDAPConfig(Protocol):
         of it.
         """
 
+    @abstractmethod
     def getIdentityBaseDN(self) -> DistinguishedName | str:
         """TODO"""
 
+    @abstractmethod
     def getIdentitySearch(self, name: str) -> str:
         """TODO"""

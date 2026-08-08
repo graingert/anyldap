@@ -147,7 +147,9 @@ class JournaledLDAPAttributeSet(attributeset.LDAPAttributeSet[AttributeText]):
         self.ldapObject.journal(delta.Delete(self.key))
 
 
-class LDAPEntryWithClient(entry.EditableLDAPEntry):
+class LDAPEntryWithClient(
+    entry.EditableLDAPEntry, interfaces.IServerBackedLDAPEntry
+):
     _state = "invalid"
     """
 

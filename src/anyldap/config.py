@@ -14,7 +14,7 @@ class MissingBaseDNError(Exception):
         return self.__doc__
 
 
-class LDAPConfig:
+class LDAPConfig(interfaces.ILDAPConfig):
 
     baseDN: distinguishedname.DistinguishedName | None = None
     identityBaseDN: distinguishedname.DistinguishedName | None = None

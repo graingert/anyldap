@@ -32,7 +32,7 @@ def sshaDigest(passphrase: bytes, salt: bytes | None = None) -> bytes:
     return crypt
 
 
-class BaseLDAPEntry(WireStrAlias):
+class BaseLDAPEntry(WireStrAlias, interfaces.ILDAPEntry):
     dn: distinguishedname.DistinguishedName
     _object_class_keys: ClassVar[set[AttributeText]] = set(get_strings("objectClass"))
     _object_class_lower_keys: ClassVar[set[AttributeText]] = set(
@@ -282,7 +282,7 @@ class BaseLDAPEntry(WireStrAlias):
         return hash(self.dn)
 
 
-class EditableLDAPEntry(BaseLDAPEntry):
+class EditableLDAPEntry(BaseLDAPEntry, interfaces.IEditableLDAPEntry):
     def __setitem__(self, key: AttributeText, value: Iterable[AttributeText]) -> None:
         new = self.buildAttributeSet(key, value)
         self._attributes[key] = new

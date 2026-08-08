@@ -122,6 +122,7 @@ class LDIFTreeEntry(
     entryhelpers.SubtreeFromChildrenMixin,
     entryhelpers.MatchMixin,
     entryhelpers.SearchByTreeWalkingMixin,
+    interfaces.IWalkableLDAPEntry,
 ):
     def __init__(
         self,
