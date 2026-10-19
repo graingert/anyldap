@@ -121,7 +121,7 @@ class ASN1ParserThingie:
         return s
 
     def _list(self, l: Sequence[bytes]) -> bytes:
-        s = b" $ ".join([x for x in l])
+        s = b" $ ".join([*l])
         if len(l) > 1:
             s = b"( %s )" % s
         return s
