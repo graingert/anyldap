@@ -217,8 +217,8 @@ class BaseLDAPEntry(WireStrAlias):
 
         r: list[delta.Modification] = []
 
-        myKeys = {key for key in self}
-        otherKeys = {key for key in other}
+        myKeys = {*self}
+        otherKeys = {*other}
 
         addedKeys = list(otherKeys - myKeys)
         addedKeys.sort(key=to_bytes)  # for reproducability only
